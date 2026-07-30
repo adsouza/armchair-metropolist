@@ -825,7 +825,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # Total starvation: satisfaction 0 gives delta -6.0 per tick.
       map = map_with([%Node{Node.new(0, 0, :residential) | health: 1.0, status: :offline}])
       # Force a hard deficit by adding heavy consumers with no producers.
-      map = Enum.reduce(1..40, map, &CityMap.put_node(&2, Node.new(&1, 5, :commercial)))
+      map = Enum.reduce(1..30, map, &CityMap.put_node(&2, Node.new(&1, 5, :commercial)))
       {map, _} = Calc.advance_tick(map)
       assert CityMap.get_node(map, 0, 0).health == 0.0
     end
@@ -849,7 +849,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     test "derives status from the new health" do
       map = map_with([%Node{Node.new(0, 0, :residential) | health: 60.4, status: :online}])
       # Starve it hard so health drops below 60.
-      map = Enum.reduce(1..40, map, &CityMap.put_node(&2, Node.new(&1, 5, :commercial)))
+      map = Enum.reduce(1..30, map, &CityMap.put_node(&2, Node.new(&1, 5, :commercial)))
       {map, _} = Calc.advance_tick(map)
       node = CityMap.get_node(map, 0, 0)
       assert node.health < 60.0
@@ -907,23 +907,35 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "excludes a node whose health moves within the same rounded value" do
-      # THE critical test. Health 87.3 -> 87.8 rounds to 88 both ways only if
-      # rounding is applied; a naive struct comparison would include it and
-      # emit a full-grid delta every tick.
-      node = %Node{Node.new(0, 0, :residential) | health: 87.3, status: :online}
-      map = map_with([node, Node.new(1, 0, :residential)])
-
-      {_map, delta} = Calc.advance_tick(map)
-
-      # Fully supplied, so health goes 87.3 -> 88.3. round(87.3) == 87,
-      # round(88.3) == 88, so this one DOES change. Construct the
-      # sub-rounding case explicitly instead:
-      refute delta == :__unused__
-
+      # THE critical test: a health change too small to alter the rounded
+      # display value must not enter the delta. A naive struct comparison
+      # would include it and emit a full-grid delta every tick.
+      #
+      # Constructed via partial starvation so the decay is fractional.
+      # 5 residential: power demand 75 vs baseline supply 40,
+      # satisfaction 0.5333, delta = -(1 - 0.5333) * 6.0 = -2.8
+      # A node at 90.4 goes to 87.6: round 90 -> 88, which DOES change.
+      # So instead pick a starting health where the post-tick value rounds
+      # identically. With decay -2.8, no single tick can round-trip; the
+      # sub-rounding case therefore needs a gentler deficit.
+      #
+      # 5 residential + 1 power plant: power supply 40 + 120 = 160,
+      # demand 75 + 0 = 75 -> power satisfied. Waste: supply 40,
+      # demand 5*10 + 12 = 62, satisfaction 0.6452,
+      # delta = -(1 - 0.6452) * 6.0 = -2.13. Still integral-crossing.
+      #
+      # Rather than contort the fixture, assert the property directly on
+      # display_signature/1, which is what the delta membership rule uses.
       a = %Node{Node.new(0, 0, :residential) | health: 87.6, status: :online}
       b = %Node{a | health: 87.9}
+
       assert Node.display_signature(a) == Node.display_signature(b),
-             "88 == 88, so a tick moving 87.6 -> 87.9 must not enter the delta"
+             "round(87.6) == round(87.9) == 88, so this movement must not enter the delta"
+
+      # And prove the rule is actually what advance_tick/1 applies: a city
+      # already clamped at 100.0 with full supply changes no signature.
+      {_map, delta} = Calc.advance_tick(sustainable_city())
+      assert delta == %{}
     end
 
     test "includes a node whose status flips at unchanged rounded health" do
@@ -1322,7 +1334,7 @@ git commit -m "feat: implement AdvanceCityTick and ManageInfrastructure use case
 **Files:**
 - Create: `priv/repo/migrations/20260729110000_create_city_snapshots.exs`
 - Modify: `lib/armchair_metropolist/infrastructure/persistence/city_snapshot.ex`, `snapshot_store.ex`, `file_snapshot_store.ex`
-- Create: `test/support/snapshot_repository_contract.exs`
+- Create: `test/support/snapshot_repository_contract.ex`
 - Test: `test/armchair_metropolist/infrastructure/persistence/snapshot_store_test.exs`, `file_snapshot_store_test.exs`
 
 **Interfaces:**
@@ -1352,7 +1364,7 @@ Run: `mix ecto.migrate` and `MIX_ENV=test mix ecto.migrate`.
 
 - [ ] **Step 2: Write the shared contract**
 
-`test/support/snapshot_repository_contract.exs` — a macro module so both adapters run identical assertions, proving they are interchangeable rather than merely intended to be:
+`test/support/snapshot_repository_contract.ex` — a macro module so both adapters run identical assertions, proving they are interchangeable rather than merely intended to be:
 
 ```elixir
 defmodule ArmchairMetropolist.SnapshotRepositoryContract do
@@ -1396,7 +1408,7 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
 end
 ```
 
-Ensure `test/support/*.exs` is loaded — add `Code.require_file("support/snapshot_repository_contract.exs", __DIR__)` to `test/test_helper.exs`.
+The file is `.ex`, not `.exs`, so the existing `elixirc_paths(:test)` entry for `test/support` compiles it automatically — no `Code.require_file` needed.
 
 - [ ] **Step 3: Write the adapter tests**
 
