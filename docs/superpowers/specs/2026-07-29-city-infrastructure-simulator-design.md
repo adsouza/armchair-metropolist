@@ -9,10 +9,19 @@ A real-time, event-driven city infrastructure simulator. A non-blocking OTP engi
 a simulation tick every second, computing supply/demand and health decay across placed
 infrastructure. A Phoenix LiveView dashboard renders the city and updates over WebSocket by
 applying per-tick *diffs* rather than re-rendering the grid. State survives restarts via
-compressed binary snapshots in Postgres.
+compressed binary snapshots.
 
 The architecture is Clean/Hexagonal, and the layering is enforced at compile time by the
 `boundary` library rather than by convention.
+
+There are **two deployment targets** from one codebase:
+
+- **Server** — Phoenix served over HTTP, snapshots in Postgres via Ecto.
+- **Desktop** — the same Phoenix app wrapped in a native Tauri window via `ex_tauri`,
+  running on macOS and Linux, with snapshots in a local file.
+
+The two targets differ only in which adapters are configured. `Domain`, `Domain.Services`
+and `UseCases` are byte-identical across both, and `boundary` proves it.
 
 ## 2. Verified environment
 
@@ -23,6 +32,25 @@ The architecture is Clean/Hexagonal, and the layering is enforced at compile tim
 | Phoenix generator | `phx_new` 1.8.9 | installed |
 | Postgres | 18.4, running on `:5432` | `pg_isready` OK |
 | `boundary` | 0.10.4 (rel. 2024-09-25) | compat spiked on 1.20.2/OTP 29 — works |
+| Rust (`rustc`/`cargo`/`rustup`) | present at `/opt/homebrew/bin` | required by `ex_tauri` |
+| Zig | **not installed** | only needed for Burrito *cross*-compilation |
+| `ex_tauri` | 0.2.0 (rel. 2026-07-12) | see §8 for the risk assessment |
+| Host | macOS 26.5, arm64 | |
+
+**Burrito ERTS availability** (probed directly against the `beam-machine-universal` CDN that
+Burrito 1.6 actually uses — the `burrito-elixir/erlang-builder` GitHub repo is stale, last
+released March 2023):
+
+| OTP | macOS universal | Linux x86_64 |
+|---|---|---|
+| 29.0.4 (**our local version**) | 404 | 404 |
+| 29.0.3 | 200 | — |
+| 28.4.2 | 200 | 200 |
+| 27.3.4 | 200 | 200 |
+
+`ex_tauri`'s documented requirement of "Elixir >= 1.15 with OTP 27… OTP 28 not yet supported
+due to Burrito ERTS availability" is **stale**. 28.x and 29.x are both available. Only our
+exact patch release is unbuilt, and §8.4 covers how that is handled.
 
 ## 3. Architecture
 
@@ -32,13 +60,20 @@ The architecture is Clean/Hexagonal, and the layering is enforced at compile tim
 Domain            pure entities + ports. Zero OTP, zero Ecto, zero Phoenix.
 Domain.Services   pure simulation algorithms. Reachable only from UseCases.
 UseCases          orchestration. Depends on Domain + Domain.Services.
-Infrastructure    OTP processes, Ecto adapters, PubSub. Implements the ports.
+Infrastructure    OTP processes, Ecto/file/desktop adapters, PubSub. Implements the ports.
 …Web              LiveView UI. Depends on UseCases + Domain entities.
 ```
 
-Dependencies point inward only. `Domain` names the `SnapshotRepository` port;
-`Infrastructure` implements it. That inversion is the point of the whole structure and it is
+Dependencies point inward only. `Domain` names the `SnapshotRepository` and `Notifier` ports;
+`Infrastructure` implements them. That inversion is the point of the whole structure and it is
 compiler-checked.
+
+Two ports, four adapters, selected per deployment target by configuration:
+
+| Port | Server adapter | Desktop adapter |
+|---|---|---|
+| `SnapshotRepository` | `Persistence.SnapshotStore` (Ecto/Postgres) | `Persistence.FileSnapshotStore` |
+| `Notifier` | `Desktop.LogNotifier` | `Desktop.TauriNotifier` (`ex_tauri`) |
 
 ### 3.2 Boundary map
 
@@ -46,7 +81,7 @@ compiler-checked.
 # lib/armchair_metropolist/domain.ex
 use Boundary, type: :strict, deps: [],
   exports: [Entities.CityMap, Entities.Node, Entities.SimulationMetrics,
-            Ports.SnapshotRepository]
+            Ports.SnapshotRepository, Ports.Notifier]
 
 # lib/armchair_metropolist/domain/services.ex
 use Boundary, top_level?: true, type: :strict,
@@ -60,7 +95,7 @@ use Boundary, deps: [ArmchairMetropolist.Domain, ArmchairMetropolist.Domain.Serv
 # lib/armchair_metropolist/infrastructure.ex
 use Boundary,
   deps: [ArmchairMetropolist.Domain, ArmchairMetropolist.UseCases,
-         Ecto, Ecto.Query, Ecto.Changeset, Ecto.Schema, Phoenix.PubSub],
+         Ecto, Ecto.Query, Ecto.Changeset, Ecto.Schema, Phoenix.PubSub, ExTauri],
   exports: [Simulation.CityEngine, Persistence.Repo]
 
 # lib/armchair_metropolist_web.ex
@@ -73,8 +108,14 @@ use Boundary,
 use Boundary, top_level?: true,
   deps: [ArmchairMetropolist.Domain, ArmchairMetropolist.Domain.Services,
          ArmchairMetropolist.UseCases, ArmchairMetropolist.Infrastructure,
-         ArmchairMetropolistWeb]
+         ArmchairMetropolistWeb, ExTauri]
 ```
+
+`ExTauri` appears in exactly two places: `Infrastructure` (for the `TauriNotifier` adapter)
+and `Application` (because `mix ex_tauri.install` adds its shutdown manager to the
+supervision tree). It appears in **neither** `Domain`, `Domain.Services`, `UseCases`, nor
+`…Web` — so if `ex_tauri` is ever swapped for `elixirkit`, the blast radius is the two
+modules named in §6.6 and §6.7, and the compiler will refuse to let that leak further.
 
 `mix.exs`:
 
@@ -213,21 +254,33 @@ worthless. Comparing display-significant state instead means a saturated healthy
 Node *removal* cannot be expressed as an upsert, so demolition is a separate PubSub message
 (§6.4) rather than a sentinel value inside the delta map.
 
-### 4.5 Port
+### 4.5 Ports
 
 ```elixir
 defmodule ArmchairMetropolist.Domain.Ports.SnapshotRepository do
   @callback load_latest() ::
     {:ok, {tick :: non_neg_integer(), CityMap.t()}} | {:error, :not_found | term()}
-  @callback save(tick :: non_neg_integer(), CityMap.t()) ::
-    {:ok, id :: integer()} | {:error, term()}
+  @callback save(tick :: non_neg_integer(), CityMap.t()) :: :ok | {:error, term()}
+end
+
+defmodule ArmchairMetropolist.Domain.Ports.Notifier do
+  @callback notify(title :: String.t(), body :: String.t()) :: :ok | {:error, term()}
 end
 ```
 
-The port speaks `CityMap` only. `:erlang.term_to_binary/2` and the MD5 checksum are
-serialisation concerns and live entirely in the adapter — if `binary` or `checksum` appeared
-in a callback signature, the domain would have learned about storage encoding and the
-boundary would have leaked.
+The `SnapshotRepository` port speaks `CityMap` only. `:erlang.term_to_binary/2` and the MD5
+checksum are serialisation concerns and live entirely in the adapter — if `binary` or
+`checksum` appeared in a callback signature, the domain would have learned about storage
+encoding and the boundary would have leaked.
+
+`save/2` returns bare `:ok`, **not** `{:ok, id}`. An earlier draft of this spec returned a
+row id, which was a Postgres detail leaking through the port: a file adapter has no row id to
+return. Designing the second adapter is what exposed it — which is the ordinary way port
+leaks get found, and a good argument for writing the second adapter early rather than late.
+
+`Notifier` exists so the desktop shell can be swapped without touching anything above
+`Infrastructure`. It is a behaviour with no dependencies, so `Domain` stays `type: :strict`
+with `deps: []` and the purity test of §3.3 continues to pass.
 
 ## 5. Use cases
 
@@ -239,7 +292,7 @@ boundary would have leaked.
 
 ## 6. Infrastructure
 
-### 6.1 Schema and migration
+### 6.1 Schema and migration (server target only)
 
 `priv/repo/migrations/20260729110000_create_city_snapshots.exs` creates `city_snapshots`:
 
@@ -252,9 +305,10 @@ boundary would have leaked.
 
 Index on `tick` descending, for the latest-snapshot lookup.
 
-### 6.2 `SnapshotStore` (adapter)
+### 6.2 `SnapshotStore` — server adapter (Ecto/Postgres)
 
-Implements `SnapshotRepository`.
+Implements `SnapshotRepository`. Used by the server target only; the desktop target uses
+§6.6 instead.
 
 - `save/2`: `:erlang.term_to_binary(city_map, [:compressed])`, then
   `:crypto.hash(:md5, payload) |> Base.encode16()`, insert.
@@ -323,6 +377,54 @@ ArmchairMetropolistWeb.Endpoint
 `Repo` lives at `Infrastructure.Persistence.Repo`, not the Phoenix-default
 `ArmchairMetropolist.Repo`, so it sits inside the boundary that owns persistence.
 
+On the **desktop** target `Repo` is omitted from the children entirely — there is no database
+process, because the file adapter needs none. `Application.start/2` builds the child list from
+config rather than hardcoding it.
+
+### 6.6 `FileSnapshotStore` — desktop adapter
+
+Implements the same `SnapshotRepository` port with no database and no NIF.
+
+The snapshot is *already* a compressed binary blob with an MD5 checksum, so the file adapter
+adds only an envelope and safe write semantics:
+
+```elixir
+envelope = %{version: 1, tick: tick, checksum: checksum, payload: payload}
+```
+
+- `save/2`: build `payload` and `checksum` exactly as §6.2 does, write
+  `:erlang.term_to_binary(envelope)` (uncompressed — `payload` is already compressed) to
+  `snapshot.tmp`, then `File.rename/2` into place. Rename is atomic on POSIX, so a crash
+  mid-write can never leave a torn primary file. Any existing primary is moved to
+  `snapshot.bak` first.
+- `load_latest/0`: read the primary, `:erlang.binary_to_term(data, [:safe])`, verify the MD5
+  against `payload`, then deserialise `payload`. On **any** failure — missing, unreadable,
+  malformed envelope, or checksum mismatch — fall back to `snapshot.bak` and try again.
+  Return `{:error, :not_found}` only when neither file yields a valid snapshot.
+
+The `.bak` fallback matters because checksum verification without it can only *detect*
+corruption while still losing the city. For a single-player game save, one generation of
+history is cheap insurance.
+
+The storage directory comes from config (`:snapshot_dir`), not from `ExTauri`. Persistence
+must not depend on the shell, so `config/runtime.exs` is what calls
+`ExTauri.Paths.data_dir()` on the desktop target and passes the result in.
+
+**This adapter also deletes a whole problem.** `ex_tauri`'s docs warn that desktop releases
+do not run migrations automatically and require a bespoke release module to do it at startup.
+With no database on desktop, there are no migrations to run, and that entire failure mode
+disappears.
+
+### 6.7 `TauriNotifier` and `LogNotifier`
+
+Two adapters for the `Notifier` port. `TauriNotifier` delegates to `ex_tauri`'s notification
+API; `LogNotifier` writes to the Logger and is the default for the server target and for
+tests. `CityEngine` resolves the notifier from config exactly as it resolves the repository,
+and uses it for one thing: announcing when the city first enters a critical deficit.
+
+These two modules, plus one line each in the `Infrastructure` and `Application` boundary
+`deps`, are the *entire* surface area of the desktop shell dependency.
+
 ## 7. Web layer — `SimulatorLive`
 
 - **Background grid**: 40 × 30 = 1,200 cells rendered by a plain comprehension. Static,
@@ -337,7 +439,115 @@ ArmchairMetropolistWeb.Endpoint
 
 Only changed nodes cross the WebSocket, and unchanged cells are never re-rendered.
 
-## 8. Tooling
+## 8. Desktop packaging — `ex_tauri`
+
+### 8.1 Architecture
+
+`ex_tauri` uses a **sidecar** model: Tauri owns the native window and launches the Phoenix
+release as a child process, then points its webview at the local Phoenix server. The webview
+is WKWebView on macOS and WebKitGTK on Linux; both support WebSockets, so LiveView works
+unmodified. Burrito bundles the BEAM and the application into a single executable per
+platform.
+
+In production the app binds to an **OS-assigned free port**, injected into the sidecar via the
+`PORT` environment variable, alongside `SECRET_KEY_BASE`, `PHX_SERVER` and `PHX_HOST`. There
+is no fixed port to collide with.
+
+The native API bridge is LiveView-only, which suits us — the dashboard is LiveView.
+
+### 8.2 Setup
+
+`mix ex_tauri.install` is a one-time scaffold that writes config, the Tauri project
+structure, the release config, a JS hook and layout changes, and installs the Tauri CLI via
+Cargo. Configuration:
+
+```elixir
+config :ex_tauri,
+  version: "2.5.1",
+  app_name: "Armchair Metropolist",
+  host: "localhost",
+  window_title: "Armchair Metropolist",
+  width: 1280, height: 900,
+  resize: true
+```
+
+`mix.exs` also needs `extra_applications: [:logger, :runtime_tools, :inets]`, and
+`cache_static_manifest` must be removed from `config/prod.exs` unless `mix assets.deploy` runs
+as part of the build (it will).
+
+Mix tasks: `ex_tauri.install`, `ex_tauri.dev` (native window with live reload),
+`ex_tauri.build` (production bundles), `ex_tauri.add` (Tauri plugins).
+
+### 8.3 Shutdown and durability
+
+This is the part that interacts with our persistence design, so it is worth being precise.
+
+The Rust side opens a local socket (Unix domain socket on macOS/Linux) and sends a byte every
+100ms. A `ShutdownManager` in the BEAM checks every 500ms, and after 1500ms without a
+heartbeat begins a **graceful** shutdown: Phoenix closes connections, logs flush, and the node
+exits cleanly. `ex_tauri` documents that this holds *"even when the app is force-quit, crashes,
+or is killed unexpectedly."*
+
+Graceful means `CityEngine.terminate/2` runs, so the snapshot-on-shutdown guarantee of §6.4
+survives the desktop target. Two consequences:
+
+1. Worst-case staleness on window close is roughly the 1500ms heartbeat timeout plus the write
+   itself — at a 1s tick, one or two ticks. Acceptable.
+2. The heartbeat is a watchdog, not a guarantee. A SIGKILL of the BEAM itself still bypasses
+   `terminate/2`, which is exactly why the 50-tick periodic checkpoint from §6.4 stays in
+   place on desktop as well. The two mechanisms are complementary, and neither is sufficient
+   alone.
+
+### 8.4 Build targets and the OTP pin
+
+```elixir
+releases: [
+  desktop: [
+    steps: [:assemble, &Burrito.wrap/1],
+    burrito: [targets: [
+      macos_arm: [os: :darwin, cpu: :aarch64],
+      linux_x86: [os: :linux, cpu: :x86_64],
+      linux_arm: [os: :linux, cpu: :aarch64]
+    ]]
+  ]
+]
+```
+
+Our local OTP 29.0.4 has no prebuilt ERTS on the CDN (§2). This does **not** block
+development, because Burrito is only invoked by `mix ex_tauri.build` — `mix ex_tauri.dev`
+needs Rust alone, which is already installed. Development proceeds on 29.0.4 immediately.
+
+For production builds, in preference order:
+
+1. Pin the build toolchain to **OTP 28.4.2**, which has prebuilt ERTS for macOS *and* both
+   Linux architectures, and is a maturer target than 29.x.
+2. Failing that, OTP 29.0.3 for macOS.
+3. Last resort, Burrito's `custom_erts` option pointing at a locally built ERTS tarball.
+
+**Build each platform on its own platform** in CI (a macOS runner and an Ubuntu runner) rather
+than cross-compiling. `ex_tauri` documents Zig as needed only for cross-compilation, so a
+per-platform matrix avoids installing Zig 0.16 and sidesteps cross-compilation entirely. This
+is to be confirmed on first build rather than assumed.
+
+### 8.5 Risk assessment
+
+`ex_tauri` 0.2.0 was released 2026-07-12 with 138 all-time downloads. It is the right choice
+— it explicitly documents the macOS and Linux packaging this project needs, and it means
+writing no Rust — but it is young enough that rough edges should be expected, and its own
+documentation is already stale on OTP support (§2).
+
+The mitigation is structural, not hopeful. Every `ex_tauri` call sits behind the `Notifier`
+port in one adapter module, and `boundary` bars `ExTauri` from `Domain`, `Domain.Services`,
+`UseCases` and `…Web`. If `ex_tauri` proves unworkable, the fallback is the `elixirkit`
+approach — a plain `mix release` inside a hand-rolled Tauri shell, which also avoids Burrito
+and the ERTS-version question altogether — and it costs one new adapter plus packaging work,
+not a rewrite.
+
+Consequently the implementation is **phased**: the server target ships and passes its full
+test suite before the desktop wrap begins. The riskiest dependency is therefore the last thing
+integrated, and a failure there leaves a working application rather than a blocked one.
+
+## 9. Tooling
 
 `mix check` alias, and the same sequence in CI. The `test` alias is the one `phx.new`
 generates (`ecto.create --quiet`, `ecto.migrate --quiet`, `test`), so the database is
@@ -353,7 +563,7 @@ an incremental compile can silently pass a violation that a clean compile would 
 `boundary` ships `mix boundary.spec`, `mix boundary.visualize` and
 `mix boundary.find_external_deps` for inspecting the enforced graph.
 
-## 9. Testing strategy
+## 10. Testing strategy
 
 Test-driven, using the `test-driven-development` skill. The purity constraint pays off here:
 domain and use-case tests need neither a database nor a process.
@@ -380,7 +590,21 @@ fallback to an empty grid, delta broadcast on tick, and `terminate/2` persistenc
 **Web** — `simulator_live_test`: mount renders the grid, a broadcast delta updates only the
 affected node, click places infrastructure.
 
-## 10. Deviations from the original specification
+**Desktop adapters** — `file_snapshot_store_test` against a per-test temp directory:
+round-trip; corrupt the primary file's checksum and assert fallback to `.bak`; corrupt both
+and assert `{:error, :not_found}`; assert no `snapshot.tmp` survives a successful save; assert
+`load_latest/0` on an empty directory returns `{:error, :not_found}`. A **shared contract
+test** runs the identical assertions against both `SnapshotStore` and `FileSnapshotStore`, so
+the two adapters are proven interchangeable rather than merely intended to be.
+`notifier_test` uses a stub asserting the engine notifies on first critical deficit and does
+not notify repeatedly while the deficit persists.
+
+**Desktop packaging** cannot be unit tested. It is verified manually: `mix ex_tauri.dev`
+launches the native window, the simulation ticks and the grid updates, closing the window
+leaves a valid snapshot file that a subsequent launch hydrates from. That last check is the
+one that actually exercises §8.3, so it is the one that matters most.
+
+## 11. Deviations from the original specification
 
 Each is a deliberate change, not an oversight:
 
@@ -398,8 +622,29 @@ Each is a deliberate change, not an oversight:
 8. Baseline municipal capacity constant, so the first placed building does not starve.
 9. `domain_purity_test` added, because `boundary` cannot enforce the "zero OTP" requirement.
 10. `--warnings-as-errors` required, because boundary violations are warnings by default.
+11. `SnapshotRepository.save/2` returns `:ok`, not `{:ok, id}` — the row id was a Postgres
+    detail leaking through the port.
+12. A second `Notifier` port, so the desktop shell dependency is swappable.
+13. Desktop persistence is a file, not Postgres and not SQLite. Postgres cannot ship in a
+    `.dmg`/`.appimage`; SQLite would add the `exqlite` NIF for no benefit, given the payload
+    is a single opaque blob with no queries over it.
+14. `Application.start/2` builds its child list from config, because the desktop target has no
+    `Repo` to start.
 
-## 11. Out of scope
+## 12. Out of scope
 
 No authentication, no multiplayer, no money/economy, no node upgrade levels, no undo, no
 multiple save slots, no sound, no mobile-specific layout, no command write-ahead log.
+
+**No cross-device sync, and therefore no Turso.** This was evaluated: `ecto_libsql` 0.9.1 is a
+working Ecto adapter for libSQL with local-file, remote and embedded-replica modes, and it
+would be the correct choice *if* cities needed to sync between machines. They do not. Without
+a sync requirement it contributes a Rust NIF to a cross-compiled bundle and a dependency whose
+maintainer has stated it is "likely to transition to maintenance mode" as Turso moves off
+libSQL to its Rust rewrite — whose Elixir adapter, `turso_ex`, is early-stage and not yet
+published to Hex. Storing one opaque blob is not a use case that justifies any of that.
+
+Should sync become a goal, it re-enters as a `TursoSnapshotStore` behind the existing
+`SnapshotRepository` port: one new module in `Infrastructure`, with `Domain`,
+`Domain.Services` and `UseCases` untouched. Deferring costs nothing precisely because the port
+exists.
