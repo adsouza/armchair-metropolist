@@ -25,16 +25,17 @@ An earlier value, `ai.polynomic.armchair-metropolist`, was wrong: it was inferre
 email address rather than from the account owning this repository. Commit authorship was never
 affected — every commit on the branch is authored as the `adsouza` account.
 
-## Resolved — the production desktop build
+## The production desktop build — builds, but the bundle does not display yet
 
-`mix ex_tauri.build` **works** for the native macOS target and produces
+`mix ex_tauri.build` now **completes** for the native macOS target and produces
 `Armchair Metropolist.app` (23 MB) and `Armchair Metropolist_0.1.0_aarch64.dmg` (15 MB) under
 `src-tauri/target/release/bundle/`. Verified: the `.dmg` is a real UDZO image; the `.app` contains
 both the Tauri host and the Burrito sidecar (`Contents/MacOS/desktop`), both `arm64`; and
 `CFBundleIdentifier` in the shipped `Info.plist` is `io.github.adsouza.armchair-metropolist`.
 
-Getting there needed four fixes, three of which were `ex_tauri`/Burrito behaviour that contradicts
-the documentation:
+Getting the build to complete needed four fixes, three of which were `ex_tauri`/Burrito
+behaviour that contradicts the documentation. Note the resulting bundle still does not render —
+see the open bug below.
 
 1. **ERTS pin.** Burrito requests the build machine's OTP version; 29.0.4 is unbuilt on the CDN.
    `custom_erts` now pins 29.0.3 per target. `ex_tauri` still prints
@@ -54,14 +55,54 @@ the documentation:
 targets are declared and their ERTS URLs verified, so a Linux CI runner with Zig should work
 unchanged.
 
-**Not verified: the shipped `.app` actually running.** Driving the native window needs macOS Screen
-Recording/Accessibility permission, which is not granted here — the same limitation recorded during
-the original desktop task. What *was* observed: the Burrito sidecar boots the full application
-(ShutdownManager on its heartbeat socket, Bandit, Endpoint), and under `ARMCHAIR_DESKTOP=1` it
-correctly stops itself when no heartbeat arrives. That last behaviour is why the sidecar cannot be
-probed over HTTP from a shell — it shuts down within ~1.5s by design. Burrito's wrapper also treats
-`argv[1]` as a script path (`No file named start`), so there is no standalone-server invocation;
-the binary is meant to be launched by Tauri.
+### OPEN BUG: the packaged `.app` builds but does not display
+
+The artefacts build and their backend works, but **launching the bundle gives a blank window and
+the app then exits.** `mix ex_tauri.dev` renders correctly, so this is specific to the bundled
+release. Do not treat the desktop target as shippable until this is resolved.
+
+The failure chain, from the Tauri host's own log (run
+`"…/Armchair Metropolist.app/Contents/MacOS/armchair_metropolist"` directly to see it):
+
+```
+[tao::…::window]        Creating new window
+[tauri_runtime_wry]     web content process terminated     <-- the webview dies here
+[tauri_plugin_shell]    Creating sidecar …/Contents/MacOS/desktop
+                        Sidecar process started with PID: 47323
+                        Waiting for your phoenix dev server to start on localhost:52819...
+[ExTauri.ShutdownManager] Started - heartbeat monitoring active on …/tauri_heartbeat_….sock
+[info] Running ArmchairMetropolistWeb.Endpoint with Bandit 1.12.4 at 0.0.0.0:52819 (http)
+```
+
+Read in order: the webview's content process terminates **before** the sidecar even starts. The
+sidecar then boots the whole application correctly — ShutdownManager, Bandit, Endpoint on an
+OS-assigned free port (52560 and 52819 on two runs, confirming the dynamic-port design). But with no
+webview there is no heartbeat, so the ShutdownManager does exactly what it was built to do and stops
+the node ~1.5s later. Net effect: blank window, process exits, and the port never becomes reachable
+— `curl` against it returns 000 because the server is already gone.
+
+So the parts are individually healthy and the composition is broken. **What works:** the bundle, the
+sidecar, the Elixir app inside it, the bundled assets, the dynamic port, the shutdown manager.
+**What fails:** the webview content process.
+
+Candidates worth checking first, in rough order of likelihood:
+
+1. **Ad-hoc signing.** `codesign -dv` reports `flags=0x20002(adhoc,linker-signed)` with
+   `Identifier=armchair_metropolist-feaba944c5de57fc`. A properly signed bundle with the entitlements
+   WKWebView expects may be required on recent macOS (this host is 26.5).
+2. **`withGlobalTauri: true` plus `script-src 'unsafe-inline'`** in `tauri.conf.json` — the
+   `ex_tauri` default, flagged as loose during the Task 11 review.
+3. **A load-before-ready race.** The webview is pointed at the port before Phoenix is listening;
+   `ex_tauri` prints "Waiting for your phoenix dev server to start", so it intends to retry, but the
+   retry may not survive the content process having already crashed in a release build.
+
+**Also note:** `screencapture` remains blocked from a shell subprocess even with Screen Recording
+granted to the terminal's parent app — the grant attaches to the granted application, not to a
+`screencapture` binary it spawns. Diagnosing this needs the log above rather than a screenshot,
+which is just as well since there is nothing to see.
+
+Burrito's wrapper additionally treats `argv[1]` as a script path (`No file named start`), so there
+is no standalone-server invocation of the sidecar; it is meant to be launched by Tauri.
 
 ## Notes on the build, kept for reference
 
