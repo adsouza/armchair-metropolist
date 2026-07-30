@@ -25,12 +25,47 @@ An earlier value, `ai.polynomic.armchair-metropolist`, was wrong: it was inferre
 email address rather than from the account owning this repository. Commit authorship was never
 affected — every commit on the branch is authored as the `adsouza` account.
 
-## Blocked, with a known cause
+## Resolved — the production desktop build
 
-**Burrito production build (`mix ex_tauri.build`).** One thing stands in the way now: **Zig is not
-installed.** Two other blockers are resolved.
+`mix ex_tauri.build` **works** for the native macOS target and produces
+`Armchair Metropolist.app` (23 MB) and `Armchair Metropolist_0.1.0_aarch64.dmg` (15 MB) under
+`src-tauri/target/release/bundle/`. Verified: the `.dmg` is a real UDZO image; the `.app` contains
+both the Tauri host and the Burrito sidecar (`Contents/MacOS/desktop`), both `arm64`; and
+`CFBundleIdentifier` in the shipped `Info.plist` is `io.github.adsouza.armchair-metropolist`.
 
-*Resolved — the ERTS version.* Burrito asks the CDN for the build machine's OTP version, and this
+Getting there needed four fixes, three of which were `ex_tauri`/Burrito behaviour that contradicts
+the documentation:
+
+1. **ERTS pin.** Burrito requests the build machine's OTP version; 29.0.4 is unbuilt on the CDN.
+   `custom_erts` now pins 29.0.3 per target. `ex_tauri` still prints
+   *"Burrito may not have pre-compiled ERTS for OTP 29 yet. Production builds may fail"* — that
+   warning is stale, and the build succeeds with the pin.
+2. **Zig is required for every build**, not just cross-compilation as the docs claim. Burrito shells
+   out to `zig build` unconditionally (`lib/steps/build/pack_and_build.ex`). Zig 0.16.0 installed,
+   which is what Burrito 1.6 targets.
+3. **Only the host target is declared by default.** `mix ex_tauri.build` builds every declared
+   target, and cross-compiling Linux from macOS fails at Zig's link step
+   (`compile exe desktop ReleaseSmall x86_64-linux 1 errors`). `BURRITO_ALL_TARGETS=1` opts back in.
+4. **Burrito target keys must be Rust target triples.** `ex_tauri`'s `rename_burrito_output/0`
+   looks for `burrito_out/desktop_<rustc host triple>`, so a friendly key like `macos_arm` builds
+   fine and then dies on `could not copy from "burrito_out/desktop_aarch64-apple-darwin"`.
+
+**Linux binaries still need a Linux runner.** Cross-compilation from macOS fails as above; the
+targets are declared and their ERTS URLs verified, so a Linux CI runner with Zig should work
+unchanged.
+
+**Not verified: the shipped `.app` actually running.** Driving the native window needs macOS Screen
+Recording/Accessibility permission, which is not granted here — the same limitation recorded during
+the original desktop task. What *was* observed: the Burrito sidecar boots the full application
+(ShutdownManager on its heartbeat socket, Bandit, Endpoint), and under `ARMCHAIR_DESKTOP=1` it
+correctly stops itself when no heartbeat arrives. That last behaviour is why the sidecar cannot be
+probed over HTTP from a shell — it shuts down within ~1.5s by design. Burrito's wrapper also treats
+`argv[1]` as a script path (`No file named start`), so there is no standalone-server invocation;
+the binary is meant to be launched by Tauri.
+
+## Notes on the build, kept for reference
+
+*The ERTS version.* Burrito asks the CDN for the build machine's OTP version, and this
 machine runs 29.0.4, which is unbuilt (404 on macOS and both Linux arches). `mix.exs` now pins
 `custom_erts` per target to **29.0.3**, verified 200 on all three. No toolchain change was needed
 and none is wanted: `custom_erts` accepts a URL, 29.0.3 is the same OTP major/minor so the compiled
@@ -43,19 +78,12 @@ only version with ERTS for all three targets. That was wrong — it came from a 
 patch back rather than a major downgrade. Re-probe before a release; once the CDN builds 29.0.4 the
 `custom_erts` entries can be dropped and Burrito's default becomes correct again.
 
-*Still blocking — Zig.* `ex_tauri`'s docs say Zig is "only needed if using Burrito for
-cross-compilation". **That is wrong.** Burrito shells out to `zig build` unconditionally
-(`lib/steps/build/pack_and_build.ex`), so Zig is required for *every* Burrito build including a
-native one. Burrito 1.6 targets Zig 0.16. This is the third stale claim found in `ex_tauri`'s
-documentation, after the OTP-28 ceiling and `sidecar_env`.
+`mix ex_tauri.dev` is unaffected by all of this and works independently.
 
-*Remaining wiring.* `&Burrito.wrap/1` is deliberately **not** in the release's `steps:`, so the
-`burrito:` target config above is currently inert. Adding it is what enables
-`mix ex_tauri.build` — `tauri.conf.json`'s `externalBin` expects `../burrito_out/desktop` — but it
-also makes plain `mix release desktop` require Zig, which would break the no-extra-tooling
-assembly path that makes the asset step verifiable. Add it together with Zig, not before.
-
-`mix ex_tauri.dev` works today and is unaffected by all of this.
+**Consequence of wiring `&Burrito.wrap/1` into the release steps:** plain `mix release desktop` now
+requires Zig too. That is the tradeoff for `mix ex_tauri.build` working; the asset-build step was
+verified before Burrito was wired in, by deleting `priv/static/assets` and confirming the assembled
+release contained zero asset files without the step and both files with it.
 
 **Asset building in the desktop release — RESOLVED.** Recorded here because the reasoning is worth
 keeping. `priv/static/assets/{css/app.css,js/app.js}` are gitignored (tailwind/esbuild output), and

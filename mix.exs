@@ -72,12 +72,13 @@ defmodule ArmchairMetropolist.MixProject do
       # clean checkout it does not exist and a release assembled without this
       # step would ship with no CSS and no JS.
       #
-      # `&Burrito.wrap/1` is deliberately NOT in `steps` — see the note on
-      # `burrito:` below. Without it, `mix release desktop` assembles with no
-      # extra tooling, which is what makes the asset step verifiable.
+      # `&Burrito.wrap/1` turns the assembled release into a single-file
+      # executable per target. It requires Zig on PATH — Burrito shells out to
+      # `zig build` for every build, native included, despite ex_tauri's docs
+      # claiming Zig is cross-compilation-only.
       releases: [
         desktop: [
-          steps: [&build_assets/1, :assemble],
+          steps: [&build_assets/1, :assemble, &Burrito.wrap/1],
           burrito: [targets: burrito_targets()]
         ]
       ]
@@ -96,31 +97,63 @@ defmodule ArmchairMetropolist.MixProject do
   # Re-probe before a release; once the CDN builds 29.0.4 these can be dropped
   # and Burrito's default will be correct again.
   #
-  # This config is inert until `&Burrito.wrap/1` is added to `steps` above,
-  # which also requires Zig. Note `ex_tauri`'s docs claim Zig is needed only for
-  # cross-compilation; that is wrong — Burrito shells out to `zig build`
-  # unconditionally (lib/steps/build/pack_and_build.ex).
+  # Note `ex_tauri`'s docs claim Zig is needed only for cross-compilation; that
+  # is wrong — Burrito shells out to `zig build` unconditionally
+  # (lib/steps/build/pack_and_build.ex), so Zig is required for native builds too.
   @erts_otp "29.0.3"
   @erts_cdn "https://beam-machine-universal.b-cdn.net/OTP-#{@erts_otp}"
 
-  defp burrito_targets do
-    [
-      macos_arm: [
-        os: :darwin,
-        cpu: :aarch64,
-        custom_erts: "#{@erts_cdn}/macos/universal/otp_#{@erts_otp}_macos_universal.tar.gz"
-      ],
-      linux_x86: [
-        os: :linux,
-        cpu: :x86_64,
-        custom_erts: "#{@erts_cdn}/linux/x86_64/any/otp_#{@erts_otp}_linux_any_x86_64.tar.gz"
-      ],
-      linux_arm: [
-        os: :linux,
-        cpu: :aarch64,
-        custom_erts: "#{@erts_cdn}/linux/aarch64/any/otp_#{@erts_otp}_linux_any_aarch64.tar.gz"
-      ]
+  @burrito_all_targets [
+    "aarch64-apple-darwin": [
+      os: :darwin,
+      cpu: :aarch64,
+      custom_erts: "#{@erts_cdn}/macos/universal/otp_#{@erts_otp}_macos_universal.tar.gz"
+    ],
+    "x86_64-unknown-linux-gnu": [
+      os: :linux,
+      cpu: :x86_64,
+      custom_erts: "#{@erts_cdn}/linux/x86_64/any/otp_#{@erts_otp}_linux_any_x86_64.tar.gz"
+    ],
+    "aarch64-unknown-linux-gnu": [
+      os: :linux,
+      cpu: :aarch64,
+      custom_erts: "#{@erts_cdn}/linux/aarch64/any/otp_#{@erts_otp}_linux_any_aarch64.tar.gz"
     ]
+  ]
+
+  # Target KEYS must be Rust target triples, not friendly names: ex_tauri's
+  # `rename_burrito_output/0` looks for `burrito_out/desktop_<rustc host triple>`
+  # and renames it to `desktop-<triple>` for Tauri's `externalBin`. A key like
+  # `macos_arm` builds fine but then fails the copy with
+  # `could not copy from "burrito_out/desktop_aarch64-apple-darwin"`.
+  #
+  # Defaults to the HOST target only. `mix ex_tauri.build` builds every declared
+  # target, and cross-compiling Linux from macOS fails at Zig's link step
+  # (`compile exe desktop ReleaseSmall x86_64-linux 1 errors`) — so declaring all
+  # three unconditionally makes the command fail on a Mac even though the native
+  # build is fine. The spec's guidance is to build each platform on its own CI
+  # runner rather than cross-compile, which this matches.
+  #
+  # Set `BURRITO_ALL_TARGETS=1` to opt into building every target, e.g. on a
+  # runner where cross-compilation is known to work.
+  defp burrito_targets do
+    if System.get_env("BURRITO_ALL_TARGETS") == "1" do
+      @burrito_all_targets
+    else
+      Keyword.take(@burrito_all_targets, [host_burrito_target()])
+    end
+  end
+
+  defp host_burrito_target do
+    arch = to_string(:erlang.system_info(:system_architecture))
+    arm? = String.contains?(arch, "aarch64") or String.contains?(arch, "arm64")
+
+    case {:os.type(), arm?} do
+      {{:unix, :darwin}, _} -> :"aarch64-apple-darwin"
+      {{:unix, :linux}, true} -> :"aarch64-unknown-linux-gnu"
+      {{:unix, :linux}, false} -> :"x86_64-unknown-linux-gnu"
+      other -> raise "no Burrito target defined for host #{inspect(other)} (#{arch})"
+    end
   end
 
   # Reuses the `assets.build` alias rather than restating the tailwind/esbuild
@@ -192,7 +225,10 @@ defmodule ArmchairMetropolist.MixProject do
       {:bandit, "~> 1.5"},
       {:boundary, "~> 0.10", runtime: false},
       {:stream_data, "~> 1.4", only: [:test]},
-      {:ex_tauri, "~> 0.2"}
+      {:ex_tauri, "~> 0.2"},
+      # Referenced directly as `&Burrito.wrap/1` in the :desktop release steps, so
+      # declared explicitly rather than relied on transitively via :ex_tauri.
+      {:burrito, "~> 1.6"}
     ]
   end
 
