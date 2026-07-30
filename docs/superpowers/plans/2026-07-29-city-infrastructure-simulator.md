@@ -874,9 +874,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert node.status == :degraded
     end
 
-    test "is deterministic" do
-      map = map_with(for x <- 0..5, do: Node.new(x, 0, :residential))
-      assert Calc.advance_tick(map) == Calc.advance_tick(map)
+    test "is order-independent" do
+      # NOT `advance_tick(map) == advance_tick(map)` — that is a tautology for any
+      # pure function and cannot fail. What matters is that resource stats are
+      # computed once from the pre-tick map rather than per node, so insertion
+      # order must not affect the result.
+      nodes = for x <- 0..5, do: Node.new(x, 0, :residential)
+      {a, _} = Calc.advance_tick(map_with(nodes))
+      {b, _} = Calc.advance_tick(map_with(Enum.reverse(nodes)))
+      assert Map.equal?(a.nodes, b.nodes)
     end
 
     test "cascading failure: a failing plant drags the city down with it" do
@@ -980,7 +986,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 end
 ```
 
-> **Note for the implementer:** the "excludes a node whose health moves within the same rounded value" test above is deliberately written to assert on `display_signature` directly, because constructing a single tick that moves health by less than a rounding boundary requires fractional decay rates. Keep the direct-signature assertion; the subset and empty-delta tests cover the integration path. If you can construct a genuine sub-rounding tick, add it — do not delete the existing assertion.
+> **Note for the implementer — this is REQUIRED, not optional.** A direct `display_signature`
+> assertion is not sufficient on its own: a naive whole-struct comparison
+> (`if node == advanced`) passes every other delta test in this file, because those fixtures
+> use cities clamped at 100.0 where the struct is byte-identical anyway. You MUST add a
+> fixture that produces a genuine sub-rounding health movement, or the single most important
+> behaviour in this module has no test that can fail.
+>
+> A working fixture (verify the arithmetic yourself against the real tables and adjust if
+> needed): `:power_plant` at `health: 90.0`, `:water_plant` at `health: 30.3`, and three
+> `:park` nodes. Water demand is 20 + 54 = 74 against supply 40 + 30.3 = 70.3, giving
+> satisfaction ≈ 0.95 while power, waste and traffic stay fully satisfied. The power plant's
+> health delta is ≈ −0.30, so `90.0 → 89.7` — and `round(90.0) == round(89.7) == 90` with
+> status unchanged, so it must be **excluded** from the delta despite its health moving.
+>
+> Before committing, confirm the test discriminates: temporarily swap the membership check for
+> `if node == advanced`, confirm your new test FAILS, then restore it.
 
 - [ ] **Step 2: Run test to verify it fails**
 
