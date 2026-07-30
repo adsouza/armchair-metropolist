@@ -554,43 +554,154 @@ generates (`ecto.create --quiet`, `ecto.migrate --quiet`, `test`), so the databa
 prepared as part of the run:
 
 ```elixir
-check: ["compile --force --warnings-as-errors", "test"]
+check: ["compile --force --warnings-as-errors", "test --cover"]
 ```
 
 `--force` matters: `boundary` only reports violations for modules it actually recompiles, so
 an incremental compile can silently pass a violation that a clean compile would catch.
+
+Coverage is gated natively by Mix — no `excoveralls` dependency:
+
+```elixir
+test_coverage: [threshold: 90]
+```
+
+`mix test --cover` exits non-zero below the threshold. 90% is the floor for the project as a
+whole; `Domain`, `Domain.Services` and `UseCases` should sit at or very near 100% by
+construction, since they are pure functions with no unreachable I/O branches. If those layers
+are *not* near 100%, that is evidence of an untested branch rather than of an untestable one.
+
+Test-only dependency: `{:stream_data, "~> 1.4", only: [:test]}` for the property tests of
+§10.6. Test files live outside `lib/`, so they are not subject to `boundary` checks.
 
 `boundary` ships `mix boundary.spec`, `mix boundary.visualize` and
 `mix boundary.find_external_deps` for inspecting the enforced graph.
 
 ## 10. Testing strategy
 
-Test-driven, using the `test-driven-development` skill. The purity constraint pays off here:
-domain and use-case tests need neither a database nor a process.
+### 10.1 Principles
 
-**Domain (pure, no DB, no OTP)**
-- `node_test` — production/consumption tables, status thresholds, `display_signature/1`.
-- `city_map_test` — `new/2`, bounds, placement, occupancy, removal.
-- `simulation_calculator_test` — satisfaction maths, decay and regen arithmetic, health
-  clamping at 0 and 100, and a **cascading-failure** test asserting the death spiral when a
-  power plant degrades.
-- Delta tests: a fully-supplied stable city yields an **empty** delta; a starved city yields
-  a delta containing only the starved nodes.
-- `domain_purity_test` — the BEAM imports-table assertion of §3.3.
+Test-driven, using the `test-driven-development` skill. The purity constraint pays off
+directly: **every test in §10.2–10.7 runs with no database, no processes, no PubSub, and
+`async: true`.** Nothing in the domain or use-case layers requires a test double.
 
-**Use cases** — against a hand-rolled in-memory stub implementing `SnapshotRepository`
-(no Mox dependency). Placement validation, demolition, error tuples.
+That last point is worth stating explicitly because it is a design check, not just a
+convenience. `AdvanceCityTick.execute/1` and `ManageInfrastructure.place/4` take a `CityMap`
+and return a `CityMap` (§5) — they touch no repository. The `SnapshotRepository` stub is
+needed only by `CityEngine`, which is infrastructure. **If writing a use-case test ever
+requires a stub, orchestration and persistence have become tangled and the design has
+regressed.**
 
-**Infrastructure** — `snapshot_store_test` against the real Postgres 18, including a
-round-trip, latest-wins selection, and a **corrupted-checksum** case asserting
-`{:error, :checksum_mismatch}`. `city_engine_test` covering hydration from a seeded snapshot,
-fallback to an empty grid, delta broadcast on tick, and `terminate/2` persistence.
-`tick_server_test` asserting the clock broadcasts and does not reference the engine.
+### 10.2 `Node`
 
-**Web** — `simulator_live_test`: mount renders the grid, a broadcast delta updates only the
-affected node, click places infrastructure.
+- `production/1` and `consumption/1` return the documented table (§4.2) for all seven types.
+- **Every type consumes at least one resource** — guards the invariant that §4.3's decay rule
+  depends on; if a future node type consumes nothing, `Enum.min/1` over an empty list would
+  raise.
+- `new/3` yields `health: 100.0`, `status: :online`, `id: "x:y"`.
+- `status/1` at exactly `100.0`, `60.0`, `59.9`, `20.0`, `19.9`, `0.0` — pinning the half-open
+  intervals of §4.3.
+- `display_signature/1` returns `{round(health), status}`.
 
-**Desktop adapters** — `file_snapshot_store_test` against a per-test temp directory:
+### 10.3 `CityMap`
+
+- `new/2` sets width/height, `tick: 0`, empty `nodes`.
+- `in_bounds?/3` true at `(0,0)` and `(width-1, height-1)`; false at `(-1,0)`, `(0,-1)`,
+  `(width,0)`, `(0,height)`.
+- `put_node/2`, `delete_node/2`, `get_node/2` (hit and miss), `occupied?/2` (both).
+
+### 10.4 `SimulationMetrics`
+
+- Per-resource `supplied` / `demanded` / `deficit` / `satisfaction` aggregation.
+- `deficit` is `0.0` on surplus, and `demand - supply` on shortfall.
+- `node_count`, `avg_health`, `offline_count`.
+- **`avg_health` on an empty city.** This is a division by zero, and an empty grid is the
+  *default startup state* (§6.4 hydration fallback) — so it is the first bug this codebase
+  would otherwise ship. Must return `0.0`, not raise.
+
+### 10.5 `SimulationCalculator`
+
+Arithmetic:
+
+- Satisfaction capped at `1.0` on surplus; equal to the ratio on shortfall; `1.0` when demand
+  is zero.
+- Baseline municipal capacity (§4.2) is included in supply.
+- Effective production scales by `health / 100`.
+- **Consumption does *not* scale with health.** This asymmetry is the mechanism behind
+  cascading failure; if both scaled, the simulation would quietly self-stabilise and the
+  cascade test below would pass for the wrong reason.
+- Regen is `+1.0` at full satisfaction; decay is `-(1.0 - worst) * 6.0`.
+- Health clamps at `100.0` (no overflow above) and `0.0` (never negative).
+- `worst_ratio` is computed over **only the resources the node consumes** — a `:park`
+  consumes no power, so a total blackout must leave it unaffected.
+- `tick` increments by exactly one.
+- A node at `health < 20` produces effectively nothing.
+- **Cascading failure**: seed a city dependent on one power plant, degrade it, and assert over
+  successive ticks that power supply falls and other nodes degrade in turn.
+
+Delta semantics — these four are the tests that prove the §4.4 optimisation is real:
+
+| Scenario | Expected |
+|---|---|
+| Stable, fully-supplied, full-health city | delta is **empty** |
+| Starved city | delta contains **only** the starved nodes |
+| Health moves `87.3 → 87.8` (same rounded value) | node is **excluded** |
+| Status flips while rounded health is unchanged | node is **included** |
+
+The third row is the single most important test in the suite. Without it, `display_signature`
+is effectively untested and a naive struct comparison would satisfy every other assertion here
+while emitting a full-grid delta every tick.
+
+Determinism: `advance_tick/1` applied twice to identical input produces identical output.
+
+### 10.6 Domain properties (`stream_data`)
+
+Generated over arbitrary city compositions and tick counts, asserting invariants that
+example-based tests can only sample:
+
+- `health` remains within `[0.0, 100.0]` after any number of ticks.
+- `delta` keys are always a subset of the city's node ids.
+- `delta` contains **exactly** the nodes whose `display_signature/1` changed, verified by
+  recomputing signatures before and after rather than by trusting the implementation.
+- `advance_tick/1` is deterministic for any generated city.
+- `tick` strictly increases.
+- `advance_tick/1` neither creates nor destroys nodes — `node_count` is invariant.
+- `place/4` followed by `demolish/3` at the same coordinates round-trips to the original map.
+
+### 10.7 Domain purity
+
+`domain_purity_test` — the BEAM imports-table assertion of §3.3, covering the enforcement gap
+`boundary` cannot close.
+
+### 10.8 Use cases
+
+`AdvanceCityTick` — returns `{:ok, %{city_map:, delta:, metrics:}}`; tick incremented; metrics
+consistent with the returned map; the delta matches the calculator's; **an empty city advances
+without raising** (see §10.4).
+
+`ManageInfrastructure` — `place/4` succeeds with a node at `100.0`/`:online` at the requested
+coordinates; rejects `(-1,y)`, `(x,-1)`, `(width,y)`, `(x,height)` with `:out_of_bounds`;
+rejects an occupied cell with `:occupied`; rejects an unrecognised type with `:unknown_type`;
+leaves all other nodes untouched. `demolish/3` returns the removed id, removes exactly one
+node, and returns `:empty` for a vacant cell.
+
+### 10.9 Infrastructure
+
+`snapshot_store_test` against the real Postgres 18: round-trip, latest-wins selection, and a
+**corrupted-checksum** case asserting `{:error, :checksum_mismatch}`. `city_engine_test`
+covering hydration from a seeded snapshot, fallback to an empty grid, delta broadcast on tick,
+and `terminate/2` persistence — using the in-memory `SnapshotRepository` stub, which lives
+here rather than in the use-case tests. `tick_server_test` asserting the clock broadcasts and
+does not reference the engine.
+
+### 10.10 Web
+
+`simulator_live_test`: mount renders the grid, a broadcast delta updates only the affected
+node, click places infrastructure.
+
+### 10.11 Desktop adapters
+
+`file_snapshot_store_test` against a per-test temp directory:
 round-trip; corrupt the primary file's checksum and assert fallback to `.bak`; corrupt both
 and assert `{:error, :not_found}`; assert no `snapshot.tmp` survives a successful save; assert
 `load_latest/0` on an empty directory returns `{:error, :not_found}`. A **shared contract
@@ -599,7 +710,9 @@ the two adapters are proven interchangeable rather than merely intended to be.
 `notifier_test` uses a stub asserting the engine notifies on first critical deficit and does
 not notify repeatedly while the deficit persists.
 
-**Desktop packaging** cannot be unit tested. It is verified manually: `mix ex_tauri.dev`
+### 10.12 Desktop packaging
+
+Cannot be unit tested. It is verified manually: `mix ex_tauri.dev`
 launches the native window, the simulation ticks and the grid updates, closing the window
 leaves a valid snapshot file that a subsequent launch hydrates from. That last check is the
 one that actually exercises §8.3, so it is the one that matters most.
