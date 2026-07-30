@@ -27,17 +27,35 @@ affected — every commit on the branch is authored as the `adsouza` account.
 
 ## Blocked, with a known cause
 
-**Burrito production build (`mix ex_tauri.build`).** Three things stand in the way:
+**Burrito production build (`mix ex_tauri.build`).** One thing stands in the way now: **Zig is not
+installed.** Two other blockers are resolved.
 
-1. Local Erlang is OTP **29.0.4**, which the Burrito ERTS CDN has not built. Probed directly:
-   `29.0.3` and `28.4.2` return 200, `29.0.4` returns 404. Pin the build toolchain to **28.4.2**
-   — it is the only version with prebuilt ERTS for macOS *and* both Linux architectures.
-2. **Zig is not installed.** Only needed for cross-compilation; building each platform on its own
-   CI runner avoids it entirely.
-3. `mix.exs` ships `releases: [desktop: [steps: [:assemble]]]` — it needs `&Burrito.wrap/1`
-   appended, since `tauri.conf.json`'s `externalBin` expects `../burrito_out/desktop`.
+*Resolved — the ERTS version.* Burrito asks the CDN for the build machine's OTP version, and this
+machine runs 29.0.4, which is unbuilt (404 on macOS and both Linux arches). `mix.exs` now pins
+`custom_erts` per target to **29.0.3**, verified 200 on all three. No toolchain change was needed
+and none is wanted: `custom_erts` accepts a URL, 29.0.3 is the same OTP major/minor so the compiled
+BEAM is compatible, and downgrading would break a working environment — Elixir 1.20.2 here is
+compiled against OTP 29, and brew's `erlang@28` is 28.5.0.4, which is not even a CDN version.
 
-`mix ex_tauri.dev` works today and is unaffected.
+An earlier note in this document recommended pinning to **28.4.2** on the grounds that it was the
+only version with ERTS for all three targets. That was wrong — it came from a probe that tested
+29.0.4 on Linux but never tested 29.0.3 there. 29.0.3 is available on all three, so this is one
+patch back rather than a major downgrade. Re-probe before a release; once the CDN builds 29.0.4 the
+`custom_erts` entries can be dropped and Burrito's default becomes correct again.
+
+*Still blocking — Zig.* `ex_tauri`'s docs say Zig is "only needed if using Burrito for
+cross-compilation". **That is wrong.** Burrito shells out to `zig build` unconditionally
+(`lib/steps/build/pack_and_build.ex`), so Zig is required for *every* Burrito build including a
+native one. Burrito 1.6 targets Zig 0.16. This is the third stale claim found in `ex_tauri`'s
+documentation, after the OTP-28 ceiling and `sidecar_env`.
+
+*Remaining wiring.* `&Burrito.wrap/1` is deliberately **not** in the release's `steps:`, so the
+`burrito:` target config above is currently inert. Adding it is what enables
+`mix ex_tauri.build` — `tauri.conf.json`'s `externalBin` expects `../burrito_out/desktop` — but it
+also makes plain `mix release desktop` require Zig, which would break the no-extra-tooling
+assembly path that makes the asset step verifiable. Add it together with Zig, not before.
+
+`mix ex_tauri.dev` works today and is unaffected by all of this.
 
 **Asset building in the desktop release — RESOLVED.** Recorded here because the reasoning is worth
 keeping. `priv/static/assets/{css/app.css,js/app.js}` are gitignored (tailwind/esbuild output), and

@@ -71,7 +71,55 @@ defmodule ArmchairMetropolist.MixProject do
       # priv/static. The tailwind/esbuild output there is gitignored, so on a
       # clean checkout it does not exist and a release assembled without this
       # step would ship with no CSS and no JS.
-      releases: [desktop: [steps: [&build_assets/1, :assemble]]]
+      #
+      # `&Burrito.wrap/1` is deliberately NOT in `steps` — see the note on
+      # `burrito:` below. Without it, `mix release desktop` assembles with no
+      # extra tooling, which is what makes the asset step verifiable.
+      releases: [
+        desktop: [
+          steps: [&build_assets/1, :assemble],
+          burrito: [targets: burrito_targets()]
+        ]
+      ]
+    ]
+  end
+
+  # Burrito swaps the release's ERTS for a prebuilt one from the
+  # beam-machine-universal CDN, and by default asks for the *build machine's*
+  # OTP version. This machine runs 29.0.4, which the CDN has not built — 404 on
+  # macOS and both Linux arches. Pinning `custom_erts` to 29.0.3 fixes that
+  # without touching the local toolchain: same OTP major/minor, so the compiled
+  # BEAM is compatible, and no downgrade of a working dev environment.
+  #
+  # Verified by probe: 29.0.3 returns 200 on all three targets below, as does
+  # 28.4.2. 29.0.3 is preferred — one patch back rather than a major downgrade.
+  # Re-probe before a release; once the CDN builds 29.0.4 these can be dropped
+  # and Burrito's default will be correct again.
+  #
+  # This config is inert until `&Burrito.wrap/1` is added to `steps` above,
+  # which also requires Zig. Note `ex_tauri`'s docs claim Zig is needed only for
+  # cross-compilation; that is wrong — Burrito shells out to `zig build`
+  # unconditionally (lib/steps/build/pack_and_build.ex).
+  @erts_otp "29.0.3"
+  @erts_cdn "https://beam-machine-universal.b-cdn.net/OTP-#{@erts_otp}"
+
+  defp burrito_targets do
+    [
+      macos_arm: [
+        os: :darwin,
+        cpu: :aarch64,
+        custom_erts: "#{@erts_cdn}/macos/universal/otp_#{@erts_otp}_macos_universal.tar.gz"
+      ],
+      linux_x86: [
+        os: :linux,
+        cpu: :x86_64,
+        custom_erts: "#{@erts_cdn}/linux/x86_64/any/otp_#{@erts_otp}_linux_any_x86_64.tar.gz"
+      ],
+      linux_arm: [
+        os: :linux,
+        cpu: :aarch64,
+        custom_erts: "#{@erts_cdn}/linux/aarch64/any/otp_#{@erts_otp}_linux_any_aarch64.tar.gz"
+      ]
     ]
   end
 
