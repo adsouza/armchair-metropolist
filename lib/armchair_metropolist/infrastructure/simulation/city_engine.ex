@@ -200,12 +200,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   defp maybe_checkpoint(city_map) do
     every = config(:checkpoint_every_ticks, @default_checkpoint_every_ticks)
 
-    if city_map.tick > 0 and rem(city_map.tick, every) == 0 do
+    if checkpoint?(city_map.tick, every) do
       save(city_map)
     else
       :ok
     end
   end
+
+  # A non-positive or non-integer interval disables checkpointing. Without this
+  # clause `rem(tick, 0)` raises inside handle_info/2, so a single bad config
+  # value would put the engine in a restart loop that never persists anything —
+  # a far worse failure than not checkpointing.
+  #
+  # The `tick > 0` test matches the spec literally. It is also unreachable by
+  # construction: maybe_checkpoint/1 only ever sees the map *after*
+  # AdvanceCityTick has run, so the tick is always >= 1. It stays as a guard
+  # against a future caller that checkpoints a freshly hydrated city.
+  defp checkpoint?(tick, every) when is_integer(every) and every > 0 do
+    tick > 0 and rem(tick, every) == 0
+  end
+
+  defp checkpoint?(_tick, _every), do: false
 
   defp save(city_map) do
     case snapshot_repository().save(city_map.tick, city_map) do

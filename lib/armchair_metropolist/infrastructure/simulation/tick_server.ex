@@ -17,6 +17,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServer do
 
   use GenServer
 
+  require Logger
+
   @topic "city_tick"
   @default_interval_ms 1_000
 
@@ -43,6 +45,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServer do
     Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:tick, tick})
 
     {:noreply, schedule(%{state | tick: tick})}
+  end
+
+  # Anything may end up in a named process's mailbox. Crashing on it would take
+  # the whole clock down and reset the pulse counter, so stray messages are
+  # logged and dropped.
+  def handle_info(message, state) do
+    Logger.debug("TickServer ignoring unexpected message: #{inspect(message)}")
+    {:noreply, state}
   end
 
   defp schedule(state) do

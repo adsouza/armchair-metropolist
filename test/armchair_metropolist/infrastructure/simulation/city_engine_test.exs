@@ -15,6 +15,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.SlowSnapshotRepository
   alias ArmchairMetropolist.StubNotifier
   alias ArmchairMetropolist.StubSnapshotRepository
 
@@ -84,6 +85,28 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
       assert CityMap.nodes(city_map) == []
+    end
+
+    test "start_link/1 returns before a slow repository has answered" do
+      # Hydration must happen in handle_continue/2, not init/1: a snapshot read
+      # inside init/1 blocks the caller, which at boot is the whole supervision
+      # tree. This adapter stalls for 400ms, so start_link/1 taking that long
+      # is the signature of the read having moved into init/1.
+      Application.put_env(:armchair_metropolist, :snapshot_repository, SlowSnapshotRepository)
+      StubSnapshotRepository.set_initial({:error, :not_found})
+
+      {micros, _pid} = :timer.tc(fn -> start_supervised!(CityEngine) end)
+      elapsed_ms = div(micros, 1000)
+
+      assert elapsed_ms < 200,
+             "start_link must not block on hydration - hydrate in handle_continue, " <>
+               "not init/1 (took #{elapsed_ms}ms, repository stalls for " <>
+               "#{SlowSnapshotRepository.delay_ms()}ms)"
+
+      # ...and the hydration it deferred still completes.
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert city_map.width == 40
+      assert city_map.height == 30
     end
   end
 
@@ -183,22 +206,54 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   describe "persistence" do
-    test "checkpoints at the configured tick interval" do
+    test "the engine's child spec carries the 10s shutdown budget" do
+      # The 5s default can kill the process mid-write, so the save-on-shutdown
+      # guarantee depends on this. It lives on the module rather than only on the
+      # Application child spec so every caller - including start_supervised!/1
+      # in these tests - gets the same budget as production.
+      assert CityEngine.child_spec([])[:shutdown] == 10_000
+    end
+
+    test "checkpoints the post-tick map at the configured tick interval" do
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 2)
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
       start_supervised!(CityEngine)
 
       broadcast_tick(1)
+      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot()
+      assert StubSnapshotRepository.saves() == [], "tick 1 is not a checkpoint"
+
       broadcast_tick(2)
-      broadcast_tick(3)
-
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
-      assert city_map.tick == 3
-
-      # Exactly one checkpoint: tick 2. Tick 0 is skipped even though
-      # rem(0, 2) == 0, and tick 3 is not a multiple.
+      assert {:ok, %{city_map: at_tick_2}} = CityEngine.snapshot()
       assert [{2, saved}] = StubSnapshotRepository.saves()
+
+      # Pin *which* version of the map was written. Saving the pre-tick map
+      # instead would store the tick-1 state, which is a different map with
+      # different node health even though both would satisfy `saved.tick == 2`
+      # under a weaker assertion.
+      assert saved == at_tick_2
       assert saved.tick == 2
+      assert CityMap.get_node(saved, 0, 0) == CityMap.get_node(at_tick_2, 0, 0)
+      assert CityMap.get_node(saved, 0, 0).health < 100.0
+
+      broadcast_tick(3)
+      assert {:ok, %{city_map: %{tick: 3}}} = CityEngine.snapshot()
+      assert [{2, ^saved}] = StubSnapshotRepository.saves(), "tick 3 is not a checkpoint"
+    end
+
+    test "treats a non-positive checkpoint interval as checkpointing disabled" do
+      # rem(tick, 0) raises inside handle_info/2, which would put the engine in
+      # a restart loop on every tick rather than failing at boot.
+      Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 0)
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      pid = start_supervised!(CityEngine)
+
+      broadcast_tick(1)
+      broadcast_tick(2)
+
+      assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot()
+      assert Process.whereis(CityEngine) == pid, "the engine must not have crashed and restarted"
+      assert StubSnapshotRepository.saves() == []
     end
 
     test "terminate/2 persists the city map on a graceful supervisor shutdown" do
@@ -251,7 +306,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       refute_receive {:notified, _, _}, 300
     end
 
-    test "names the resources in deficit" do
+    test "names the resources in deficit, worst first" do
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
       start_supervised!(CityEngine)
 
@@ -259,7 +314,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert_receive {:notified, title, body}, 1_000
       assert is_binary(title)
-      assert body =~ "power"
+      assert body =~ "power at 18% of demand"
+
+      # Ten commercial nodes against baseline capacity alone: power 40/220,
+      # waste 40/140, traffic 40/90, water 40/80. The order is the severity
+      # signal the operator reads first, so it is pinned, not incidental.
+      named =
+        body
+        |> String.split(", ")
+        |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
+
+      assert named == ["power", "waste", "traffic", "water"]
     end
 
     test "does not notify a city that is meeting demand" do
