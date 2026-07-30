@@ -9,6 +9,10 @@ defmodule ArmchairMetropolist.SlowSnapshotRepository do
   `set_initial/1` and `saves/0` helpers still work.
   """
 
+  # Test-support module: own top-level boundary with checks disabled, see
+  # ArmchairMetropolist.StubNotifier for the rationale.
+  use Boundary, top_level?: true, check: [in: false, out: false]
+
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
   alias ArmchairMetropolist.StubSnapshotRepository

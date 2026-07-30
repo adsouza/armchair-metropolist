@@ -57,6 +57,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServerTest do
     # cannot see a reference being added. These read the compiled module the way
     # domain_purity_test.exs does, so an alias, an import, or a bare atom
     # argument (`GenServer.cast(CityEngine, ...)`) all fail the assertion.
+    #
+    # The beam is located on disk via :code.lib_dir/1 rather than
+    # :code.which/1: under `mix test --cover`, :code.which/1 answers the atom
+    # `cover_compiled` for an instrumented module, not a path, and beam_lib
+    # then fails trying to open a file literally named "cover_compiled.beam".
+    # Reading straight from ebin/ sidesteps the code server's cover view
+    # entirely and always finds the real compiled bytecode.
     test "CityEngine is absent from TickServer's imports table" do
       called =
         imports_of(TickServer) |> Enum.map(fn {module, _f, _a} -> module end) |> Enum.uniq()
@@ -91,12 +98,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServerTest do
   end
 
   defp imports_of(module) do
-    {:ok, {^module, [imports: imports]}} = :beam_lib.chunks(:code.which(module), [:imports])
+    {:ok, {^module, [imports: imports]}} = :beam_lib.chunks(beam_path(module), [:imports])
     imports
   end
 
   defp atoms_of(module) do
-    {:ok, {^module, [atoms: atoms]}} = :beam_lib.chunks(:code.which(module), [:atoms])
+    {:ok, {^module, [atoms: atoms]}} = :beam_lib.chunks(beam_path(module), [:atoms])
     Enum.map(atoms, fn {_index, atom} -> atom end)
+  end
+
+  defp beam_path(module) do
+    :code.lib_dir(:armchair_metropolist)
+    |> Path.join("ebin/Elixir.#{Enum.join(Module.split(module), ".")}.beam")
+    |> String.to_charlist()
   end
 end

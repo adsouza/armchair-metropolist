@@ -31,6 +31,16 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :unknown_type} = ManageInfrastructure.place(map, 3, 4, :space_elevator)
     end
 
+    test "checks bounds before type: out-of-bounds and unknown-type together is :out_of_bounds",
+         %{map: map} do
+      # Pins the guard order in place/4. Both the bounds check and the type
+      # check would independently reject this call, so this is the only case
+      # that can tell them apart: if a reviewer ever swaps the `cond` clauses,
+      # this returns :unknown_type instead and the test catches it, where
+      # every other test here (each violating only one guard) would not.
+      assert {:error, :out_of_bounds} = ManageInfrastructure.place(map, 40, 0, :space_elevator)
+    end
+
     test "leaves other nodes untouched", %{map: map} do
       {:ok, {map, first}} = ManageInfrastructure.place(map, 1, 1, :park)
       {:ok, {map, _}} = ManageInfrastructure.place(map, 2, 2, :residential)

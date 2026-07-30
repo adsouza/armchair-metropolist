@@ -66,6 +66,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     assert render(view) =~ "2:3"
   end
 
+  test "selecting a type changes what placing a cell creates", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    # power_plant is List.first(Node.types()) and is therefore already
+    # selected on mount, so switching to :park is the change under test - if
+    # "select_type" merely failed to crash without actually updating
+    # @selected_type, the placed node would still come out as power_plant.
+    view
+    |> element(~s{[phx-click="select_type"][phx-value-type="park"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="9"][phx-value-y="9"]})
+    |> render_click()
+
+    html = render(view)
+    assert html =~ ~s{id="9:9"}
+    assert html =~ ~s{title="9:9 park online"}
+  end
+
   test "a removal broadcast deletes the node from the stream", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

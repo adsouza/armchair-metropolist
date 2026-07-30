@@ -1,5 +1,10 @@
 defmodule ArmchairMetropolist.StubSnapshotRepository do
   @moduledoc "In-memory SnapshotRepository for engine tests."
+
+  # Test-support module: own top-level boundary with checks disabled, see
+  # ArmchairMetropolist.StubNotifier for the rationale.
+  use Boundary, top_level?: true, check: [in: false, out: false]
+
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
   use Agent

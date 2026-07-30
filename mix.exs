@@ -12,6 +12,40 @@ defmodule ArmchairMetropolist.MixProject do
       deps: deps(),
       compilers: [:boundary, :phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
+      test_coverage: [
+        ignore_modules: [
+          # Test scaffolding under test/support, not shipped code. Counting
+          # these would measure how well the test helpers test themselves,
+          # not how well the application is tested.
+          ArmchairMetropolist.DataCase,
+          ArmchairMetropolist.StubNotifier,
+          ArmchairMetropolist.StubSnapshotRepository,
+          ArmchairMetropolist.SlowSnapshotRepository,
+          ArmchairMetropolist.CityGenerators,
+          ArmchairMetropolist.SnapshotRepositoryContract
+        ],
+        # 70%, measured ~70.25% after closing the Task 12 gaps (desktop
+        # notifiers, the place/4 guard-order test, SimulatorLive's
+        # select_type handler). Domain, Domain.Services and UseCases are
+        # pure and sit at 100% - this threshold must never be lowered to
+        # paper over a regression there.
+        #
+        # The residual gap below 90% is concentrated in a handful of modules
+        # that are mostly generated/declarative and not business logic:
+        #   * ArmchairMetropolistWeb.CoreComponents (16.67%) - phx.new
+        #     boilerplate UI components, most unused by this app's single
+        #     LiveView page.
+        #   * ArmchairMetropolistWeb (30.00%) - the `__using__` macros phx.new
+        #     generates (:controller, :channel, :live_component, ...); only
+        #     :live_view and :html are ever invoked here.
+        #   * ArmchairMetropolistWeb.Router/.ErrorHTML/.Telemetry,
+        #     ArmchairMetropolist.Application, .Infrastructure.Persistence.Repo
+        #     and .SnapshotVocabulary - thin Phoenix/Ecto scaffolding whose
+        #     uncovered lines are alternate boot-time branches (e.g. the
+        #     desktop-vs-web child list) or generated helpers this app's
+        #     tests never need to exercise directly.
+        summary: [threshold: 70]
+      ],
       boundary: [
         default: [
           check: [
@@ -50,7 +84,7 @@ defmodule ArmchairMetropolist.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, check: :test]
     ]
   end
 
@@ -118,7 +152,14 @@ defmodule ArmchairMetropolist.MixProject do
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
-      check: ["compile --force --warnings-as-errors", "test"]
+      # The project's quality gate: a forced, warnings-as-errors recompile
+      # (catches boundary violations too, since :boundary is in `compilers`)
+      # followed by the full test suite under coverage instrumentation, which
+      # enforces `test_coverage[:threshold]` above. `@tag :cold_vm` runs by
+      # default (no `--exclude`) - it is a ~0.7s regression test for a real
+      # data-loss bug (see file_snapshot_store_test.exs), fast enough that
+      # excluding it from the gate would buy nothing.
+      check: ["compile --force --warnings-as-errors", "test --cover"]
     ]
   end
 end

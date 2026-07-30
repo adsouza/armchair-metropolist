@@ -16,6 +16,10 @@ defmodule ArmchairMetropolist.DataCase do
 
   use ExUnit.CaseTemplate
 
+  # Test-support module: own top-level boundary with checks disabled, see
+  # ArmchairMetropolist.StubNotifier for the rationale.
+  use Boundary, top_level?: true, check: [in: false, out: false]
+
   using do
     quote do
       alias ArmchairMetropolist.Infrastructure.Persistence.Repo

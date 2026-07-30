@@ -1,6 +1,10 @@
 defmodule ArmchairMetropolist.CityGenerators do
   @moduledoc "StreamData generators for property-based domain tests."
 
+  # Test-support module: own top-level boundary with checks disabled, see
+  # ArmchairMetropolist.StubNotifier for the rationale.
+  use Boundary, top_level?: true, check: [in: false, out: false]
+
   import StreamData
   import ExUnitProperties, only: [gen: 2]
 

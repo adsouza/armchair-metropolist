@@ -1,6 +1,10 @@
 defmodule ArmchairMetropolist.SnapshotRepositoryContract do
   @moduledoc "Shared assertions every SnapshotRepository adapter must satisfy."
 
+  # Test-support module: own top-level boundary with checks disabled, see
+  # ArmchairMetropolist.StubNotifier for the rationale.
+  use Boundary, top_level?: true, check: [in: false, out: false]
+
   defmacro __using__(adapter: adapter) do
     quote do
       alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
