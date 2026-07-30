@@ -45,7 +45,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   defp calculate_avg_health([]), do: 0.0
 
   defp calculate_avg_health(nodes) do
-    sum = Enum.sum_by(nodes, & &1.health)
+    sum = Enum.reduce(nodes, 0.0, fn node, acc -> acc + node.health end)
     sum / length(nodes)
   end
 

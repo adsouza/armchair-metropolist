@@ -26,7 +26,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
   test "an empty city yields zero average health rather than raising" do
     metrics = SimulationMetrics.build(CityMap.new(40, 30), stats())
     assert metrics.node_count == 0
-    assert metrics.avg_health == 0.0
+    assert metrics.avg_health === 0.0
     assert metrics.offline_count == 0
   end
 end

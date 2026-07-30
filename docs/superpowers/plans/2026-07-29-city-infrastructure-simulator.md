@@ -23,6 +23,9 @@
 - `boundary` violations are **warnings**; `mix compile --force --warnings-as-errors` is the gate.
 - `compilers:` must be `[:boundary, :phoenix_live_view] ++ Mix.compilers()` — **prepend**, do not replace; dropping `:phoenix_live_view` breaks LiveView compilation.
 - Commit after every task. Never commit with failing tests.
+- `mix.exs` declares `elixir: "~> 1.17"`, so **do not use stdlib functions newer than 1.17**
+  (e.g. `Enum.sum_by/2` is `since: 1.18.0`). The dev machine runs 1.20.2, so such calls compile
+  and run fine here and would only fail on a 1.17 toolchain — nothing warns you.
 - PubSub topics: `"city_tick"` (internal clock), `"city_simulation"` (UI updates).
 - Postgres dev/test databases already exist and connect with `postgres`/`postgres` on `localhost`.
 
@@ -678,7 +681,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
   test "an empty city yields zero average health rather than raising" do
     metrics = SimulationMetrics.build(CityMap.new(40, 30), stats())
     assert metrics.node_count == 0
-    assert metrics.avg_health == 0.0
+    # === not ==, because 0 == 0.0 is true in Elixir. With ==, this assertion
+    # passes even if the empty-city guard returns integer 0, leaving the
+    # float requirement with no test behind it.
+    assert metrics.avg_health === 0.0
     assert metrics.offline_count == 0
   end
 end
