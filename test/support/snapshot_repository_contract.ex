@@ -1,5 +1,25 @@
 defmodule ArmchairMetropolist.SnapshotRepositoryContract do
-  @moduledoc "Shared assertions every SnapshotRepository adapter must satisfy."
+  @moduledoc """
+  Shared assertions every `SnapshotRepository` adapter must satisfy.
+
+  `use` this from an adapter's test and it gains the whole contract. There is
+  deliberately only one module to `use`: the ordering assertions below lived in a
+  separate `SnapshotRepositoryOrderingContract` for a while, which meant a new
+  adapter could `use` one and silently skip the other.
+
+  ## On the ordering cases
+
+  `load_latest/0` means **highest tick wins**, not *last write wins*. That
+  distinction is invisible while ticks only ever ascend, which is why the
+  ascending-only "returns the most recent snapshot" case passed against both
+  adapters for two *different* reasons: `SnapshotStore` orders by `desc: tick`,
+  while `FileSnapshotStore` merely read back whatever it happened to write last.
+  The descending case is what told them apart — `save(9, …)` then `save(1, …)`
+  returned tick 9 from Postgres and tick 1 from the file adapter.
+
+  Keep every assertion here adapter-agnostic. If one adapter needs a case the
+  other cannot satisfy, that is a divergence worth naming, not special-casing.
+  """
 
   # Test-support module: own top-level boundary with checks disabled, see
   # ArmchairMetropolist.StubNotifier for the rationale.
@@ -37,6 +57,26 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
 
       test "save/2 returns bare :ok, not {:ok, id}" do
         assert :ok === @adapter.save(3, sample_city())
+      end
+
+      test "load_latest/0 returns the highest tick, not the last written" do
+        assert :ok = @adapter.save(9, CityMap.new(19, 19))
+        assert :ok = @adapter.save(1, CityMap.new(11, 11))
+
+        assert {:ok, {9, loaded}} = @adapter.load_latest()
+        assert loaded.width == 19
+      end
+
+      test "an older tick never demotes a newer stored snapshot" do
+        # Two stale saves in a row must not walk a newer snapshot out of storage,
+        # however many times they happen. On a last-write-wins file adapter the
+        # second one also overwrote the backup, losing the tick-9 city for good.
+        assert :ok = @adapter.save(9, CityMap.new(19, 19))
+        assert :ok = @adapter.save(0, CityMap.new(40, 30))
+        assert :ok = @adapter.save(0, CityMap.new(40, 30))
+
+        assert {:ok, {9, loaded}} = @adapter.load_latest()
+        assert loaded.width == 19
       end
     end
   end

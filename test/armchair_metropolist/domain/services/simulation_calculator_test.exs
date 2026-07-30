@@ -287,9 +287,37 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "includes a node whose status flips at unchanged rounded health" do
-      a = %Node{Node.new(0, 0, :residential) | health: 60.0, status: :online}
-      b = %Node{a | health: 59.7, status: :degraded}
-      assert Node.display_signature(a) != Node.display_signature(b)
+      # The counterpart to the sub-rounding exclusion above, and the fourth delta
+      # row in the spec. A node crosses the 60.0 status boundary while `round/1`
+      # of its health is 60 on *both* sides, so only the status half of the
+      # signature moves — and that alone must put it in the delta.
+      #
+      # Fixture arithmetic. Water demand is the plant's 20 plus 3 parks at 18 = 74;
+      # supply is the 40 baseline plus the water plant's health-scaled output. A
+      # water plant at 24.1333 gives 64.1333/74 = 0.86667 satisfaction, so the
+      # power plant's delta is -(1 - 0.86667) * 6.0 = -0.8, taking 60.4 to 59.6.
+      # Waste and traffic stay fully satisfied, so water is genuinely its worst.
+      map =
+        map_with([
+          %Node{Node.new(1, 0, :power_plant) | health: 60.4, status: :online},
+          %Node{Node.new(0, 0, :water_plant) | health: 24.1333, status: :degraded},
+          Node.new(0, 3, :park),
+          Node.new(1, 3, :park),
+          Node.new(2, 3, :park)
+        ])
+
+      before = CityMap.get_node(map, 1, 0)
+      {advanced, delta} = Calc.advance_tick(map)
+      plant = CityMap.get_node(advanced, 1, 0)
+
+      refute plant.health == before.health, "the fixture must actually move the plant's health"
+      assert round(before.health) == 60
+      assert round(plant.health) == 60, "rounded health must be unchanged on both sides"
+      assert before.status == :online
+      assert plant.status == :degraded, "the status half of the signature must be what moved"
+
+      assert Map.has_key?(delta, plant.id),
+             "a status flip at unchanged rounded health must still enter the delta"
     end
 
     test "delta keys are always a subset of the city's nodes" do

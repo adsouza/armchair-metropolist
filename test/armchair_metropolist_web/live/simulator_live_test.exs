@@ -45,15 +45,41 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   test "a delta broadcast updates only the affected node", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
-    node = %Node{Node.new(4, 5, :power_plant) | health: 41.0, status: :degraded}
+    # Two nodes on the board, so "only" is actually testable. The old version of
+    # this test placed one node and asserted it appeared, which the title
+    # over-promised: it could not have detected the other one changing.
+    for {x, y} <- [{4, 5}, {6, 7}] do
+      Phoenix.PubSub.broadcast(
+        ArmchairMetropolist.PubSub,
+        "city_simulation",
+        {:city_node_placed, Node.new(x, y, :power_plant)}
+      )
+    end
+
+    untouched_before = rendered_node(render(view), "6:7")
+    assert untouched_before =~ "bg-success"
+
+    degraded = %Node{Node.new(4, 5, :power_plant) | health: 41.0, status: :degraded}
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
       "city_simulation",
-      {:city_delta, %{"4:5" => node}}
+      {:city_delta, %{"4:5" => degraded}}
     )
 
-    assert render(view) =~ "4:5"
+    html = render(view)
+
+    assert rendered_node(html, "4:5") =~ "bg-warning", "the delta's node must re-render"
+
+    assert rendered_node(html, "6:7") == untouched_before,
+           "a node absent from the delta must be byte-identical afterwards"
+  end
+
+  # The markup for one streamed node, so a test can compare a single entry rather
+  # than the whole page.
+  defp rendered_node(html, dom_id) do
+    [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
+    String.slice(tail, 0, 160)
   end
 
   test "clicking a cell places infrastructure", %{conn: conn} do

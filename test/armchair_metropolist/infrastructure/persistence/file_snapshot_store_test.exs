@@ -18,7 +18,6 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   end
 
   use ArmchairMetropolist.SnapshotRepositoryContract, adapter: FileSnapshotStore
-  use ArmchairMetropolist.SnapshotRepositoryOrderingContract, adapter: FileSnapshotStore
 
   describe "I/O failures" do
     # The port declares `:ok | {:error, term()}` and CityEngine has a branch for
@@ -68,6 +67,18 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     assert {:ok, {5, loaded}} = FileSnapshotStore.load_latest()
     assert loaded.width == 14
     assert File.exists?(Path.join(dir, "snapshot.bak"))
+  end
+
+  test "an unconfigured :snapshot_dir fails with an actionable message" do
+    prev = Application.get_env(:armchair_metropolist, :snapshot_dir)
+    Application.delete_env(:armchair_metropolist, :snapshot_dir)
+    on_exit(fn -> Application.put_env(:armchair_metropolist, :snapshot_dir, prev) end)
+
+    # Previously this surfaced as a FunctionClauseError from Path.join(nil, _),
+    # which names neither the setting nor where to set it.
+    err = assert_raise ArgumentError, fn -> FileSnapshotStore.load_latest() end
+    assert err.message =~ ":snapshot_dir"
+    assert err.message =~ "config/runtime.exs"
   end
 
   test "leaves no temp file behind after a successful save", %{dir: dir} do

@@ -60,6 +60,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.SummarizeCity
 
   require Logger
 
@@ -115,7 +116,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def handle_continue(:hydrate, state) do
     city_map = load_city_map()
 
-    {:noreply, %{state | city_map: city_map, metrics: SimulationMetrics.build(city_map, %{})}}
+    {:noreply, %{state | city_map: city_map, metrics: summarize(city_map)}}
   end
 
   @impl true
@@ -127,7 +128,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
         broadcast({:city_node_placed, node})
-        {:reply, {:ok, node}, %{state | city_map: city_map}}
+        {:reply, {:ok, node}, %{state | city_map: city_map, metrics: summarize(city_map)}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -138,7 +139,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.demolish(state.city_map, x, y) do
       {:ok, {city_map, node_id}} ->
         broadcast({:city_node_removed, node_id})
-        {:reply, {:ok, node_id}, %{state | city_map: city_map}}
+        {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: summarize(city_map)}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -294,6 +295,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # desktop target can swap the repository without recompiling this module.
   defp snapshot_repository do
     config(:snapshot_repository, ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore)
+  end
+
+  # Metrics have to come through UseCases: the boundary graph bars Infrastructure
+  # from Domain.Services, so this process cannot call SimulationCalculator itself.
+  defp summarize(city_map) do
+    {:ok, metrics} = SummarizeCity.execute(city_map)
+    metrics
   end
 
   defp notifier do

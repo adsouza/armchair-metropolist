@@ -31,7 +31,10 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
     # and the engine crash-loops.
     SnapshotVocabulary.ensure_loaded!()
 
-    query = from(s in CitySnapshot, order_by: [desc: s.tick], limit: 1)
+    # `desc: s.id` breaks ties deterministically. An engine that crashes and
+    # replays can write two rows at the same tick with different content, and
+    # `desc: s.tick` alone leaves which one wins unspecified.
+    query = from(s in CitySnapshot, order_by: [desc: s.tick, desc: s.id], limit: 1)
 
     case Repo.one(query) do
       nil ->

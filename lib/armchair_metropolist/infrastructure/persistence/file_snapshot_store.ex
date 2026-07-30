@@ -158,6 +158,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   defp tmp_path, do: Path.join(snapshot_dir(), @tmp_filename)
 
   defp snapshot_dir do
-    Application.get_env(:armchair_metropolist, :snapshot_dir)
+    Application.get_env(:armchair_metropolist, :snapshot_dir) ||
+      raise ArgumentError, """
+      #{inspect(__MODULE__)} requires :snapshot_dir to be configured.
+
+      Without it every path resolves against nil and you get a FunctionClauseError
+      from Path.join/2, which says nothing about the cause. Set it wherever this
+      adapter is selected, e.g. in config/runtime.exs for the desktop target:
+
+          config :armchair_metropolist, snapshot_dir: ExTauri.Paths.data_dir()
+
+      Tests should point it at a per-test temporary directory.
+      """
   end
 end

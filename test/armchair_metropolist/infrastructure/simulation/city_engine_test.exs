@@ -94,6 +94,22 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.node_count == 1
     end
 
+    test "reports resource figures before the first tick has run" do
+      # Regression: the engine used to hydrate with SimulationMetrics.build(map, %{}),
+      # so `resources` was empty until a tick landed and a LiveView mounting in that
+      # window had no supply/demand to render. Infrastructure cannot compute these
+      # itself (boundary bars Domain.Services), hence UseCases.SummarizeCity.
+      StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
+      start_supervised!(CityEngine)
+
+      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot()
+
+      assert Enum.sort(Map.keys(metrics.resources)) == [:power, :traffic, :waste, :water],
+             "metrics must carry every resource at mount, not an empty map"
+
+      assert metrics.resources.power.satisfaction == 1.0
+    end
+
     test "falls back to an empty configured grid when nothing is stored" do
       StubSnapshotRepository.set_initial({:error, :not_found})
       start_supervised!(CityEngine)
@@ -204,6 +220,29 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
       refute CityMap.occupied?(city_map, 3, 4)
+    end
+
+    test "metrics track a command immediately rather than lagging a tick" do
+      # Regression: metrics were only refreshed on tick, so between a place and the
+      # next tick `snapshot/0` reported a node_count that disagreed with city_map.
+      assert {:ok, %{metrics: before}} = CityEngine.snapshot()
+      assert before.node_count == 0
+
+      {:ok, _node} = CityEngine.place(3, 4, :residential)
+
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+
+      assert metrics.node_count == map_size(city_map.nodes),
+             "metrics must agree with city_map without waiting for a tick"
+
+      assert metrics.node_count == 1
+      assert metrics.resources.power.demanded > 0.0
+
+      {:ok, _id} = CityEngine.demolish(3, 4)
+
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert metrics.node_count == map_size(city_map.nodes)
+      assert metrics.node_count == 0
     end
 
     test "place/3 on an occupied cell returns an error and broadcasts nothing" do

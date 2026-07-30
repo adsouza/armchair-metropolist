@@ -4,7 +4,16 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo, SnapshotStore}
 
   use ArmchairMetropolist.SnapshotRepositoryContract, adapter: SnapshotStore
-  use ArmchairMetropolist.SnapshotRepositoryOrderingContract, adapter: SnapshotStore
+
+  test "breaks a tick tie deterministically, newest row winning" do
+    # A crashed-and-replayed engine can write two rows at the same tick with
+    # different content. `desc: tick` alone leaves the winner unspecified.
+    :ok = SnapshotStore.save(5, CityMap.new(11, 11))
+    :ok = SnapshotStore.save(5, CityMap.new(22, 22))
+
+    assert {:ok, {5, loaded}} = SnapshotStore.load_latest()
+    assert loaded.width == 22, "the later row at the same tick must win"
+  end
 
   test "detects a corrupted payload" do
     :ok = SnapshotStore.save(1, sample_city())
