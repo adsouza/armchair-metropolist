@@ -1,2 +1,3 @@
-# armchair-metropolist
+# Armchair Metropolist
+
 An urban infrastructure simulation game
