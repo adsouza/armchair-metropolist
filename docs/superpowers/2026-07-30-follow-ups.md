@@ -13,9 +13,17 @@ fixed and mutation-verified before hand-off.
 ## Needs a decision from you
 
 **Bundle identifier.** `src-tauri/tauri.conf.json` carries
-`ai.polynomic.armchair-metropolist`, inferred from the committing account's domain. It drives
-macOS code signing and the app's data container. Nothing is signed yet so there is no migration
-cost, but confirm it before any distributable build.
+`io.github.adsouza.armchair-metropolist`, derived from the `adsouza` GitHub account that owns the
+remote. It drives macOS code signing and the app's data container, so it is awkward to change once
+anything is signed — but nothing is signed yet, so switching it now is free.
+
+`io.github.<account>` is the standard reverse-DNS form for a project hosted on GitHub with no
+separate domain. **If you own a personal domain, prefer that instead** (e.g. `dev.adsouza.…` if you
+hold `adsouza.dev`) — it is a one-line change in `tauri.conf.json`.
+
+An earlier value, `ai.polynomic.armchair-metropolist`, was wrong: it was inferred from the session's
+email address rather than from the account owning this repository. Commit authorship was never
+affected — every commit on the branch is authored as the `adsouza` account.
 
 ## Blocked, with a known cause
 

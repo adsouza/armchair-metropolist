@@ -36,7 +36,7 @@
     ],
     "targets": "all"
   },
-  "identifier": "ai.polynomic.armchair-metropolist",
+  "identifier": "io.github.adsouza.armchair-metropolist",
   "productName": "Armchair Metropolist",
   "version": "0.1.0"
 }
