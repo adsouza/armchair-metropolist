@@ -7,8 +7,19 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
 
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo}
 
+  # Same cold-VM hazard as the file adapter: `:safe` will not create atoms, and a
+  # stored city is full of them. See FileSnapshotStore.ensure_vocabulary_loaded/0
+  # for the full explanation — the failure is silent and only appears on boots
+  # where nothing else has loaded the domain entities first.
+  @vocabulary [
+    ArmchairMetropolist.Domain.Entities.CityMap,
+    ArmchairMetropolist.Domain.Entities.Node
+  ]
+
   @impl true
   def load_latest do
+    Enum.each(@vocabulary, &Code.ensure_loaded!/1)
+
     query = from(s in CitySnapshot, order_by: [desc: s.tick], limit: 1)
 
     case Repo.one(query) do

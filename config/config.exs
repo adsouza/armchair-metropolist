@@ -7,6 +7,28 @@
 # General application configuration
 import Config
 
+# The desktop wrapper. `app_name` also decides where ExTauri.Paths puts the
+# snapshot file, so renaming it strands an existing city.
+#
+# `dev_command` is the sidecar `mix ex_tauri.dev` execs. ARMCHAIR_DESKTOP is what
+# distinguishes the desktop boot from a plain `mix phx.server`: config/runtime.exs
+# keys the desktop overrides off it, so the web target stays untouched.
+config :ex_tauri,
+  version: "2.5.1",
+  app_name: "Armchair Metropolist",
+  host: "localhost",
+  port: 4000,
+  window_title: "Armchair Metropolist",
+  width: 1280,
+  height: 900,
+  resize: true,
+  dev_command: ~w(env ARMCHAIR_DESKTOP=1 mix phx.server),
+  sidecar_env: [
+    {"PHX_SERVER", "true"},
+    {"PHX_HOST", "localhost"},
+    {"ARMCHAIR_DESKTOP", "1"}
+  ]
+
 config :armchair_metropolist,
   ecto_repos: [ArmchairMetropolist.Infrastructure.Persistence.Repo],
   generators: [timestamp_type: :utc_datetime]

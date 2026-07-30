@@ -8,3 +8,7 @@ erl_crash.dump
 *.beam
 /config/*.secret.exs
 .elixir_ls/
+
+# Regenerated on every `mix ex_tauri.dev`. In dev it is a shell shim holding this
+# machine's absolute project path; in a production build it is a Burrito binary.
+/burrito_out

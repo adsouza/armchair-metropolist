@@ -16,12 +16,23 @@ defmodule ArmchairMetropolist.MixProject do
         default: [
           check: [
             apps: [
-              :ecto, :ecto_sql, :phoenix, :phoenix_live_view,
-              :phoenix_pubsub, :postgrex, {:mix, :runtime}
+              :ecto,
+              :ecto_sql,
+              :phoenix,
+              :phoenix_live_view,
+              :phoenix_pubsub,
+              :postgrex,
+              # Listed so the boundary compiler actually enforces the `ExTauri`
+              # dep declarations: an external app absent from this list is
+              # unchecked, and the desktop wrapper must stay reachable only from
+              # the boundaries that opt into it.
+              :ex_tauri,
+              {:mix, :runtime}
             ]
           ]
         ]
-      ]
+      ],
+      releases: [desktop: [steps: [:assemble]]]
     ]
   end
 
@@ -31,7 +42,9 @@ defmodule ArmchairMetropolist.MixProject do
   def application do
     [
       mod: {ArmchairMetropolist.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      # :inets is required by the desktop target — Burrito's release wrapper and
+      # ExTauri's updater both reach for :httpc at runtime.
+      extra_applications: [:logger, :runtime_tools, :inets]
     ]
   end
 
@@ -80,7 +93,8 @@ defmodule ArmchairMetropolist.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:boundary, "~> 0.10", runtime: false},
-      {:stream_data, "~> 1.4", only: [:test]}
+      {:stream_data, "~> 1.4", only: [:test]},
+      {:ex_tauri, "~> 0.2"}
     ]
   end
 

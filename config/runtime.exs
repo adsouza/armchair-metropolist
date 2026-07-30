@@ -23,6 +23,52 @@ end
 config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# ## Desktop target
+#
+# Set by the Tauri sidecar only (`config :ex_tauri, :dev_command` in dev,
+# `:sidecar_env` in a release), so a plain `mix phx.server` or `mix test` run is
+# unaffected. The desktop build has no Postgres to talk to: the city lives in a
+# file under the OS application-data directory instead, and alerts go to the
+# native notification centre.
+#
+# Resolving the directory here — rather than inside FileSnapshotStore — is what
+# keeps the persistence adapter free of any ExTauri reference. `data_dir/0`
+# creates the directory, so the adapter's first write always has somewhere to go.
+desktop? = System.get_env("ARMCHAIR_DESKTOP") in ~w(1 true)
+
+if desktop? do
+  config :armchair_metropolist,
+    start_repo: false,
+    start_shutdown_manager: true,
+    snapshot_repository: ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore,
+    notifier: ArmchairMetropolist.Infrastructure.Desktop.TauriNotifier,
+    snapshot_dir: ExTauri.Paths.data_dir()
+
+  # The snapshot-on-shutdown guarantee is on a stopwatch here, and it is not ours.
+  # Closing the window runs ExTauri's `kill_sidecar`: SIGTERM, poll for 2 seconds,
+  # then SIGKILL. Children stop in reverse order, so the Endpoint stops before the
+  # engine — and Thousand Island's default `shutdown_timeout` is 15 seconds of
+  # waiting for open connections to drain. The Tauri window *is* one of those
+  # connections (a LiveView socket), so the drain reliably outlasts the 2-second
+  # budget and SIGKILL lands before CityEngine.terminate/2 ever runs. Measured: 8s
+  # to the snapshot write with the default, ~0.3s with this.
+  #
+  # A local single-user window has nothing to drain gracefully for. The server
+  # target keeps the full 15 seconds.
+  config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
+    http: [thousand_island_options: [shutdown_timeout: 100]]
+
+  # A :prod desktop release has no config/dev.exs default to fall back on. The
+  # Tauri host always injects SECRET_KEY_BASE (a fresh per-launch value unless the
+  # environment supplies one), which is all a single-user local app needs.
+  if config_env() == :prod do
+    config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
+      secret_key_base:
+        System.get_env("SECRET_KEY_BASE") ||
+          raise("the desktop release expects SECRET_KEY_BASE from the Tauri host")
+  end
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
@@ -38,7 +84,11 @@ if config_env() == :dev do
     ]
 end
 
-if config_env() == :prod do
+# The desktop release is a :prod build with no database and no deployment host,
+# so it must not be held to the server deployment's required environment. Every
+# other :prod boot still fails loudly on a missing DATABASE_URL or
+# SECRET_KEY_BASE.
+if config_env() == :prod and not desktop? do
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """

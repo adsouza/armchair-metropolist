@@ -9,7 +9,8 @@ defmodule ArmchairMetropolist.Infrastructure do
       Ecto.Schema,
       Ecto.Adapters.Postgres,
       Ecto.Adapters.SQL,
-      Phoenix.PubSub
+      Phoenix.PubSub,
+      ExTauri
     ],
     exports: [Simulation.CityEngine, Persistence.Repo]
 end
