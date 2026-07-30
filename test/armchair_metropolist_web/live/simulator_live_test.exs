@@ -77,7 +77,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:city_node_placed, node}
     )
 
-    assert render(view) =~ "6:6"
+    # Prove the node is actually there before refuting its absence, otherwise
+    # the refute below is vacuously true if the dom_id scheme ever drifts
+    # from "x:y".
+    assert render(view) =~ ~s{id="6:6"}
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
@@ -86,5 +89,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     )
 
     refute render(view) =~ ~s{id="6:6"}
+  end
+
+  test "clicking demolish on a placed node removes it from the stream", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="7"][phx-value-y="8"]})
+    |> render_click()
+
+    # Same vacuity concern as the PubSub removal test: prove the node
+    # actually rendered before asserting it is gone after the demolish click.
+    assert render(view) =~ ~s{id="7:8"}
+
+    view
+    |> element(~s{[phx-click="demolish"][phx-value-x="7"][phx-value-y="8"]})
+    |> render_click()
+
+    refute render(view) =~ ~s{id="7:8"}
   end
 end

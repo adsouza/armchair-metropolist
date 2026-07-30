@@ -51,7 +51,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:node_types, Node.types())
       |> assign(:selected_type, List.first(Node.types()))
       |> assign(:cell_size, @cell_size)
-      |> stream(:nodes, CityMap.nodes(city_map))
+      |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
     {:ok, socket}
   end
