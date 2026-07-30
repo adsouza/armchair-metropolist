@@ -15,8 +15,8 @@ erl_crash.dump
 
 # Build output from tailwind + esbuild (`mix assets.build`). The genuinely-source
 # assets next to these — favicon.ico, images/, robots.txt — stay tracked.
-# NOTE: because these are not committed, anything assembling a release must build
-# them first. See docs/superpowers/2026-07-30-follow-ups.md.
+# The :desktop release prepends a build_assets/1 step so an assembled release
+# still gets them (see mix.exs); :assemble alone only copies priv/static.
 /priv/static/assets/
 
 # Digest cache written by `phx.digest` during `mix assets.deploy`.

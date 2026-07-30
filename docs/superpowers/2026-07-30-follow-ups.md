@@ -39,22 +39,26 @@ affected — every commit on the branch is authored as the `adsouza` account.
 
 `mix ex_tauri.dev` works today and is unaffected.
 
-**The desktop release does not build assets, and they are no longer committed.** `mix.exs` has
-`releases: [desktop: [steps: [:assemble]]]` — `:assemble` copies `priv/static` but runs no asset
-build. `priv/static/assets/{css/app.css,js/app.js}` are now gitignored (they are tailwind/esbuild
-output), so on a clean checkout they do not exist. **A release assembled there would ship with no
-CSS and no JS** — the LiveView would connect and function while rendering unstyled.
+**Asset building in the desktop release — RESOLVED.** Recorded here because the reasoning is worth
+keeping. `priv/static/assets/{css/app.css,js/app.js}` are gitignored (tailwind/esbuild output), and
+the release's `:assemble` step only *copies* `priv/static`. So a release assembled on a clean
+checkout would have shipped with no CSS and no JS — the LiveView would connect and function while
+rendering completely unstyled. It worked locally only because those files happened to be sitting on
+disk from an earlier `mix assets.build`.
 
-It works locally today only because those files happen to be sitting on disk from `mix
-assets.build`. Before the first real desktop build, run `mix assets.build` (or `assets.deploy`) as
-an explicit step ahead of `mix ex_tauri.build`, or wire it into the release's `steps:`. Note that
-`assets.deploy` also runs `phx.digest`, which writes `cache_manifest.json` — harmless, but
-`config/prod.exs` deliberately omits `cache_static_manifest`, so nothing reads it; plain
-`assets.build` is sufficient.
+Fixed by prepending a `build_assets/1` step: `steps: [&build_assets/1, :assemble]`. It calls the
+existing `assets.build` alias rather than restating the tailwind/esbuild invocations, so there is
+one definition to maintain. Deliberately *not* `assets.deploy` — that minifies (no benefit for
+assets served over localhost to a webview, and unminified is easier to debug) and runs
+`phx.digest`, whose `cache_manifest.json` nothing reads, since `config/prod.exs` omits
+`cache_static_manifest` on purpose.
 
-This is deliberately documented rather than fixed: `mix ex_tauri.build` is blocked on the ERTS gap
-above, so a change to the release pipeline cannot be verified end-to-end right now, and an
-unverifiable change to a build pipeline is worse than a precise note.
+Verified end to end, and the verification did not require Burrito: the `desktop` release has no
+`&Burrito.wrap/1` step, so `MIX_ENV=prod mix release desktop` assembles on its own. Deleting
+`priv/static/assets` entirely and assembling produced both files inside
+`_build/prod/rel/desktop/lib/armchair_metropolist-0.1.0/priv/static/assets/`. Mutation-checked:
+with the step removed and the directory deleted, the assembled release contains only the three
+tracked source assets and **zero** asset files.
 
 Incidental finding while checking this: `app.css` rebuilds byte-identically but **`app.js` does
 not** — esbuild output differs between runs. That is a second, independent reason not to track

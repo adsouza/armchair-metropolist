@@ -67,8 +67,23 @@ defmodule ArmchairMetropolist.MixProject do
           ]
         ]
       ],
-      releases: [desktop: [steps: [:assemble]]]
+      # `build_assets/1` must run before `:assemble`, which only *copies*
+      # priv/static. The tailwind/esbuild output there is gitignored, so on a
+      # clean checkout it does not exist and a release assembled without this
+      # step would ship with no CSS and no JS.
+      releases: [desktop: [steps: [&build_assets/1, :assemble]]]
     ]
+  end
+
+  # Reuses the `assets.build` alias rather than restating the tailwind/esbuild
+  # invocations, so there is one definition to keep in step. Deliberately not
+  # `assets.deploy`: that minifies (no benefit for assets served over localhost
+  # to a webview, and unminified is easier to debug) and runs `phx.digest`,
+  # whose cache_manifest.json nothing reads — `config/prod.exs` omits
+  # `cache_static_manifest` on purpose.
+  defp build_assets(%Mix.Release{} = release) do
+    Mix.Task.run("assets.build")
+    release
   end
 
   # Configuration for the OTP application.
