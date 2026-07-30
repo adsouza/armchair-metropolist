@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Elixir `~> 1.17`, running on Elixir 1.20.2 / OTP 29 (erts 17.0.4).
-- **`Domain` and `Domain.Services` are `type: :strict, deps: []`.** No OTP (`GenServer`, `Agent`, `Task`, `Process`, `Supervisor`, `:ets`, `:timer`), no Ecto, no Phoenix. Enforced by `boundary` *and* by `domain_purity_test`.
+- **`Domain` is `type: :strict, deps: []`; `Domain.Services` is `type: :strict, deps: [ArmchairMetropolist.Domain]`.** Neither may reach OTP (`GenServer`, `Agent`, `Task`, `Process`, `Supervisor`, `:ets`, `:timer`), Ecto, or Phoenix. Enforced by `boundary` *and* by `domain_purity_test`.
 - Grid is **40 × 30**. Tick interval **1000ms**.
 - Four resources: `:power`, `:water`, `:waste`, `:traffic`. Seven node types: `:power_plant`, `:water_plant`, `:industrial`, `:road_hub`, `:residential`, `:commercial`, `:park`.
 - Baseline municipal capacity: `%{power: 40, water: 40, waste: 40, traffic: 40}`.
