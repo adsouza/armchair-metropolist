@@ -105,7 +105,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <h1 class="text-2xl font-bold mb-4">Armchair Metropolist</h1>
+      <%!-- The chrome in Layouts.app already shows the wordmark, so rendering it
+            again here just duplicated it. Kept as sr-only rather than deleted:
+            the page still needs exactly one h1 for screen readers. --%>
+      <h1 class="sr-only">Armchair Metropolist</h1>
 
       <div class="mb-4">
         <h2 class="font-semibold mb-2">Place</h2>

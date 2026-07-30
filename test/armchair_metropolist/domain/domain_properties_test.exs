@@ -14,7 +14,7 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   @max_health 100.0
 
   property "health always stays within 0.0..100.0 across many ticks" do
-    check all city <- CityGenerators.city(), ticks <- StreamData.integer(1..25) do
+    check all(city <- CityGenerators.city(), ticks <- StreamData.integer(1..25)) do
       final =
         Enum.reduce(1..ticks, city, fn _, acc ->
           {next, _} = Calc.advance_tick(acc)
@@ -29,13 +29,16 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   end
 
   property "delta contains exactly the nodes whose display signature changed" do
-    check all city <- CityGenerators.city() do
+    check all(city <- CityGenerators.city()) do
       before_sigs = Map.new(city.nodes, fn {id, n} -> {id, Node.display_signature(n)} end)
       {after_map, delta} = Calc.advance_tick(city)
       after_sigs = Map.new(after_map.nodes, fn {id, n} -> {id, Node.display_signature(n)} end)
 
       expected =
-        for {id, sig} <- after_sigs, Map.fetch!(before_sigs, id) != sig, into: MapSet.new(), do: id
+        for {id, sig} <- after_sigs,
+            Map.fetch!(before_sigs, id) != sig,
+            into: MapSet.new(),
+            do: id
 
       assert MapSet.new(Map.keys(delta)) == expected
     end
@@ -55,7 +58,7 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   # literally equal input. Verified by mutation - see the F5 evidence in
   # .superpowers/sdd/2026-07-29-city-infrastructure-simulator/final-fix-report.md.
   property "every node advances from one set of pre-tick, city-wide stats" do
-    check all city <- CityGenerators.city() do
+    check all(city <- CityGenerators.city()) do
       stats = Calc.resource_stats(city)
       {next, _delta} = Calc.advance_tick(city)
 
@@ -68,7 +71,7 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   end
 
   property "advance_tick neither creates nor destroys nodes, and tick increases" do
-    check all city <- CityGenerators.city() do
+    check all(city <- CityGenerators.city()) do
       {next, _} = Calc.advance_tick(city)
       assert map_size(next.nodes) == map_size(city.nodes)
       assert Map.keys(next.nodes) |> Enum.sort() == Map.keys(city.nodes) |> Enum.sort()
@@ -77,7 +80,7 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   end
 
   property "status is always consistent with health" do
-    check all city <- CityGenerators.city() do
+    check all(city <- CityGenerators.city()) do
       {next, _} = Calc.advance_tick(city)
 
       for {_id, node} <- next.nodes do

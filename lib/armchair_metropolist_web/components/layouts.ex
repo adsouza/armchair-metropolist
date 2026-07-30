@@ -27,48 +27,69 @@ defmodule ArmchairMetropolistWeb.Layouts do
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
 
-  attr :current_scope, :map,
-    default: nil,
-    doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
-
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
+    <header class="navbar border-b border-base-200 px-4 sm:px-6 lg:px-8">
       <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
+        <a href="/" class="flex w-fit items-center gap-3" aria-label="Armchair Metropolist">
+          <.city_mark />
+          <span class="flex flex-col leading-none">
+            <span class="text-base font-semibold tracking-tight">Armchair Metropolist</span>
+            <span class="text-[11px] opacity-60">city infrastructure simulator</span>
+          </span>
         </a>
       </div>
       <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://phoenix.hexdocs.pm/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
+        <.theme_toggle />
       </div>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <main class="px-4 py-8 sm:px-6 lg:px-8">
+      <div class="mx-auto w-fit max-w-full space-y-4">
         {render_slot(@inner_block)}
       </div>
     </main>
 
     <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
+  The application mark: a grid tile holding four buildings of differing height.
+
+  Deliberately built from the same semantic colours the simulation uses for node
+  status — `success` / `warning` / `error` — so the logo reads as a small city in
+  mixed health and stays consistent with what the grid itself shows. The frame and
+  gridlines use `currentColor`, so the mark themes with the rest of the chrome
+  rather than carrying its own palette.
+  """
+  def city_mark(assigns) do
+    ~H"""
+    <svg viewBox="0 0 32 32" class="size-9 shrink-0" role="img" aria-hidden="true">
+      <rect
+        x="1.25"
+        y="1.25"
+        width="29.5"
+        height="29.5"
+        rx="5"
+        fill="none"
+        stroke="currentColor"
+        stroke-opacity="0.3"
+        stroke-width="1.5"
+      />
+      <path
+        d="M10.75 2.5v27M21.25 2.5v27M2.5 10.75h27M2.5 21.25h27"
+        stroke="currentColor"
+        stroke-opacity="0.12"
+        stroke-width="1"
+      />
+      <rect x="5" y="19" width="4.5" height="8" rx="1" class="fill-success" />
+      <rect x="11.5" y="13" width="4.5" height="14" rx="1" class="fill-success" />
+      <rect x="18" y="16" width="4.5" height="11" rx="1" class="fill-warning" />
+      <rect x="24.5" y="21" width="3" height="6" rx="1" class="fill-error" />
+    </svg>
     """
   end
 

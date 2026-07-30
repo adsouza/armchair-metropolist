@@ -181,7 +181,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # One power plant supporting more load than baseline can carry.
       plant = %Node{Node.new(0, 0, :power_plant) | health: 30.0, status: :degraded}
       consumers = for x <- 1..8, do: Node.new(x, 0, :residential)
-      support = [Node.new(0, 2, :water_plant), Node.new(1, 2, :industrial), Node.new(2, 2, :road_hub)]
+
+      support = [
+        Node.new(0, 2, :water_plant),
+        Node.new(1, 2, :industrial),
+        Node.new(2, 2, :road_hub)
+      ]
+
       initial = map_with([plant | consumers] ++ support)
 
       final =

@@ -16,12 +16,14 @@ defmodule ArmchairMetropolist.CityGenerators do
 
   @doc "A city on a small grid with 0..12 nodes at distinct coordinates."
   def city do
-    gen all width <- integer(6..12),
-            height <- integer(6..12),
-            coords <-
-              uniq_list_of(tuple({integer(0..5), integer(0..5)}), max_length: 12),
-            types <- list_of(node_type(), length: length(coords)),
-            healths <- list_of(health(), length: length(coords)) do
+    gen all(
+          width <- integer(6..12),
+          height <- integer(6..12),
+          coords <-
+            uniq_list_of(tuple({integer(0..5), integer(0..5)}), max_length: 12),
+          types <- list_of(node_type(), length: length(coords)),
+          healths <- list_of(health(), length: length(coords))
+        ) do
       [coords, types, healths]
       |> Enum.zip()
       |> Enum.reduce(CityMap.new(width, height), fn {{x, y}, type, h}, acc ->

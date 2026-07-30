@@ -26,20 +26,45 @@ defmodule ArmchairMetropolist.Domain.DomainPurityTest do
   use ExUnit.Case, async: true
 
   @forbidden_modules [
-    GenServer, Agent, Task, Supervisor, Process, Registry,
-    :ets, :dets, :timer, :gen_server, :global
+    GenServer,
+    Agent,
+    Task,
+    Supervisor,
+    Process,
+    Registry,
+    :ets,
+    :dets,
+    :timer,
+    :gen_server,
+    :global
   ]
   @forbidden_prefixes ["Ecto", "Phoenix", "ExTauri", "Plug"]
 
   # Processes, messages, timers, and VM-global side effects. Matched on name
   # only, so every arity of each is denied.
   @forbidden_erlang_functions [
-    :spawn, :spawn_link, :spawn_monitor, :spawn_opt,
-    :send, :self, :link, :unlink, :monitor, :demonitor,
-    :send_after, :start_timer, :cancel_timer,
-    :process_flag, :process_info, :exit,
-    :register, :unregister, :whereis, :group_leader,
-    :halt, :now
+    :spawn,
+    :spawn_link,
+    :spawn_monitor,
+    :spawn_opt,
+    :send,
+    :self,
+    :link,
+    :unlink,
+    :monitor,
+    :demonitor,
+    :send_after,
+    :start_timer,
+    :cancel_timer,
+    :process_flag,
+    :process_info,
+    :exit,
+    :register,
+    :unregister,
+    :whereis,
+    :group_leader,
+    :halt,
+    :now
   ]
 
   test "no Domain module reaches OTP, Ecto, or Phoenix" do

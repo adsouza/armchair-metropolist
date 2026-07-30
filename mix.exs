@@ -25,27 +25,24 @@ defmodule ArmchairMetropolist.MixProject do
           ArmchairMetropolist.SnapshotRepositoryContract,
           ArmchairMetropolist.SnapshotRepositoryOrderingContract
         ],
-        # 70%, measured ~70.25% after closing the Task 12 gaps (desktop
-        # notifiers, the place/4 guard-order test, SimulatorLive's
-        # select_type handler). Domain, Domain.Services and UseCases are
-        # pure and sit at 100% - this threshold must never be lowered to
-        # paper over a regression there.
+        # 90%, measured 91.76%. This is the figure the design spec asked for
+        # (section 9) and it became reachable only after deleting the unused
+        # phx.new CoreComponents - 363 lines sitting at 16.67% coverage, which
+        # alone held the honest threshold down to 70.
         #
-        # The residual gap below 90% is concentrated in a handful of modules
-        # that are mostly generated/declarative and not business logic:
-        #   * ArmchairMetropolistWeb.CoreComponents (16.67%) - phx.new
-        #     boilerplate UI components, most unused by this app's single
-        #     LiveView page.
-        #   * ArmchairMetropolistWeb (30.00%) - the `__using__` macros phx.new
+        # Domain, Domain.Services and UseCases are pure and sit at 100%. Never
+        # lower this to paper over a regression in those three.
+        #
+        # The residual gap is thin Phoenix/Ecto scaffolding whose uncovered
+        # lines are alternate boot-time branches or generated helpers:
+        #   * ArmchairMetropolistWeb (30%) - the __using__ macros phx.new
         #     generates (:controller, :channel, :live_component, ...); only
         #     :live_view and :html are ever invoked here.
-        #   * ArmchairMetropolistWeb.Router/.ErrorHTML/.Telemetry,
-        #     ArmchairMetropolist.Application, .Infrastructure.Persistence.Repo
-        #     and .SnapshotVocabulary - thin Phoenix/Ecto scaffolding whose
-        #     uncovered lines are alternate boot-time branches (e.g. the
-        #     desktop-vs-web child list) or generated helpers this app's
-        #     tests never need to exercise directly.
-        summary: [threshold: 70]
+        #   * SnapshotVocabulary (50%), ErrorHTML (50%), Router (75%),
+        #     Application (77.78%), Telemetry (80%), TickServer (84.62%).
+        #     Application's gap is the desktop-vs-web child list, which cannot
+        #     both be taken in one run.
+        summary: [threshold: 90]
       ],
       boundary: [
         default: [
@@ -241,7 +238,7 @@ defmodule ArmchairMetropolist.MixProject do
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
-      "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
+      "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
@@ -259,7 +256,7 @@ defmodule ArmchairMetropolist.MixProject do
       # default (no `--exclude`) - it is a ~0.7s regression test for a real
       # data-loss bug (see file_snapshot_store_test.exs), fast enough that
       # excluding it from the gate would buy nothing.
-      check: ["compile --force --warnings-as-errors", "test --cover"]
+      check: ["format --check-formatted", "compile --force --warnings-as-errors", "test --cover"]
     ]
   end
 end

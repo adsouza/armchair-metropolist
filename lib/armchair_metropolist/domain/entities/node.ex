@@ -3,8 +3,13 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
 
   @type resource :: :power | :water | :waste | :traffic
   @type node_type ::
-          :power_plant | :water_plant | :industrial | :road_hub
-          | :residential | :commercial | :park
+          :power_plant
+          | :water_plant
+          | :industrial
+          | :road_hub
+          | :residential
+          | :commercial
+          | :park
   @type status :: :online | :degraded | :offline
 
   @type t :: %__MODULE__{
