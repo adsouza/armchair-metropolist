@@ -98,18 +98,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   Get the display signature of a node.
   Returns a tuple of {rounded_health, status}.
   """
-  def display_signature(node) do
-    health = node.health
-    # Snap to status thresholds if within 0.5, otherwise truncate
-    displayed_health =
-      cond do
-        abs(health - 60.0) < 0.5 -> 60
-        abs(health - 20.0) < 0.5 -> 20
-        true -> trunc(health)
-      end
-
-    {displayed_health, node.status}
-  end
+  def display_signature(node), do: {round(node.health), node.status}
 
   @doc """
   List all node types.
