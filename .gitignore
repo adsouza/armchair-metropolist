@@ -12,3 +12,12 @@ erl_crash.dump
 # Regenerated on every `mix ex_tauri.dev`. In dev it is a shell shim holding this
 # machine's absolute project path; in a production build it is a Burrito binary.
 /burrito_out
+
+# Build output from tailwind + esbuild (`mix assets.build`). The genuinely-source
+# assets next to these — favicon.ico, images/, robots.txt — stay tracked.
+# NOTE: because these are not committed, anything assembling a release must build
+# them first. See docs/superpowers/2026-07-30-follow-ups.md.
+/priv/static/assets/
+
+# Digest cache written by `phx.digest` during `mix assets.deploy`.
+/priv/static/cache_manifest.json
