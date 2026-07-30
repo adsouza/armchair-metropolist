@@ -10,8 +10,18 @@ defmodule ArmchairMetropolist.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      compilers: [:boundary, :phoenix_live_view] ++ Mix.compilers(),
+      listeners: [Phoenix.CodeReloader],
+      boundary: [
+        default: [
+          check: [
+            apps: [
+              :ecto, :ecto_sql, :phoenix, :phoenix_live_view,
+              :phoenix_pubsub, :postgrex, {:mix, :runtime}
+            ]
+          ]
+        ]
+      ]
     ]
   end
 
@@ -68,7 +78,9 @@ defmodule ArmchairMetropolist.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:boundary, "~> 0.10", runtime: false},
+      {:stream_data, "~> 1.4", only: [:test]}
     ]
   end
 
@@ -91,7 +103,8 @@ defmodule ArmchairMetropolist.MixProject do
         "esbuild armchair_metropolist --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
+      check: ["compile --force --warnings-as-errors", "test"]
     ]
   end
 end

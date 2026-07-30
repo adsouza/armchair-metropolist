@@ -5,11 +5,21 @@ defmodule ArmchairMetropolist.Application do
 
   use Application
 
+  use Boundary,
+    top_level?: true,
+    deps: [
+      ArmchairMetropolist.Domain,
+      ArmchairMetropolist.Domain.Services,
+      ArmchairMetropolist.UseCases,
+      ArmchairMetropolist.Infrastructure,
+      ArmchairMetropolistWeb
+    ]
+
   @impl true
   def start(_type, _args) do
     children = [
       ArmchairMetropolistWeb.Telemetry,
-      ArmchairMetropolist.Repo,
+      ArmchairMetropolist.Infrastructure.Persistence.Repo,
       {DNSCluster, query: Application.get_env(:armchair_metropolist, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ArmchairMetropolist.PubSub},
       # Start a worker by calling: ArmchairMetropolist.Worker.start_link(arg)

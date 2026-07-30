@@ -8,8 +8,16 @@
 import Config
 
 config :armchair_metropolist,
-  ecto_repos: [ArmchairMetropolist.Repo],
+  ecto_repos: [ArmchairMetropolist.Infrastructure.Persistence.Repo],
   generators: [timestamp_type: :utc_datetime]
+
+config :armchair_metropolist,
+  snapshot_repository: ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore,
+  notifier: ArmchairMetropolist.Infrastructure.Desktop.LogNotifier,
+  grid_width: 40,
+  grid_height: 30,
+  tick_interval_ms: 1000,
+  checkpoint_every_ticks: 50
 
 # Configure the endpoint
 config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,

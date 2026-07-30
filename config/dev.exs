@@ -1,7 +1,7 @@
 import Config
 
 # Configure your database
-config :armchair_metropolist, ArmchairMetropolist.Repo,
+config :armchair_metropolist, ArmchairMetropolist.Infrastructure.Persistence.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",

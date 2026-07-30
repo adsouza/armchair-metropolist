@@ -5,7 +5,7 @@ import Config
 # The MIX_TEST_PARTITION environment variable can be used
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
-config :armchair_metropolist, ArmchairMetropolist.Repo,
+config :armchair_metropolist, ArmchairMetropolist.Infrastructure.Persistence.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
