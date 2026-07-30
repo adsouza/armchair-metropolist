@@ -448,9 +448,21 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
 
     test "ignores sub-integer health movement" do
-      a = %Node{Node.new(1, 1, :park) | health: 87.3, status: :online}
-      b = %Node{Node.new(1, 1, :park) | health: 87.8, status: :online}
+      # 87.6 and 87.9 both round to 88. (87.3 and 87.8 do NOT - they round to
+      # 87 and 88 - so do not use those values here.)
+      a = %Node{Node.new(1, 1, :park) | health: 87.6, status: :online}
+      b = %Node{Node.new(1, 1, :park) | health: 87.9, status: :online}
       assert Node.display_signature(a) == Node.display_signature(b)
+      assert Node.display_signature(a) == {88, :online}
+    end
+
+    test "uses round/1, not trunc/1" do
+      # trunc(87.9) == 87 while round(87.9) == 88. This test exists because an
+      # implementation using trunc, or snapping to the status thresholds, would
+      # satisfy every other assertion here while corrupting delta membership
+      # near the :degraded/:offline boundaries.
+      node = %Node{Node.new(1, 1, :park) | health: 87.9, status: :online}
+      assert Node.display_signature(node) == {88, :online}
     end
 
     test "distinguishes a status flip at identical rounded health" do
