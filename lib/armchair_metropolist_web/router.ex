@@ -17,7 +17,7 @@ defmodule ArmchairMetropolistWeb.Router do
   scope "/", ArmchairMetropolistWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", SimulatorLive
   end
 
   # Other scopes may use custom stacks.
