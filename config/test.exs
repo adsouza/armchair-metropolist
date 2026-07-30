@@ -1,5 +1,11 @@
 import Config
 
+# The engine and the clock are singletons registered under their module names,
+# and the engine hydrates from the database outside the Ecto sandbox. Tests
+# start their own instances with `start_supervised!/1` and inject stub adapters,
+# so the application must not start them itself.
+config :armchair_metropolist, start_simulation: false
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
