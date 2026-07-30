@@ -14,6 +14,34 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
   end
 
+  # A city where water is only *slightly* short, so the resulting decay is
+  # fractional and stays inside a single rounded health value.
+  #
+  #   power    supply 40 + 120*0.900 = 148.0   demand 25.0             -> 1.0
+  #   water    supply 40 + 100*0.303 =  70.3   demand 20 + 3*18 = 74.0 -> 0.95
+  #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6    = 18.0 -> 1.0
+  #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 = 11.0 -> 1.0
+  #
+  # The power plant consumes water/waste/traffic, so its worst ratio is exactly
+  # 0.95 (74.0 * 0.95 == 70.3) and its delta is -(1 - 0.95) * 6.0 = -0.30,
+  # taking it from 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the
+  # status stays :online, so its display signature does not move.
+  #
+  # The water plant sits at "0:0" and the power plant at "1:0" deliberately.
+  # Maps iterate in key order, so the water plant -- which regenerates from
+  # 30.3 to 31.3 this tick -- is processed first. An implementation that
+  # recomputed resource stats per node would then hand the power plant a water
+  # supply of 71.3 (satisfaction 0.9635, health 89.78) instead of 70.3.
+  defp sub_rounding_city do
+    map_with([
+      %Node{Node.new(0, 0, :water_plant) | health: 30.3, status: :degraded},
+      %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
+      Node.new(0, 3, :park),
+      Node.new(1, 3, :park),
+      Node.new(2, 3, :park)
+    ])
+  end
+
   describe "baseline_capacity/0" do
     test "supplies 40 of every resource" do
       assert Calc.baseline_capacity() == %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
@@ -125,9 +153,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert node.status == :degraded
     end
 
-    test "is deterministic" do
-      map = map_with(for x <- 0..5, do: Node.new(x, 0, :residential))
-      assert Calc.advance_tick(map) == Calc.advance_tick(map)
+    test "computes resource stats once from the pre-tick map, whatever the node order" do
+      # Insertion order must not matter: every node within a tick has to see
+      # the same city-wide conditions.
+      nodes = [
+        %Node{Node.new(0, 0, :water_plant) | health: 30.3, status: :degraded},
+        %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
+        Node.new(0, 3, :park),
+        Node.new(1, 3, :park),
+        Node.new(2, 3, :park)
+      ]
+
+      {forward, _} = Calc.advance_tick(map_with(nodes))
+      {reverse, _} = Calc.advance_tick(map_with(Enum.reverse(nodes)))
+      assert forward.nodes == reverse.nodes
+
+      # And the figures must come from the *pre-tick* map. The water plant is
+      # iterated before the power plant and regenerates 30.3 -> 31.3 on this
+      # tick. Recomputing stats per node would give the power plant water
+      # supply 71.3 (satisfaction 0.9635, delta -0.219, health 89.78) rather
+      # than the pre-tick 70.3 (satisfaction 0.95, delta -0.30, health 89.7).
+      assert_in_delta CityMap.get_node(forward, 0, 0).health, 31.3, 0.001
+      assert_in_delta CityMap.get_node(forward, 1, 0).health, 89.7, 0.001
     end
 
     test "cascading failure: a failing plant drags the city down with it" do
@@ -205,6 +252,32 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # already clamped at 100.0 with full supply changes no signature.
       {_map, delta} = Calc.advance_tick(sustainable_city())
       assert delta == %{}
+
+      # A genuine sub-rounding tick, which the note above thought too awkward
+      # to construct. This is the assertion that discriminates the signature
+      # rule from a naive whole-struct comparison: the power plant's health
+      # really does move (90.0 -> 89.7), so `node == advanced` would be false
+      # and it would be emitted -- but its rounded display value is unchanged,
+      # so the delta must not contain it.
+      initial = sub_rounding_city()
+      {ticked, delta} = Calc.advance_tick(initial)
+
+      plant_before = CityMap.get_node(initial, 1, 0)
+      plant_after = CityMap.get_node(ticked, 1, 0)
+
+      assert_in_delta plant_after.health, 89.7, 0.001
+      refute plant_after.health == plant_before.health, "the health must genuinely move"
+
+      assert Node.display_signature(plant_before) == Node.display_signature(plant_after),
+             "round(90.0) == round(89.7) == 90 and the status stays :online"
+
+      refute Map.has_key?(delta, "1:0"),
+             "sub-rounding health movement must be excluded from the delta"
+
+      # The water plant crosses a rounding boundary (30.3 -> 31.3) in the same
+      # tick, so the delta is not trivially empty and the exclusion above is
+      # a real filter rather than a no-op.
+      assert Map.has_key?(delta, "0:0")
     end
 
     test "includes a node whose status flips at unchanged rounded health" do
@@ -222,7 +295,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   describe "metrics/1" do
     test "reports tick, counts and resource stats together" do
-      metrics = Calc.metrics(%CityMap{sustainable_city() | tick: 4})
+      city = sustainable_city()
+      metrics = Calc.metrics(%{city | tick: 4})
       assert metrics.tick == 4
       assert metrics.node_count == 2
       assert metrics.resources.power.satisfaction == 1.0

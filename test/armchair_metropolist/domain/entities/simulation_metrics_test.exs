@@ -12,7 +12,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       |> CityMap.put_node(%Node{Node.new(1, 0, :residential) | health: 50.0, status: :degraded})
       |> CityMap.put_node(%Node{Node.new(2, 0, :residential) | health: 10.0, status: :offline})
 
-    metrics = SimulationMetrics.build(%CityMap{map | tick: 7}, stats())
+    metrics = SimulationMetrics.build(%{map | tick: 7}, stats())
 
     assert metrics.tick == 7
     assert metrics.node_count == 3
