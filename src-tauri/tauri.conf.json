@@ -36,7 +36,7 @@
     ],
     "targets": "all"
   },
-  "identifier": "you.app.armchair-metropolist",
+  "identifier": "ai.polynomic.armchair-metropolist",
   "productName": "Armchair Metropolist",
   "version": "0.1.0"
 }

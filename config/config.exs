@@ -10,9 +10,19 @@ import Config
 # The desktop wrapper. `app_name` also decides where ExTauri.Paths puts the
 # snapshot file, so renaming it strands an existing city.
 #
-# `dev_command` is the sidecar `mix ex_tauri.dev` execs. ARMCHAIR_DESKTOP is what
-# distinguishes the desktop boot from a plain `mix phx.server`: config/runtime.exs
-# keys the desktop overrides off it, so the web target stays untouched.
+# ARMCHAIR_DESKTOP is what distinguishes the desktop boot from a plain
+# `mix phx.server`: config/runtime.exs keys every desktop override off it, so the
+# web target stays untouched. It reaches the sidecar by two separate routes:
+#
+#   * `dev_command` below — the shim `mix ex_tauri.dev` generates and execs.
+#   * a literal in src-tauri/src/main.rs, which covers a Burrito release.
+#
+# `sidecar_env` below does NOT currently set it. That key is consumed only at
+# install time, to generate main.rs, and our installer run predates it — so it is
+# inert today and the hand-written literal in main.rs is what actually works. It is
+# kept because it makes the patch self-healing: re-running `mix ex_tauri.install`
+# overwrites main.rs from its template, and this key is what puts ARMCHAIR_DESKTOP
+# back into the regenerated file.
 config :ex_tauri,
   version: "2.5.1",
   app_name: "Armchair Metropolist",

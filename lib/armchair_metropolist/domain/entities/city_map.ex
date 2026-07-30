@@ -10,6 +10,11 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           nodes: %{optional(String.t()) => Node.t()}
         }
 
+  # This struct is persisted, and snapshots are decoded with `:safe` — which will
+  # not create atoms. Adding a field whose values are atoms defined outside this
+  # module or Node, or making a new struct reachable from here, means updating
+  # Infrastructure.Persistence.SnapshotVocabulary too. Miss it and saved cities are
+  # discarded on load, only on cold VMs.
   defstruct width: 40, height: 30, tick: 0, nodes: %{}
 
   @doc """

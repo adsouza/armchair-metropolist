@@ -3,21 +3,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
+  alias ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary
+
   @primary_filename "snapshot.bin"
   @backup_filename "snapshot.bak"
   @tmp_filename "snapshot.tmp"
 
-  # Every atom a stored city can contain is defined by one of these two modules:
-  # CityMap's struct keys, and Node's struct keys plus the node-type, resource and
-  # status vocabularies. See ensure_vocabulary_loaded/0.
-  @vocabulary [
-    ArmchairMetropolist.Domain.Entities.CityMap,
-    ArmchairMetropolist.Domain.Entities.Node
-  ]
-
   @impl true
   def load_latest do
-    ensure_vocabulary_loaded()
+    # Mandatory before any `:safe` decode below, and the reason is not obvious —
+    # see SnapshotVocabulary. Without it a saved city is discarded in silence.
+    SnapshotVocabulary.ensure_loaded!()
 
     with {:error, _reason} <- read_snapshot(primary_path()),
          {:error, _reason} <- read_snapshot(backup_path()) do
@@ -54,22 +50,6 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
          {:ok, city_map} <- decode(envelope) do
       {:ok, {envelope.tick, city_map}}
     end
-  end
-
-  # `:safe` refuses to create atoms that do not already exist, and a stored city is
-  # made of them — node types, resource names, statuses, every struct key. The
-  # engine hydrates before anything else has touched the domain entities, so on a
-  # cold VM those modules are not loaded, their atoms are absent, and the decode
-  # below raises. `read_snapshot/1` would then rescue it into `{:error, :malformed}`
-  # and `load_latest/0` into `{:error, :not_found}` — a saved city discarded in
-  # silence, and only on the runs where nothing happened to load the modules first
-  # (a preceding `mix compile` is enough to hide it).
-  #
-  # Loading the vocabulary first interns every atom the payload can legitimately
-  # contain. `:safe` keeps doing its actual job: rejecting a payload that carries
-  # anything else.
-  defp ensure_vocabulary_loaded do
-    Enum.each(@vocabulary, &Code.ensure_loaded!/1)
   end
 
   defp safe_binary_to_term(encoded) do

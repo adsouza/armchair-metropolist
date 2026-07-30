@@ -16,6 +16,11 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
           status: status()
         }
 
+  # This struct is persisted, and snapshots are decoded with `:safe` — which will
+  # not create atoms. The node-type and status vocabularies below are interned only
+  # because this module gets loaded first; see
+  # Infrastructure.Persistence.SnapshotVocabulary, and update it if a new
+  # atom-valued field draws its values from elsewhere.
   defstruct [:id, :x, :y, :type, :health, :status]
 
   # Production tables (resource outputs)
