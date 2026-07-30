@@ -1,3 +1,27 @@
+defmodule ArmchairMetropolist.FailingSnapshotRepository do
+  @moduledoc """
+  A repository whose every save fails, each in a different way.
+
+  Three separate failure modes because the engine has to survive all three: the
+  port's declared `{:error, term()}`, an adapter that raises anyway, and one that
+  exits. Defined here rather than in test/support because nothing outside this
+  file needs them.
+  """
+  @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
+
+  @impl true
+  def load_latest, do: {:error, :not_found}
+
+  @impl true
+  def save(_tick, _city_map) do
+    case Application.get_env(:armchair_metropolist, :failing_repository_mode, :error_tuple) do
+      :error_tuple -> {:error, :disk_full}
+      :raise -> raise File.Error, reason: :eacces, action: "write to", path: "snapshot.bin"
+      :exit -> exit(:timeout)
+    end
+  end
+end
+
 defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   @moduledoc """
   Engine lifecycle tests.
@@ -12,8 +36,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   """
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.FailingSnapshotRepository
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.SlowSnapshotRepository
   alias ArmchairMetropolist.StubNotifier
@@ -26,7 +53,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     :snapshot_repository,
     :notifier,
     :notifier_test_pid,
-    :checkpoint_every_ticks
+    :checkpoint_every_ticks,
+    :failing_repository_mode
   ]
 
   setup do
@@ -284,6 +312,88 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert [{1, saved} | _] = StubSnapshotRepository.saves()
       assert saved.tick == 1
+    end
+  end
+
+  describe "a repository that cannot save" do
+    # The failure the engine must absorb rather than propagate. A raise out of a
+    # checkpoint kills the engine, the supervisor restarts it, and hydration rolls
+    # the city back to the previous checkpoint — so a permanently unwritable
+    # snapshot directory silently discards `checkpoint_every_ticks` worth of the
+    # player's work over and over, without ever tripping `max_restarts`, because
+    # the restarts are a whole checkpoint interval apart.
+    setup do
+      Application.put_env(:armchair_metropolist, :snapshot_repository, FailingSnapshotRepository)
+      Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 1)
+      :ok
+    end
+
+    for {mode, description} <- [
+          error_tuple: "returns {:error, reason}",
+          raise: "raises",
+          exit: "exits"
+        ] do
+      test "a checkpoint against a repository that #{description} keeps the engine and its state" do
+        Application.put_env(:armchair_metropolist, :failing_repository_mode, unquote(mode))
+
+        pid = start_supervised!(CityEngine)
+        {:ok, node} = CityEngine.place(1, 1, :power_plant)
+
+        # The shutdown is inside the capture too: terminate/2 saves as well, and
+        # its failure would otherwise leak past the test into `mix check`'s output.
+        log =
+          capture_log(fn ->
+            broadcast_tick(1)
+            assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot()
+            broadcast_tick(2)
+            assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot()
+
+            assert Process.whereis(CityEngine) == pid,
+                   "the engine must not have crashed and restarted"
+
+            # A restart would have rehydrated an empty city at tick 0, so this is
+            # the assertion that the ticks since the last checkpoint survived.
+            assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+            assert city_map.tick == 2
+            assert CityMap.get_node(city_map, 1, 1).id == node.id
+
+            stop_supervised!(CityEngine)
+          end)
+
+        assert log =~ "failed to persist city snapshot at tick 1"
+        assert log =~ "failed to persist city snapshot at tick 2"
+      end
+    end
+
+    test "the error reason reaches the log" do
+      Application.put_env(:armchair_metropolist, :failing_repository_mode, :error_tuple)
+      start_supervised!(CityEngine)
+
+      log =
+        capture_log(fn ->
+          broadcast_tick(1)
+          assert {:ok, _snapshot} = CityEngine.snapshot()
+          stop_supervised!(CityEngine)
+        end)
+
+      assert log =~ ":disk_full"
+    end
+
+    test "terminate/2 still completes shutdown when the repository raises" do
+      Application.put_env(:armchair_metropolist, :failing_repository_mode, :raise)
+
+      pid = start_supervised!(CityEngine)
+      {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+      ref = Process.monitor(pid)
+
+      log =
+        capture_log(fn ->
+          stop_supervised!(CityEngine)
+          assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+        end)
+
+      assert log =~ "failed to persist city snapshot at tick 0"
+      refute Process.alive?(pid)
     end
   end
 

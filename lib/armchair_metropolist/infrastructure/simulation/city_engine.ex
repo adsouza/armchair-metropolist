@@ -170,6 +170,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @impl true
   def terminate(_reason, %{city_map: nil}), do: :ok
 
+  # `save/1` swallows and logs every failure, so a broken repository cannot stall
+  # or abort shutdown here — the process still exits within its 10s budget.
   def terminate(_reason, state) do
     save(state.city_map)
   end
@@ -222,18 +224,32 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   defp checkpoint?(_tick, _every), do: false
 
+  # Never raises, and never returns anything but :ok. A failed snapshot must not
+  # take the engine down with it: the supervisor would restart it, hydration would
+  # roll the city back to the *previous* checkpoint, and every tick since would be
+  # gone. Losing one snapshot costs the player nothing they can see; losing a
+  # checkpoint interval of state costs them everything they did in it. And because
+  # the checkpoints are `checkpoint_every_ticks` apart, such a restart loop never
+  # trips `max_restarts` — it just quietly discards work forever.
   defp save(city_map) do
     case snapshot_repository().save(city_map.tick, city_map) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.error(
-          "failed to persist city snapshot at tick #{city_map.tick}: #{inspect(reason)}"
-        )
-
-        :ok
+      :ok -> :ok
+      {:error, reason} -> log_failed_save(city_map.tick, reason)
     end
+  rescue
+    # Both shipped adapters honour the port's `{:error, term()}`. These two clauses
+    # are for the one that does not — a swapped-in adapter, or a bang call that
+    # creeps back in — and for `terminate/2`, where a raise would also abandon the
+    # final write.
+    exception -> log_failed_save(city_map.tick, exception)
+  catch
+    kind, value -> log_failed_save(city_map.tick, {kind, value})
+  end
+
+  defp log_failed_save(tick, reason) do
+    Logger.error("failed to persist city snapshot at tick #{tick}: #{inspect(reason)}")
+
+    :ok
   end
 
   # Returns the next value of the critical? flag: notify on the tick the deficit

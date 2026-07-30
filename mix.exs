@@ -22,7 +22,8 @@ defmodule ArmchairMetropolist.MixProject do
           ArmchairMetropolist.StubSnapshotRepository,
           ArmchairMetropolist.SlowSnapshotRepository,
           ArmchairMetropolist.CityGenerators,
-          ArmchairMetropolist.SnapshotRepositoryContract
+          ArmchairMetropolist.SnapshotRepositoryContract,
+          ArmchairMetropolist.SnapshotRepositoryOrderingContract
         ],
         # 70%, measured ~70.25% after closing the Task 12 gaps (desktop
         # notifiers, the place/4 guard-order test, SimulatorLive's

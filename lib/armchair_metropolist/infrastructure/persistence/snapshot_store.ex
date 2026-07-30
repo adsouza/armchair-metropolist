@@ -1,5 +1,22 @@
 defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
-  @moduledoc "Ecto/Postgres adapter implementing the SnapshotRepository port."
+  @moduledoc """
+  Ecto/Postgres adapter implementing the SnapshotRepository port.
+
+  Snapshots are append-only; `load_latest/0` orders by `desc: tick`, so **the
+  highest tick wins** rather than the most recent insert. `FileSnapshotStore`
+  documents the same rule, which is what makes the two interchangeable.
+
+  ## Failures are returned, never raised
+
+  `save/2` catches the database talking back. `Repo.insert/1` already answers
+  `{:error, changeset}` for a rejected changeset, but a dead connection, a
+  checkout timeout or a missing table *raise* (`DBConnection.ConnectionError`,
+  `Postgrex.Error`) and an exhausted pool `exit`s. Left alone, any of those blew
+  up `CityEngine.handle_info/2` mid-checkpoint, restarting the engine and rolling
+  its state back to the previous checkpoint — fifty ticks of the player's work
+  traded for one lost snapshot. The port declares `{:error, term()}` for exactly
+  this, and `CityEngine` logs it and carries on.
+  """
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
@@ -37,6 +54,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
       {:ok, _snapshot} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    # Postgrex.Error, DBConnection.ConnectionError, and anything else the driver
+    # throws on the way to the socket.
+    exception -> {:error, exception}
+  catch
+    # An exhausted or un-owned pool exits rather than raising.
+    kind, value -> {:error, {kind, value}}
   end
 
   defp decode(tick, payload, checksum) do

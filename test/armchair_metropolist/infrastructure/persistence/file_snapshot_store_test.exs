@@ -18,6 +18,57 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   end
 
   use ArmchairMetropolist.SnapshotRepositoryContract, adapter: FileSnapshotStore
+  use ArmchairMetropolist.SnapshotRepositoryOrderingContract, adapter: FileSnapshotStore
+
+  describe "I/O failures" do
+    # The port declares `:ok | {:error, term()}` and CityEngine has a branch for
+    # the error. While this adapter used File.write!/File.rename! that branch was
+    # unreachable: a read-only snapshot directory raised inside handle_info/2, the
+    # engine was restarted, and its state rolled back to the previous checkpoint.
+    test "save/2 returns an error rather than raising when the directory is unwritable",
+         %{dir: dir} do
+      File.chmod!(dir, 0o500)
+      on_exit(fn -> File.chmod!(dir, 0o700) end)
+
+      assert {:error, reason} = FileSnapshotStore.save(1, sample_city())
+      assert reason == :eacces
+    end
+
+    test "an unwritable directory does not damage the snapshot already stored",
+         %{dir: dir} do
+      :ok = FileSnapshotStore.save(4, sample_city())
+
+      File.chmod!(dir, 0o500)
+      on_exit(fn -> File.chmod!(dir, 0o700) end)
+
+      assert {:error, :eacces} = FileSnapshotStore.save(5, CityMap.new(12, 12))
+
+      File.chmod!(dir, 0o700)
+      assert {:ok, {4, recovered}} = FileSnapshotStore.load_latest()
+      assert recovered == sample_city()
+    end
+  end
+
+  test "load_latest/0 prefers the backup when it holds the higher tick", %{dir: dir} do
+    # Reachable whenever a save lands out of order, and the reason load_latest/0
+    # cannot simply trust the primary.
+    :ok = FileSnapshotStore.save(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save(3, CityMap.new(13, 13))
+    # Demote by hand: swap the two files, so the primary now holds the older tick.
+    swap(Path.join(dir, "snapshot.bin"), Path.join(dir, "snapshot.bak"))
+
+    assert {:ok, {3, loaded}} = FileSnapshotStore.load_latest()
+    assert loaded.width == 13
+  end
+
+  test "re-saving the same tick overwrites in place", %{dir: dir} do
+    :ok = FileSnapshotStore.save(5, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save(5, CityMap.new(14, 14))
+
+    assert {:ok, {5, loaded}} = FileSnapshotStore.load_latest()
+    assert loaded.width == 14
+    assert File.exists?(Path.join(dir, "snapshot.bak"))
+  end
 
   test "leaves no temp file behind after a successful save", %{dir: dir} do
     :ok = FileSnapshotStore.save(1, sample_city())
@@ -76,6 +127,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
 
     assert output == "OK tick=137 nodes=7 w=17 h=11",
            "cold-VM load lost the city: #{output}"
+  end
+
+  defp swap(a, b) do
+    scratch = a <> ".swap"
+    File.rename!(a, scratch)
+    File.rename!(b, a)
+    File.rename!(scratch, b)
   end
 
   # Deliberately maximal, so the atom coverage of @vocabulary is exercised in full:

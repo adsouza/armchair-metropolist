@@ -1,5 +1,42 @@
 defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
-  @moduledoc "File-based adapter implementing the SnapshotRepository port."
+  @moduledoc """
+  File-based adapter implementing the SnapshotRepository port.
+
+  Two snapshots are kept — a primary and a backup — so a write interrupted
+  mid-flight cannot leave the desktop target with no readable city at all.
+
+  ## Ordering: highest tick wins
+
+  `load_latest/0` reads *both* files and returns whichever holds the **higher
+  tick**, not whichever was written most recently. This matches `SnapshotStore`,
+  whose `order_by: [desc: s.tick]` has always meant highest-tick-wins, and it
+  matches the port's intent: `save/2` takes the tick precisely so storage can
+  order by it.
+
+  Correspondingly, `save/2` **refuses to demote**. A save whose tick is *older*
+  than the tick already stored in the primary is accepted and reported `:ok`, but
+  it neither replaces the primary nor rotates the backup. `:ok` rather than an
+  error is deliberate: the caller asked for its state to be persisted and a
+  strictly newer state already is, so nothing has gone wrong and nothing needs
+  logging. It also keeps the two adapters interchangeable — `SnapshotStore`
+  likewise answers `:ok` for a stale insert, because the row lands in the table
+  but `load_latest/0` will never order it first.
+
+  Equal ticks *do* overwrite, so re-saving the current tick behaves as a plain
+  update rather than being silently dropped.
+
+  Without this rule one transient load miss was permanently destructive: the
+  engine would start a fresh city at tick 0, `terminate/2` would write it, the
+  real city would be demoted to the backup, and the next launch would overwrite
+  the backup too.
+
+  ## Failures are returned, never raised
+
+  Every path honours the port's `:ok | {:error, term()}`. The bang variants this
+  module used to call turned a read-only snapshot directory into a raise inside
+  `CityEngine.handle_info/2`, which restarted the engine and rolled its state
+  back to the last checkpoint — trading one lost snapshot for fifty lost ticks.
+  """
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
@@ -15,33 +52,77 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
     # see SnapshotVocabulary. Without it a saved city is discarded in silence.
     SnapshotVocabulary.ensure_loaded!()
 
-    with {:error, _reason} <- read_snapshot(primary_path()),
-         {:error, _reason} <- read_snapshot(backup_path()) do
-      {:error, :not_found}
+    # Both files are candidates and the higher tick wins. Enum.max_by/2 keeps the
+    # first of equal ticks, so a healthy primary is preferred over its own backup.
+    readable =
+      [primary_path(), backup_path()]
+      |> Enum.map(&read_snapshot/1)
+      |> Enum.flat_map(fn
+        {:ok, snapshot} -> [snapshot]
+        {:error, _reason} -> []
+      end)
+
+    case readable do
+      [] -> {:error, :not_found}
+      snapshots -> {:ok, Enum.max_by(snapshots, fn {tick, _city_map} -> tick end)}
     end
   end
 
   @impl true
   def save(tick, city_map) do
-    payload = :erlang.term_to_binary(city_map, [:compressed])
-    checksum = :crypto.hash(:md5, payload) |> Base.encode16()
+    if stale?(tick) do
+      # A strictly newer city is already stored. See "Ordering" above.
+      :ok
+    else
+      payload = :erlang.term_to_binary(city_map, [:compressed])
+      envelope = %{version: 1, tick: tick, checksum: checksum(payload), payload: payload}
 
-    envelope = %{version: 1, tick: tick, checksum: checksum, payload: payload}
-    encoded = :erlang.term_to_binary(envelope)
-
-    tmp_path = tmp_path()
-    primary_path = primary_path()
-    backup_path = backup_path()
-
-    File.write!(tmp_path, encoded)
-
-    if File.exists?(primary_path) do
-      File.rename!(primary_path, backup_path)
+      write_snapshot(:erlang.term_to_binary(envelope))
     end
+  end
 
-    File.rename!(tmp_path, primary_path)
+  # Writes through a temp file so the primary is only ever replaced by a complete
+  # snapshot. The `with` returns the first `{:error, posix}` untouched, which is
+  # already the shape the port asks for.
+  defp write_snapshot(encoded) do
+    primary_path = primary_path()
+    tmp_path = tmp_path()
 
-    :ok
+    with :ok <- File.write(tmp_path, encoded),
+         :ok <- rotate_primary(primary_path, backup_path()) do
+      File.rename(tmp_path, primary_path)
+    end
+  end
+
+  defp rotate_primary(primary_path, backup_path) do
+    if File.exists?(primary_path) do
+      File.rename(primary_path, backup_path)
+    else
+      :ok
+    end
+  end
+
+  # Only the primary is consulted. The backup is by construction the primary's
+  # predecessor, so it cannot hold a higher tick than a readable primary; and an
+  # *unreadable* primary must not be allowed to block writes forever.
+  defp stale?(tick) do
+    case stored_tick(primary_path()) do
+      {:ok, stored_tick} -> stored_tick > tick
+      :error -> false
+    end
+  end
+
+  # The envelope's tick, without decoding the compressed city payload. A snapshot
+  # that fails its checksum has no trustworthy tick to compare against.
+  defp stored_tick(path) do
+    with {:ok, encoded} <- File.read(path),
+         {:ok, %{tick: tick, checksum: checksum, payload: payload}} <-
+           safe_binary_to_term(encoded),
+         true <- checksum(payload) == checksum do
+      {:ok, tick}
+    else
+      _unusable -> :error
+    end
   end
 
   defp read_snapshot(path) do
@@ -59,7 +140,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   end
 
   defp decode(%{checksum: checksum, payload: payload}) do
-    if :crypto.hash(:md5, payload) |> Base.encode16() == checksum do
+    if checksum(payload) == checksum do
       {:ok, :erlang.binary_to_term(payload, [:safe])}
     else
       {:error, :checksum_mismatch}
@@ -69,6 +150,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   end
 
   defp decode(_other), do: {:error, :malformed}
+
+  defp checksum(payload), do: :crypto.hash(:md5, payload) |> Base.encode16()
 
   defp primary_path, do: Path.join(snapshot_dir(), @primary_filename)
   defp backup_path, do: Path.join(snapshot_dir(), @backup_filename)
