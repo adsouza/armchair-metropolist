@@ -176,3 +176,43 @@ jobs:
           path: burrito_out/desktop_${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14
+  # Deploys the *server* target to Gigalixir. The desktop binaries above are a
+  # separate product and are deliberately not a gate on this: they can fail
+  # without the web app being any less deployable.
+  deploy:
+    name: deploy to Gigalixir
+    runs-on: ubuntu-24.04
+
+    # "On green build" taken literally: depend on the real gate rather than
+    # re-running a weaker copy of it here. The `check` job runs the suite against
+    # a Postgres service on both supported Elixir versions; a bare `mix test` in
+    # this job would have no database to talk to and would fail at `ecto.create`.
+    needs: [check]
+
+    # Never deploy from a pull request. This workflow triggers on `pull_request`
+    # as well as pushes to main, so without this condition opening a PR from any
+    # branch in this repository would push production.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `gigalixir git:deploy` pushes this repository to Gigalixir's git
+          # remote, and a shallow clone is rejected there with
+          # `shallow update not allowed`. checkout defaults to depth 1.
+          fetch-depth: 0
+
+      # pipx rather than `pip install --user`: PEP 668 marks the runner's system
+      # Python as externally managed, so a plain pip install can refuse outright.
+      # pipx is preinstalled on GitHub's Ubuntu images and puts the CLI on PATH,
+      # which also removes the need to call it by absolute path.
+      - run: pipx install gigalixir
+
+      - name: Deploy
+        env:
+          GIGALIXIR_EMAIL: ${{ secrets.GIGALIXIR_EMAIL }}
+          GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_API_KEY }}
+          APP_NAME: "armchair-metropolist"
+        run: |
+          gigalixir login -e "$GIGALIXIR_EMAIL" -p "$GIGALIXIR_PASSWORD" -y
+          gigalixir git:deploy -a "$APP_NAME"
