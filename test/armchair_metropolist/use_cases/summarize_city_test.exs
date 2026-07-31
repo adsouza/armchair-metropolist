@@ -15,8 +15,12 @@ defmodule ArmchairMetropolist.UseCases.SummarizeCityTest do
   alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
   alias ArmchairMetropolist.UseCases.SummarizeCity
 
+  # The `%CityMap{} =` match is load-bearing, not decoration: `Enum.reduce/3`
+  # returns `dynamic()`, so without it the type checker cannot tell that a
+  # `%CityMap{city_with(...) | tick: n}` update downstream is valid, and warns at
+  # every such call site. Refining the type here fixes it once.
   defp city_with(nodes) do
-    Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
+    %CityMap{} = Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
   end
 
   test "reports every resource, not an empty map" do

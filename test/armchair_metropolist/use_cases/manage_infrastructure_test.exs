@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
 
   setup do: {:ok, map: CityMap.new(40, 30)}
