@@ -65,12 +65,59 @@ if config_env() == :prod and not desktop? do
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
+  # TLS, verifying the server against a pinned CA.
+  #
+  # Not `ssl: true`: Gigalixir's managed Postgres presents a certificate signed by
+  # their own root (`O=Gigalixir, CN=Gigalixir CA`, self-signed, valid to 2057),
+  # and since postgrex 0.18 `ssl: true` verifies against the OS trust store — which
+  # that chain fails with `self-signed certificate in certificate chain`. So the CA
+  # is pinned instead. `priv/cert/gigalixir-ca.pem` is public material, presented in
+  # every handshake; it is not a secret and is safe in a public repository.
+  #
+  # `verify_peer` rather than the `verify_none` commonly pasted into Gigalixir
+  # guides: the credentials and every row cross a network we do not control, and
+  # verification demonstrably works here (checked with `openssl s_client -starttls
+  # postgres` and a `sslmode=verify-full` connection), so switching it off would be
+  # a choice rather than a constraint.
+  #
+  # DATABASE_SSL_CACERTFILE overrides the path if Gigalixir ever rotates that root;
+  # DATABASE_SSL=false disables TLS entirely, for a local or sidecar Postgres that
+  # does not offer it.
+  ssl_opts =
+    if System.get_env("DATABASE_SSL") in ~w(false 0) do
+      false
+    else
+      cacertfile =
+        System.get_env("DATABASE_SSL_CACERTFILE") ||
+          Path.join(:code.priv_dir(:armchair_metropolist), "cert/gigalixir-ca.pem")
+
+      File.exists?(cacertfile) ||
+        raise """
+        the CA certificate for the database was not found at:
+            #{cacertfile}
+        Set DATABASE_SSL_CACERTFILE to its location, or DATABASE_SSL=false if this
+        deployment's Postgres does not offer TLS.
+        """
+
+      [
+        verify: :verify_peer,
+        cacertfile: cacertfile,
+        # Erlang's :ssl does not check the hostname against the certificate unless
+        # told how; without this, verify_peer would accept any cert this CA signed.
+        customize_hostname_check: [
+          match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+        ]
+      ]
+    end
+
   config :armchair_metropolist, ArmchairMetropolist.Infrastructure.Persistence.Repo,
-    # ssl: true,
+    ssl: ssl_opts,
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    # For machines with several cores, consider starting multiple pools of `pool_size`
-    # pool_count: 4,
+    # 2, not the generated default of 10. Measured: the Gigalixir free-tier role
+    # has `rolconnlimit = 4`, so a pool of 10 cannot open and the app fails to boot
+    # on "too many connections for role". 2 leaves room for a second instance
+    # during a rolling deploy and for `Release.migrate/0`, which opens its own.
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "2"),
     socket_options: maybe_ipv6
 
   # The secret key base is used to sign/encrypt cookies and other secrets.

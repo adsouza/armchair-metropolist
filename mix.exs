@@ -242,7 +242,12 @@ defmodule ArmchairMetropolist.MixProject do
       mod: {ArmchairMetropolist.Application, []},
       # :inets is required by the desktop target — Burrito's release wrapper and
       # ExTauri's updater both reach for :httpc at runtime.
-      extra_applications: [:logger, :runtime_tools, :inets]
+      #
+      # :ssl is required by the *server* target: the production Repo connects over
+      # TLS, and postgrex calls into the :ssl application at runtime without
+      # declaring it, so a release that omits it fails to connect rather than
+      # failing to build.
+      extra_applications: [:logger, :runtime_tools, :inets, :ssl]
     ]
   end
 
