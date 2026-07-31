@@ -292,7 +292,7 @@ only by the property test.
 
 ## A note on test design, learned the hard way
 
-Eight times during this build, a requirement shipped with a test that **could not fail**. Every one
+Repeatedly during this build, a requirement shipped with a test that **could not fail**. Every one
 passed review by reading and was caught only by mutation — deliberately breaking the code and
 checking whether anything noticed. The instances are worth knowing because they rhyme:
 
@@ -305,6 +305,11 @@ checking whether anything noticed. The instances are worth knowing because they 
 - A permutation "property": permuting map insertion order and asserting equal output asserts an
   Erlang invariant, not anything about the code — maps with equal key sets are the same term with
   the same iteration order.
+- An assertion satisfied by pre-existing state: `assert table_exists?("city_snapshots")` after
+  `Release.migrate/0` passed with `migrate/0` gutted entirely, because the test database was already
+  migrated. Fixed by starting that test from a rolled-back database, so the claim and the
+  precondition are not the same thing. (Found 2026-07-31, after this list was first written — the
+  pattern is still live.)
 
 Two rules came out of it, both now applied throughout the suite:
 
