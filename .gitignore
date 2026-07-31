@@ -21,3 +21,14 @@ erl_crash.dump
 
 # Digest cache written by `phx.digest` during `mix assets.deploy`.
 /priv/static/cache_manifest.json
+
+# The rest of what `phx.digest` emits: a content-hashed copy of every file in
+# priv/static, plus gzipped variants. Build output, same as the assets/ directory
+# above — but not covered by it, because these land beside the sources they were
+# made from (favicon-<hash>.ico next to favicon.ico).
+#
+# The 32 `?` match the digest's hash exactly, rather than the tempting
+# `/priv/static/*-*.*`, which would also silently swallow any future source file
+# with a hyphen in its name.
+/priv/static/*-????????????????????????????????.*
+/priv/static/*.gz

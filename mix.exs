@@ -82,7 +82,20 @@ defmodule ArmchairMetropolist.MixProject do
       # `&evict_burrito_payload_cache/1` runs last and is load-bearing — see its
       # own comment. Without it a rebuilt binary silently keeps running the code
       # from the first build you ever made.
+      #
+      # Two releases exist, so `default_release` must say which a bare
+      # `mix release` means — Gigalixir's releases buildpack runs exactly that, and
+      # Mix refuses to choose between two. Without it the deploy fails with
+      # "you must specify the name of the release", and the desktop release is the
+      # one you least want a server build to pick: it wraps the whole thing in a
+      # Burrito binary and needs Zig on the builder.
+      default_release: :armchair_metropolist,
       releases: [
+        # The server target, deployed to Gigalixir. Named for the OTP application
+        # because Gigalixir's releases buildpack starts `/app/bin/<app name>`.
+        armchair_metropolist: [
+          steps: [&deploy_assets/1, :assemble]
+        ],
         desktop: [
           steps: [&build_assets/1, :assemble, &Burrito.wrap/1, &evict_burrito_payload_cache/1],
           burrito: [targets: burrito_targets()]
@@ -170,6 +183,19 @@ defmodule ArmchairMetropolist.MixProject do
   # `cache_static_manifest` on purpose.
   defp build_assets(%Mix.Release{} = release) do
     Mix.Task.run("assets.build")
+    release
+  end
+
+  # `assets.deploy`, not `assets.build`: this target's CSS and JS cross the public
+  # internet to real browsers, so minifying earns its keep, and `phx.digest`'s
+  # content-hashed filenames are what let the cache headers be aggressive. Both are
+  # pointless for the desktop window, which reads them off a loopback socket — see
+  # `build_assets/1`.
+  #
+  # `config/runtime.exs` sets `cache_static_manifest` for this target only, so the
+  # manifest this produces is actually consulted.
+  defp deploy_assets(%Mix.Release{} = release) do
+    Mix.Task.run("assets.deploy")
     release
   end
 

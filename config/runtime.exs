@@ -132,12 +132,28 @@ if config_env() == :prod and not desktop? do
       You can generate one by calling: mix phx.gen.secret
       """
 
+  # Load-bearing beyond generating correct links: Phoenix's default
+  # `check_origin: true` compares a socket's Origin against *this* host
+  # (`Phoenix.Socket.Transport.origin_allowed?/4`). Left at "example.com" the page
+  # renders and then the LiveView socket is rejected 403, which looks like a
+  # webview or network fault rather than a missing environment variable.
   host = System.get_env("PHX_HOST") || "example.com"
 
   config :armchair_metropolist, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
+    # A server release exists in order to serve. Phoenix's generated config leaves
+    # this behind PHX_SERVER, which turns one forgotten environment variable into a
+    # deploy that boots, serves nothing, fails its health check and crash-loops —
+    # with no error to read. `eval` and `rpc` do not start applications, so forcing
+    # it here does not disturb `Release.migrate/0`.
+    server: true,
+    # `phx.digest` runs in this target's release steps (`deploy_assets/1` in
+    # mix.exs), so the manifest is present. Deliberately not set for every :prod
+    # build: the desktop target does not digest, and Phoenix raises at boot when a
+    # configured manifest is missing.
+    cache_static_manifest: "priv/static/cache_manifest.json",
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
