@@ -123,5 +123,7 @@ Clean/Hexagonal, enforced at compile time by `boundary` rather than by conventio
 inward and the compiler rejects a violation. Swapping Postgres for a file on the
 desktop target is a config change, not a code change.
 
-The design and its deliberate deviations from the original brief are recorded in
-[`docs/superpowers/specs/`](docs/superpowers/specs/).
+[`ARCHITECTURE.md`](ARCHITECTURE.md) has the layer diagram, the two-process
+simulation design, how snapshots are encoded, and what the compiler will refuse to
+let you write. The design and its deliberate deviations from the original brief are
+recorded in [`docs/superpowers/specs/`](docs/superpowers/specs/).
