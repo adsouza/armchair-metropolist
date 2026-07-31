@@ -1,0 +1,23 @@
+#!/bin/sh
+# The full gate, at the moment code leaves this machine. `mix check` is about five
+# seconds here, which is nothing against the cost of a red CI run or a broken deploy
+# — main is what the Gigalixir workflow deploys from.
+#
+# This is where the checks that pre-commit skips actually happen: the test suite
+# under coverage (needs Postgres) and mix deps.audit (needs the network).
+#
+# Bypass with `git push --no-verify` if you must — but note a push to main triggers
+# a production deploy, so bypassing here is a different order of risk to bypassing
+# pre-commit.
+
+set -e
+
+if ! mix check; then
+  printf '\n\033[31m✗ pre-push: mix check failed\033[0m\n' >&2
+  printf '  Nothing was pushed. Fix it, or bypass with: git push --no-verify\n' >&2
+  printf '  Postgres not running? The suite needs it — that is why this is a\n' >&2
+  printf '  pre-push check and not a pre-commit one.\n' >&2
+  exit 1
+fi
+
+printf '\033[32m✓ pre-push: mix check passed\033[0m\n'

@@ -111,9 +111,14 @@ format check, a forced warnings-as-errors recompile — which is also what makes
 [`boundary`](https://github.com/sasa1977/boundary) violations fail, since they are
 only warnings — and the full suite under coverage, gated at 90%.
 
+`mix setup` also installs git hooks from `.githooks/`, so you do not have to
+remember: `pre-commit` runs the fast checks plus a scan of the staged diff for
+credentials (this repository is public), and `pre-push` runs the whole gate. Run
+`mix githooks` if you cloned before they existed.
+
 [`TESTING.md`](TESTING.md) covers the rest: running a subset, what the suite is made
-of and why it is shaped that way, the manual checks for each target, and how to
-mutation-test a change by hand.
+of and why it is shaped that way, the manual checks for each target, how to
+mutation-test a change by hand, and how to check the hooks still bite.
 
 ## Architecture
 

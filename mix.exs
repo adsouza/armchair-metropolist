@@ -181,6 +181,31 @@ defmodule ArmchairMetropolist.MixProject do
   # to a webview, and unminified is easier to debug) and runs `phx.digest`,
   # whose cache_manifest.json nothing reads — `config/prod.exs` omits
   # `cache_static_manifest` on purpose.
+  # Points git at the hooks in .githooks/. `.git/hooks` is not versioned, so without
+  # this a fresh clone has no hooks at all and the gate goes back to being something
+  # you have to remember — which is exactly how every commit in this repository's
+  # early history was made.
+  #
+  # Idempotent, and safe to run outside a checkout (a release tarball, a vendored
+  # copy): it reports and moves on rather than failing the whole `mix setup`.
+  defp install_git_hooks(_args) do
+    if File.exists?(".git") do
+      case System.cmd("git", ["config", "core.hooksPath", ".githooks"], stderr_to_stdout: true) do
+        {_out, 0} ->
+          # Belt and braces. Git does version the executable bit, so a clone should
+          # already have it, but a hook that is not executable is silently ignored —
+          # the worst possible failure for something whose whole job is to object.
+          Enum.each(Path.wildcard(".githooks/*"), &File.chmod!(&1, 0o755))
+          Mix.shell().info("[git hooks] core.hooksPath -> .githooks")
+
+        {out, code} ->
+          Mix.shell().error("[git hooks] git config failed (#{code}): #{String.trim(out)}")
+      end
+    else
+      Mix.shell().info("[git hooks] not a git checkout, skipping")
+    end
+  end
+
   defp build_assets(%Mix.Release{} = release) do
     Mix.Task.run("assets.build")
     release
@@ -345,7 +370,10 @@ defmodule ArmchairMetropolist.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build", &install_git_hooks/1],
+      # For an existing clone that predates the hooks, or after someone has pointed
+      # core.hooksPath somewhere else.
+      githooks: [&install_git_hooks/1],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],

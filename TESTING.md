@@ -75,6 +75,46 @@ must say `exit: "low"`, a **string**. Sobelow matches that value against
 and still exits 0 — a gate that cannot fail. Verify by deleting a `sobelow_skip`
 annotation and checking `mix sobelow; echo $?` is non-zero.
 
+### Git hooks
+
+Both stages are versioned in `.githooks/` and installed by pointing
+`core.hooksPath` at that directory — done by `mix setup`, or `mix githooks` in a
+clone that predates them. `.git/hooks` is not versioned, so without this a fresh
+clone has no hooks and the gate is back to being something you must remember.
+
+| hook | runs | why there |
+|------|------|-----------|
+| `pre-commit` | format check, `compile --warnings-as-errors`, `sobelow`, and a scan of the staged diff for credentials | ~1.5s, no network, no database — so it can run on every commit without getting in the way |
+| `pre-push` | the whole `mix check` | needs Postgres and the network. Push is the right moment: it is when code leaves the machine, and `main` is what deploys |
+
+The split exists so that Postgres being down blocks a *push*, not every commit.
+Bypass either with `--no-verify` — though on `main` a push triggers a production
+deploy, so bypassing pre-push is a different order of risk.
+
+The credential scan reads `git diff --cached --no-ext-diff`. **The `--no-ext-diff`
+is load-bearing**: with `diff.external` configured (difftastic, here) `git diff`
+emits syntax-aware output with no `+`/`-` prefixes, so the scan matches nothing and
+prints a green tick. That is how it behaved when first written, and it let a commit
+carrying a live database URL — inline password and all — straight through. Hooks must
+depend on git's plumbing, never on the user's git config.
+
+A line containing `allowlist-secret` is exempt, which is how this document is able to
+show a credential-shaped example at all. Audit every exemption with
+`git grep allowlist-secret`; it is deliberately not a whole-file exclusion, because a
+credential pasted into a doc is one of the likelier ways a real one gets committed.
+
+Verify the hooks still bite rather than trusting them, since a hook that no longer
+fires looks exactly like a clean repository:
+
+```bash
+# each of these must refuse to commit
+printf 'x = "postgresql://u:pw@h/db"\n' > probe.exs && git add probe.exs && git commit -m x  # allowlist-secret
+printf 'defmodule P do\n  def x,   do:    1\nend\n' > test/probe.exs && git add test/probe.exs && git commit -m x
+```
+
+The marker has to sit on the same line as the thing it exempts — it is a per-line
+filter, not a block one.
+
 Day to day:
 
 ```bash

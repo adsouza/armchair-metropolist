@@ -1,0 +1,88 @@
+#!/bin/sh
+# Fast, local, offline-safe checks. Runs on every commit, so it is deliberately
+# kept under about two seconds: formatting, a warnings-as-errors compile (which is
+# what enforces `boundary`), Sobelow, and a scan of the staged diff for secrets.
+#
+# What it leaves to pre-push, on purpose:
+#   * the test suite      — needs Postgres, and a database being down should not
+#                           block committing work in progress
+#   * mix deps.audit      — git-pulls an advisory repo, so it needs the network
+#
+# Bypass with `git commit --no-verify` when you mean to (a WIP commit on a branch).
+#
+# Installed by pointing core.hooksPath at .githooks/ — done by `mix setup`, or run
+# `mix githooks` in a clone that predates this.
+
+set -e
+
+fail() {
+  printf '\n\033[31m✗ pre-commit: %s\033[0m\n' "$1" >&2
+  printf '  Fix it, or bypass deliberately with: git commit --no-verify\n' >&2
+  exit 1
+}
+
+# Nothing staged means nothing to check (e.g. `git commit --amend --no-edit` after a
+# rebase, or a merge commit).
+#
+# `--no-ext-diff` on every git diff in this hook is load-bearing, not defensive
+# habit: this repository's author has `diff.external = difft` set, and difftastic
+# emits syntax-aware output with no `+`/`-` line prefixes at all. Without it the
+# secret scan below reads a format that does not exist on this machine, matches
+# nothing, and reports success — which is exactly what it did when first written.
+# A hook must depend on git's plumbing, never on the user's git config.
+if git diff --cached --no-ext-diff --quiet; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Secrets. This repository is PUBLIC, so a committed credential is world-readable
+# and scraped within hours; `git rm` afterwards does not unpublish it. Scans the
+# staged diff only, so pre-existing content in the tree cannot block a commit.
+# ---------------------------------------------------------------------------
+# Lines carrying the marker below are exempt. Needed because documentation *about*
+# this scan has to contain credential-shaped examples — TESTING.md documents how to
+# check the hook still bites, and that command only works if it looks like a secret.
+#
+# A narrow inline marker rather than skipping *.md wholesale: a pasted-in-a-doc
+# credential is one of the likelier ways a real one gets committed, and `git grep
+# allowlist-secret` audits every exemption in one command.
+added_lines=$(git diff --cached --no-ext-diff -U0 | grep '^+' | grep -v 'allowlist-secret' || true)
+
+# Patterns are deliberately narrow, because a hook that cries wolf gets bypassed
+# with --no-verify as a reflex and then protects nothing. Defined once and reused, so
+# the check and the report it prints cannot drift apart.
+#   1. a database URL carrying an inline password
+#   2. an assigned SECRET_KEY_BASE / API key / token with a long literal value
+#   3. a PEM private key block
+#   4. an AWS access key id
+secret_patterns='(postgres|postgresql|mysql|redis|amqp)://[^:@/[:space:]]+:[^@/[:space:]]+@
+(SECRET_KEY_BASE|_API_KEY|_TOKEN|_PASSWORD)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9+/_-]{20,}
+-----BEGIN [A-Z ]*PRIVATE KEY-----
+AKIA[0-9A-Z]{16}'
+
+matches=$(printf '%s' "$added_lines" | grep -E "$secret_patterns" || true)
+
+if [ -n "$matches" ]; then
+  printf '\n\033[31m✗ pre-commit: a staged line looks like a credential\033[0m\n' >&2
+  printf '\nMatching staged lines:\n' >&2
+  printf '%s\n' "$matches" | sed 's/^/    /' >&2
+  printf '\nThis repository is public. Secrets belong in the deployment'"'"'s own config\n' >&2
+  printf '(see docs/deploying.md), never in a commit.\n' >&2
+  printf '  If this is a false positive: git commit --no-verify\n' >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Code. Not the full `mix check`: no --force (a warm build is the point of a
+# per-commit hook) and no tests.
+# ---------------------------------------------------------------------------
+mix format --check-formatted \
+  || fail "unformatted code — run: mix format"
+
+mix compile --warnings-as-errors > /dev/null \
+  || fail "compile warnings, which includes any \`boundary\` violation"
+
+mix sobelow \
+  || fail "Sobelow security finding"
+
+printf '\033[32m✓ pre-commit\033[0m\n'
