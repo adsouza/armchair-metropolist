@@ -325,6 +325,10 @@ defmodule ArmchairMetropolist.MixProject do
       # Phoenix-specific security scanner, run as part of `mix check`. Matters more
       # now that the server target is publicly deployed with a database behind it.
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
+      # Checks mix.lock against published Elixir advisories. Complements Sobelow
+      # rather than overlapping it: Sobelow reads this project's source, mix_audit
+      # reads the dependency tree.
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.4", only: [:test]},
       {:ex_tauri, "~> 0.2"},
       # Referenced directly as `&Burrito.wrap/1` in the :desktop release steps, so
@@ -361,14 +365,24 @@ defmodule ArmchairMetropolist.MixProject do
       # test for a real data-loss bug (see file_snapshot_store_test.exs), fast
       # enough that excluding it from the gate would buy nothing.
       #
-      # `sobelow` goes before the suite because it takes about a second and a
-      # security finding is worth surfacing before a minute of tests. Its settings
-      # live in .sobelow-conf so a laptop run and CI agree; note the `exit` value
-      # there is load-bearing and easy to get silently wrong.
+      # The two security checks go before the suite: together they take a couple of
+      # seconds, and a finding is worth surfacing before a minute of tests.
+      # `sobelow` reads this project's source; its settings live in .sobelow-conf so
+      # a laptop run and CI agree, and note the `exit` value there is load-bearing
+      # and easy to get silently wrong. `deps.audit` reads mix.lock against published
+      # advisories and exits 1 on any hit, with no threshold to misconfigure.
+      #
+      # `deps.audit` can turn a green build red with no change to this repository, on
+      # the day an advisory lands for something in mix.lock. That is the point of it.
+      # It needs no manual refresh: it git-clones mirego/elixir-security-advisories
+      # to ~/.local/share and pulls it on every run — so this gate wants `git` and
+      # network. Offline it degrades rather than fails, ignoring git's exit status and
+      # scanning against whatever clone is on disk.
       check: [
         "format --check-formatted",
         "compile --force --warnings-as-errors",
         "sobelow",
+        "deps.audit",
         "test --cover"
       ]
     ]

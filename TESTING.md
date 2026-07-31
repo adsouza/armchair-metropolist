@@ -15,12 +15,39 @@ mix check
 That is the gate, and the thing to run before committing. It is defined once in
 `mix.exs` so it cannot drift between a laptop and CI, and it is three steps:
 
-| step                                   | why it is there                                                                                                                                                                         |
-|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `format --check-formatted`             | formatting is not a review topic                                                                                                                                                        |
-| `compile --force --warnings-as-errors` | **this is what enforces `boundary`.** Architecture violations are only *warnings*, so nothing else fails on them. `--force` matters too: boundary only reports on modules it recompiles |
-| `sobelow`                              | Phoenix security scan, configured in `.sobelow-conf`. Fails on any finding, which is only tolerable because the existing ones are annotated at the source — see below                    |
-| `test --cover`                         | the suite, plus the coverage threshold                                                                                                                                                  |
+| step                                   | why it is there                                                                                                                                                                                  |
+|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `format --check-formatted`             | formatting is not a review topic                                                                                                                                                                 |
+| `compile --force --warnings-as-errors` | **this is what enforces `boundary`.** Architecture violations are only *warnings*, so nothing else fails on them. `--force` matters too: boundary only reports on modules it recompiles          |
+| `sobelow`                              | Phoenix security scan of *this project's source*, configured in `.sobelow-conf`. Fails on any finding, which is only tolerable because the existing ones are annotated at the source — see below |
+| `deps.audit`                           | checks `mix.lock` against published Elixir advisories — the *dependencies*, not this code. Exits 1 on any hit                                                                                    |
+| `test --cover`                         | the suite, plus the coverage threshold                                                                                                                                                           |
+
+`deps.audit` can turn a green build red with no change to this repository, on the
+day an advisory lands for something in `mix.lock`. That is the point of it, not a
+flaw.
+
+It keeps itself current, so there is nothing to update by hand: it `git clone`s
+[mirego/elixir-security-advisories](https://github.com/mirego/elixir-security-advisories)
+into `~/.local/share/elixir-security-advisories-mirego` on first run and `git pull`s
+it on every run after. Two consequences worth knowing:
+
+* **`mix check` now wants `git` and network access.** Offline it degrades rather than
+  fails — `MixAudit.Repo.synchronize/0` ignores the `git` exit status, so the scan
+  proceeds against whatever clone is already on disk. Quietly stale, not broken.
+* The first run is slower than later ones, because it is cloning.
+
+To confirm the gate can actually fail, point it at a lockfile you know is bad rather
+than trusting a clean run:
+
+```bash
+mkdir -p /tmp/vulnprobe && cat > /tmp/vulnprobe/mix.lock <<'LOCK'
+%{
+  "altcha": {:hex, :altcha, "0.9.0", "aaaa", [:mix], [], "hexpm", "bbbb"},
+}
+LOCK
+mix deps.audit --path /tmp/vulnprobe; echo $?   # reports GHSA-6gvq-jcmp-8959, exits 1
+```
 
 ### The security scan
 
