@@ -66,6 +66,12 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
     kind, value -> {:error, {kind, value}}
   end
 
+  # sobelow_skip ["Misc.BinToTerm"]
+  # `:safe` stops atom, pid and function creation but not a deliberately huge or
+  # deeply nested term, which is why Sobelow flags this regardless. Accepted because
+  # the payload is a row this application wrote to its own `city_snapshots` table,
+  # not anything a user submits; reaching it requires database write access. The
+  # checksum beside it detects corruption, not tampering.
   defp decode(tick, payload, checksum) do
     if :crypto.hash(:md5, payload) |> Base.encode16() == checksum do
       {:ok, {tick, :erlang.binary_to_term(payload, [:safe])}}

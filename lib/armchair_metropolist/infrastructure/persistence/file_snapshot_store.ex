@@ -84,6 +84,9 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   # Writes through a temp file so the primary is only ever replaced by a complete
   # snapshot. The `with` returns the first `{:error, posix}` untouched, which is
   # already the shape the port asks for.
+  # sobelow_skip ["Traversal.FileModule"]
+  # The path comes from `:snapshot_dir` config, never from a request. No user input
+  # reaches any of the path helpers in this module.
   defp write_snapshot(encoded) do
     primary_path = primary_path()
     tmp_path = tmp_path()
@@ -114,6 +117,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
 
   # The envelope's tick, without decoding the compressed city payload. A snapshot
   # that fails its checksum has no trustworthy tick to compare against.
+  # sobelow_skip ["Traversal.FileModule"]
   defp stored_tick(path) do
     with {:ok, encoded} <- File.read(path),
          {:ok, %{tick: tick, checksum: checksum, payload: payload}} <-
@@ -125,6 +129,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
     end
   end
 
+  # sobelow_skip ["Traversal.FileModule"]
   defp read_snapshot(path) do
     with {:ok, encoded} <- File.read(path),
          {:ok, envelope} <- safe_binary_to_term(encoded),
@@ -133,12 +138,22 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
     end
   end
 
+  # sobelow_skip ["Misc.BinToTerm"]
+  # Sobelow flags every `binary_to_term`, `:safe` or not, and it is right to: `:safe`
+  # stops atom, pid and function creation but not a deliberately huge or deeply
+  # nested term. Accepted here because the input is this application's own snapshot
+  # file, not anything a user submits — an attacker able to write these bytes already
+  # has write access to the app-data directory, at which point this is not the weak
+  # link. Note the checksum is a *corruption* check, not a tamper one: it is stored
+  # beside the payload, so whoever can rewrite one can rewrite the other.
   defp safe_binary_to_term(encoded) do
     {:ok, :erlang.binary_to_term(encoded, [:safe])}
   rescue
     ArgumentError -> {:error, :malformed}
   end
 
+  # sobelow_skip ["Misc.BinToTerm"]
+  # Same reasoning as safe_binary_to_term/1 above.
   defp decode(%{checksum: checksum, payload: payload}) do
     if checksum(payload) == checksum do
       {:ok, :erlang.binary_to_term(payload, [:safe])}

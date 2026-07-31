@@ -19,7 +19,34 @@ That is the gate, and the thing to run before committing. It is defined once in
 |----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `format --check-formatted`             | formatting is not a review topic                                                                                                                                                        |
 | `compile --force --warnings-as-errors` | **this is what enforces `boundary`.** Architecture violations are only *warnings*, so nothing else fails on them. `--force` matters too: boundary only reports on modules it recompiles |
+| `sobelow`                              | Phoenix security scan, configured in `.sobelow-conf`. Fails on any finding, which is only tolerable because the existing ones are annotated at the source — see below                    |
 | `test --cover`                         | the suite, plus the coverage threshold                                                                                                                                                  |
+
+### The security scan
+
+`mix sobelow` runs as part of the gate and is set to fail on **any** finding, at
+`.sobelow-conf`'s `exit: "low"`. That is workable only because the handful of real
+findings are individually annotated where they occur:
+
+* three `Misc.BinToTerm` — `binary_to_term` in both snapshot adapters. Sobelow flags
+  these even with `[:safe]`, correctly: `:safe` blocks atom, pid and function
+  creation but not a deliberately huge or deeply nested term. Accepted because the
+  input is a snapshot this application wrote, and reaching it needs filesystem or
+  database write access.
+* three `Traversal.FileModule` — file paths in `FileSnapshotStore`, built from
+  `:snapshot_dir` config rather than from any request.
+* one `Config.CSP` in `.sobelow-conf`'s `ignore`, because a CSP *is* set — by a
+  per-request plug carrying a nonce, which Sobelow's check cannot see since it looks
+  for a static map passed to `:put_secure_browser_headers`.
+
+**Adding a `# sobelow_skip` is a claim; state the reasoning next to the code**, not
+in a config list where it rots away from what it describes.
+
+One trap, since it is exactly the failure this document warns about: `.sobelow-conf`
+must say `exit: "low"`, a **string**. Sobelow matches that value against
+`:high`/`:medium`/`:low` with a `_ -> 0` catch-all, so `exit: true` reports findings
+and still exits 0 — a gate that cannot fail. Verify by deleting a `sobelow_skip`
+annotation and checking `mix sobelow; echo $?` is non-zero.
 
 Day to day:
 

@@ -322,6 +322,9 @@ defmodule ArmchairMetropolist.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:boundary, "~> 0.10", runtime: false},
+      # Phoenix-specific security scanner, run as part of `mix check`. Matters more
+      # now that the server target is publicly deployed with a database behind it.
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.4", only: [:test]},
       {:ex_tauri, "~> 0.2"},
       # Referenced directly as `&Burrito.wrap/1` in the :desktop release steps, so
@@ -351,13 +354,23 @@ defmodule ArmchairMetropolist.MixProject do
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
       # The project's quality gate: a forced, warnings-as-errors recompile
-      # (catches boundary violations too, since :boundary is in `compilers`)
-      # followed by the full test suite under coverage instrumentation, which
-      # enforces `test_coverage[:threshold]` above. `@tag :cold_vm` runs by
-      # default (no `--exclude`) - it is a ~0.7s regression test for a real
-      # data-loss bug (see file_snapshot_store_test.exs), fast enough that
-      # excluding it from the gate would buy nothing.
-      check: ["format --check-formatted", "compile --force --warnings-as-errors", "test --cover"]
+      # (catches boundary violations too, since :boundary is in `compilers`),
+      # Sobelow's security scan, then the full test suite under coverage
+      # instrumentation, which enforces `test_coverage[:threshold]` above.
+      # `@tag :cold_vm` runs by default (no `--exclude`) - it is a ~0.7s regression
+      # test for a real data-loss bug (see file_snapshot_store_test.exs), fast
+      # enough that excluding it from the gate would buy nothing.
+      #
+      # `sobelow` goes before the suite because it takes about a second and a
+      # security finding is worth surfacing before a minute of tests. Its settings
+      # live in .sobelow-conf so a laptop run and CI agree; note the `exit` value
+      # there is load-bearing and easy to get silently wrong.
+      check: [
+        "format --check-formatted",
+        "compile --force --warnings-as-errors",
+        "sobelow",
+        "test --cover"
+      ]
     ]
   end
 end

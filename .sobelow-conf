@@ -1,0 +1,38 @@
+# Sobelow configuration, read automatically by `mix sobelow`. Kept in the repo so a
+# laptop run and the `mix check` gate see the same rules.
+[
+  # Honour the `# sobelow_skip` annotations in lib/. Each sits above the function it
+  # applies to and gives its reasoning there, next to the code, rather than in a list
+  # here where it would rot.
+  skip: true,
+
+  # Fail on any finding at or above low confidence — i.e. on anything at all. Only
+  # tolerable because every finding that exists today is annotated at the source with
+  # a justification, so the day a new one appears, `mix check` should go red.
+  #
+  # This MUST be the string "low", not `true`: Sobelow parses `:exit` as a string and
+  # matches it against :high/:medium/:low with a `_ -> 0` catch-all, so any other
+  # value silently never halts. `exit: true` reports findings and still exits 0 —
+  # a gate that cannot fail. Verified by removing an annotation and watching the
+  # exit code.
+  exit: "low",
+  threshold: :low,
+
+  # Config.CSP: a Content-Security-Policy IS set, by `put_content_security_policy/2`
+  # in lib/armchair_metropolist_web/router.ex, immediately after
+  # :put_secure_browser_headers. Sobelow's check looks specifically for a static map
+  # passed to that plug and cannot see a policy built per request — which this one
+  # must be, because it carries a nonce for the root layout's inline theme script.
+  #
+  # Verified enforcing rather than assumed: in a real browser an inline script
+  # without the nonce is blocked, while the nonced one runs. Re-run that pair of
+  # probes if you change the policy.
+  ignore: ["Config.CSP"],
+  ignore_files: [],
+  format: "txt",
+  out: nil,
+  private: false,
+  router: nil,
+  verbose: false,
+  version: false
+]
