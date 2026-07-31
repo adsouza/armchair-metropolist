@@ -28,7 +28,8 @@ defmodule ArmchairMetropolist.MixProject do
           ArmchairMetropolist.SlowSnapshotRepository,
           ArmchairMetropolist.CityGenerators,
           ArmchairMetropolist.SnapshotRepositoryContract,
-          ArmchairMetropolist.SnapshotRepositoryOrderingContract
+          ArmchairMetropolist.SnapshotRepositoryOrderingContract,
+          ArmchairMetropolist.PlayingGuide
         ],
         # 90%, measured 91.76%. This is the figure the design spec asked for
         # (section 9) and it became reachable only after deleting the unused

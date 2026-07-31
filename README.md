@@ -70,6 +70,17 @@ unpacks its payload only once, so rebuilds are silent no-ops at runtime unless t
 cache is evicted — are written up in
 [`docs/superpowers/2026-07-30-follow-ups.md`](docs/superpowers/2026-07-30-follow-ups.md).
 
+## Actually playing it
+
+The simulation is unforgiving in one specific way, and your first city will almost
+certainly collapse: baseline capacity supports exactly **two** residential blocks, and
+the third starts a death spiral that cannot be reversed by building more.
+
+[`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
+like, and how to rescue a city that is already dying — plus the production and
+consumption tables. Its numbers are generated from the domain code and checked by a
+test, so they cannot drift away from the rules.
+
 ## Deploying to Gigalixir
 
 ```bash

@@ -109,7 +109,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     html = render(view)
     assert html =~ ~s{id="9:9"}
-    assert html =~ ~s{title="9:9 park online"}
+
+    # The *type* is what this test is about, so match the parts that carry meaning and
+    # not the tooltip's punctuation: it also names the demolish action and shows a health
+    # percentage, neither of which this test has any opinion about.
+    assert html =~ ~r/title="9:9[^"]*park[^"]*online/
   end
 
   test "a removal broadcast deletes the node from the stream", %{conn: conn} do
