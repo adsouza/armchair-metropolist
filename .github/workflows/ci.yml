@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A force-push or a quick follow-up commit makes the previous run's answer
+# irrelevant, so stop it rather than paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # `mix check` is the project's whole quality gate, defined once in mix.exs:
+  #   format --check-formatted
+  #   compile --force --warnings-as-errors   <- also what enforces `boundary`,
+  #                                             whose violations are warnings
+  #   test --cover                           <- enforces the 90% threshold
+  # CI calls that alias rather than restating its parts, so the gate cannot drift
+  # between a laptop and a runner. The one exception is the floor version, which
+  # skips the format check for the reason given in the matrix below.
+  check:
+    name: check · Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      # Both versions' results are wanted: "fails only on the floor" and "fails
+      # everywhere" call for different fixes.
+      fail-fast: false
+      matrix:
+        include:
+          # The floor declared in mix.exs. This entry is the point of the matrix:
+          # a floor that nothing builds is a guess, and this project has already
+          # shipped one function that did not exist in the version it claimed to
+          # support.
+          #
+          # It runs the gate *without* the format check. Elixir's formatter output
+          # changes between versions, so checking 1.20-formatted code under 1.18
+          # tests the formatter rather than this project — a failure there would be
+          # noise. A warnings-as-errors compile failure on the floor is real signal
+          # and is still enforced.
+          - elixir: "1.18.4"
+            otp: "27.3"
+            gate: mix do compile --force --warnings-as-errors + test --cover
+          # The version actually developed against: the full gate, identical to
+          # what `mix check` runs on a laptop.
+          - elixir: "1.20.2"
+            otp: "29.0.3"
+            gate: mix check
+
+    services:
+      # The domain and use-case layers are pure and need nothing, but the Ecto
+      # adapter's tests run against real Postgres on purpose — an adapter tested
+      # only through a stub is a stub test. Credentials match config/test.exs.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      # Keyed on the lock file and the exact version pair: build artefacts are
+      # not portable between OTP versions, and a stale _build is worse than none.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ matrix.otp }}-${{ matrix.elixir }}-
+
+      - run: mix deps.get
+
+      # Catches a dependency removed from mix.exs but left in mix.lock. Cheap,
+      # and `mix precommit` already runs the mutating form locally.
+      - run: mix deps.unlock --check-unused
+
+      - run: ${{ matrix.gate }}
+        env:
+          MIX_ENV: test
+
+  # The documented answer to Linux cross-compilation: build each target on its
+  # own architecture instead. Cross-compiling Linux from macOS fails at Zig's
+  # link step (`compile exe desktop ReleaseSmall x86_64-linux 1 errors`), and
+  # `burrito_targets/0` in mix.exs defaults to the host target alone — so each
+  # runner below produces exactly one binary, its own, with no cross-compiling.
+  desktop:
+    name: desktop release · ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+
+    # Job-wide, not per-step: deps are fetched with `--only prod`, so any mix
+    # invocation that fell back to the dev env would fail on a dev-only dep it
+    # never downloaded (phoenix_live_reload). That includes `mix assets.setup`.
+    env:
+      MIX_ENV: prod
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.20.2"
+          otp-version: "29.0.3"
+
+      # Burrito shells out to `zig build` for every build, native included —
+      # ex_tauri's docs claiming Zig is cross-compilation-only are wrong. 0.16.0
+      # is what Burrito 1.6 targets.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-prod-${{ matrix.target }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-prod-${{ matrix.target }}-
+
+      - run: mix deps.get --only prod
+
+      # Installs the tailwind and esbuild binaries. The release's `build_assets`
+      # step needs them: `:assemble` only *copies* priv/static, whose contents
+      # are gitignored, so a release built without this ships no CSS and no JS.
+      - run: mix assets.setup
+
+      - name: Build the Burrito release
+        run: mix release desktop --overwrite
+
+      # An existing file is not a working binary, but a *wrong-architecture* file
+      # is a silent failure worth catching here rather than on a user's machine.
+      - name: Verify the binary is present and native
+        run: |
+          BIN="burrito_out/desktop_${{ matrix.target }}"
+          test -f "$BIN" || { echo "::error::$BIN was not produced"; ls -la burrito_out/ || true; exit 1; }
+          file "$BIN"
+          case "${{ matrix.target }}" in
+            x86_64-*)  file "$BIN" | grep -q 'x86-64'  || { echo "::error::not x86-64"; exit 1; } ;;
+            aarch64-*) file "$BIN" | grep -q 'aarch64' || { echo "::error::not aarch64"; exit 1; } ;;
+          esac
+          echo "size: $(du -h "$BIN" | cut -f1)"
+
+      # The binary is the artefact worth keeping; the .app/.dmg bundles are
+      # macOS-only and are not built here.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: burrito_out/desktop_${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14

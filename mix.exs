@@ -5,7 +5,12 @@ defmodule ArmchairMetropolist.MixProject do
     [
       app: :armchair_metropolist,
       version: "0.1.0",
-      elixir: "~> 1.17",
+      # 1.18, not the 1.17 this used to claim: `ex_tauri -> igniter -> ex_ast`
+      # requires `~> 1.18`, so a 1.17 build cannot resolve. An untested floor
+      # drifts — `Enum.sum_by/2` (1.18+) once shipped here under a 1.17 claim and
+      # only passed because the dev machine was newer. CI now builds this exact
+      # version as well as the current one, so the claim stays honest.
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
