@@ -17,6 +17,26 @@ Hover either one and the tooltip names the action. Demolishing matters more than
 looks: it is the only way to reduce demand, and therefore the only way out of a
 collapse.
 
+### Position does not matter
+
+**Blocks do not need to be adjacent, or anywhere near each other.** Resources are
+pooled across the whole city: `SimulationCalculator` computes one set of supply and
+demand figures per tick and applies them to every node identically. Coordinates are
+used for identity, for the occupancy check, and to decide where to draw — nothing else.
+
+Verified rather than assumed: the same nine buildings packed into one corner, strung
+along a diagonal, and flung to opposite edges of the grid produce byte-identical
+results after 200 ticks, down to each individual node's health.
+
+So there is no reason to plan a layout, leave room for roads, or keep plants near what
+they serve. Place things wherever is convenient — the only placement rule the game
+enforces is one block per cell.
+
+This is a genuine gap rather than a considered design: there is no adjacency, service
+radius or distance cost anywhere in the domain, and the spec never discussed one. If
+that ever changes, the characterisation test in `simulation_calculator_test.exs` fails
+and takes this section with it.
+
 ## Why your first city dies
 
 **On the third residential block.**

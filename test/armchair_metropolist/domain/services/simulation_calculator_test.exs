@@ -336,4 +336,43 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert metrics.resources.power.satisfaction == 1.0
     end
   end
+
+  describe "geography" do
+    # Characterises the *absence* of a spatial mechanic rather than claiming one would
+    # be wrong. Resources are pooled city-wide, so coordinates serve only as identity
+    # and as somewhere to draw. docs/PLAYING.md tells players that layout is free,
+    # which is a claim about this behaviour — so if adjacency, service radii or
+    # distance costs are ever added, this test should fail and take that sentence with
+    # it.
+    test "layout does not affect the outcome: resources are pooled city-wide" do
+      composition =
+        [{:power_plant, 1}, {:water_plant, 1}, {:industrial, 1}, {:road_hub, 1}] ++
+          List.duplicate({:residential, 1}, 5)
+
+      types = Enum.map(composition, &elem(&1, 0))
+
+      packed = Enum.with_index(types, fn type, i -> Node.new(rem(i, 3), div(i, 3), type) end)
+
+      scattered =
+        Enum.with_index(types, fn type, i ->
+          if rem(i, 2) == 0, do: Node.new(i, 0, type), else: Node.new(39 - i, 29, type)
+        end)
+
+      run = fn nodes ->
+        nodes
+        |> map_with()
+        |> then(&Enum.reduce(1..50, &1, fn _, city -> elem(Calc.advance_tick(city), 0) end))
+        |> CityMap.nodes()
+        |> Enum.map(&{&1.type, &1.health, &1.status})
+        |> Enum.sort()
+      end
+
+      # Sorted by type/health/status rather than compared node-for-node: the two
+      # layouts deliberately put the same types at different coordinates, so the ids
+      # differ while everything the simulation cares about must not.
+      assert run.(packed) == run.(scattered),
+             "placement changed the outcome, so a spatial mechanic now exists — " <>
+               "update the 'layout is free' claim in docs/PLAYING.md"
+    end
+  end
 end
