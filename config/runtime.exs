@@ -25,49 +25,16 @@ config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
 
 # ## Desktop target
 #
-# Set by the Tauri sidecar only (`config :ex_tauri, :dev_command` in dev,
-# `:sidecar_env` in a release), so a plain `mix phx.server` or `mix test` run is
-# unaffected. The desktop build has no Postgres to talk to: the city lives in a
-# file under the OS application-data directory instead, and alerts go to the
-# native notification centre.
+# ARMCHAIR_DESKTOP is injected by the Tauri host only (see src-tauri/src/main.rs),
+# so a plain `mix phx.server` or `mix test` run is unaffected.
 #
-# Resolving the directory here — rather than inside FileSnapshotStore — is what
-# keeps the persistence adapter free of any ExTauri reference. `data_dir/0`
-# creates the directory, so the adapter's first write always has somewhere to go.
+# The desktop overrides themselves are deliberately NOT here. They live in
+# `ArmchairMetropolist.Infrastructure.Desktop.Config.apply!/0`, called from
+# `Application.start/2`, for two reasons: it is reachable by unit tests, where a
+# config file is not, and it is one definition rather than two that can drift.
+# This file only needs to know that a desktop boot has different *requirements*
+# — see the `not desktop?` guard on the production block below.
 desktop? = System.get_env("ARMCHAIR_DESKTOP") in ~w(1 true)
-
-if desktop? do
-  config :armchair_metropolist,
-    start_repo: false,
-    start_shutdown_manager: true,
-    snapshot_repository: ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore,
-    notifier: ArmchairMetropolist.Infrastructure.Desktop.TauriNotifier,
-    snapshot_dir: ExTauri.Paths.data_dir()
-
-  # The snapshot-on-shutdown guarantee is on a stopwatch here, and it is not ours.
-  # Closing the window runs ExTauri's `kill_sidecar`: SIGTERM, poll for 2 seconds,
-  # then SIGKILL. Children stop in reverse order, so the Endpoint stops before the
-  # engine — and Thousand Island's default `shutdown_timeout` is 15 seconds of
-  # waiting for open connections to drain. The Tauri window *is* one of those
-  # connections (a LiveView socket), so the drain reliably outlasts the 2-second
-  # budget and SIGKILL lands before CityEngine.terminate/2 ever runs. Measured: 8s
-  # to the snapshot write with the default, ~0.3s with this.
-  #
-  # A local single-user window has nothing to drain gracefully for. The server
-  # target keeps the full 15 seconds.
-  config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
-    http: [thousand_island_options: [shutdown_timeout: 100]]
-
-  # A :prod desktop release has no config/dev.exs default to fall back on. The
-  # Tauri host always injects SECRET_KEY_BASE (a fresh per-launch value unless the
-  # environment supplies one), which is all a single-user local app needs.
-  if config_env() == :prod do
-    config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,
-      secret_key_base:
-        System.get_env("SECRET_KEY_BASE") ||
-          raise("the desktop release expects SECRET_KEY_BASE from the Tauri host")
-  end
-end
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.

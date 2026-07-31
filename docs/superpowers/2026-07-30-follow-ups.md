@@ -1,9 +1,10 @@
 # Follow-ups after the initial build
 
-**Date:** 2026-07-30
-**Branch:** `feat/city-simulator` (24 commits + final fix wave)
-**State at hand-off:** 129 tests pass, `mix check` exits 0, coverage 71.98% gated at 70%.
-`Domain`, `Domain.Services` and `UseCases` are at 100%.
+**Date:** 2026-07-30 (desktop sections updated 2026-07-31)
+**Branch:** merged to `main`
+**Current state:** 148 tests pass (5 properties, 143 tests), `mix check` exits 0, coverage
+92.78% gated at 90%. `Domain`, `Domain.Services` and `UseCases` are at 100%. The packaged macOS
+`.app` builds, launches, and serves a live LiveView — see the desktop section below.
 
 Everything below was found during implementation, triaged, and deliberately deferred. Nothing
 here blocks merge. The four must-fixes from the final whole-branch review (adapter I/O errors,
@@ -25,7 +26,7 @@ An earlier value, `ai.polynomic.armchair-metropolist`, was wrong: it was inferre
 email address rather than from the account owning this repository. Commit authorship was never
 affected — every commit on the branch is authored as the `adsouza` account.
 
-## The production desktop build — builds, but the bundle does not display yet
+## The production desktop build — working
 
 `mix ex_tauri.build` now **completes** for the native macOS target and produces
 `Armchair Metropolist.app` (23 MB) and `Armchair Metropolist_0.1.0_aarch64.dmg` (15 MB) under
@@ -34,8 +35,7 @@ both the Tauri host and the Burrito sidecar (`Contents/MacOS/desktop`), both `ar
 `CFBundleIdentifier` in the shipped `Info.plist` is `io.github.adsouza.armchair-metropolist`.
 
 Getting the build to complete needed four fixes, three of which were `ex_tauri`/Burrito
-behaviour that contradicts the documentation. Note the resulting bundle still does not render —
-see the open bug below.
+behaviour that contradicts the documentation.
 
 1. **ERTS pin.** Burrito requests the build machine's OTP version; 29.0.4 is unbuilt on the CDN.
    `custom_erts` now pins 29.0.3 per target. `ex_tauri` still prints
@@ -55,54 +55,123 @@ see the open bug below.
 targets are declared and their ERTS URLs verified, so a Linux CI runner with Zig should work
 unchanged.
 
-### OPEN BUG: the packaged `.app` builds but does not display
+### CRITICAL: a production Burrito binary unpacks its payload once, then never again
 
-The artefacts build and their backend works, but **launching the bundle gives a blank window and
-the app then exits.** `mix ex_tauri.dev` renders correctly, so this is specific to the bundled
-release. Do not treat the desktop target as shippable until this is resolved.
+**This is the most important thing in this document.** If you change anything about the
+desktop target, read it first. It is the reason the packaged app appeared broken for a long
+time, and it will happily waste another day if you forget it.
 
-The failure chain, from the Tauri host's own log (run
-`"…/Armchair Metropolist.app/Contents/MacOS/armchair_metropolist"` directly to see it):
+A Burrito binary carries a compressed release and unpacks it to
+`<app data>/.burrito/<name>_erts-<erts version>_<app version>`. `wrapper.zig` decides whether
+to unpack with nothing more than *"does `_metadata.json` already exist in that directory"*
+(lines 73–82), and the only other trigger is `wants_clean_install`, hardwired to
+`!IS_PROD`. So **in a production build the payload is extracted exactly once.** The directory
+name is the entire cache key: no payload hash, no build timestamp — notwithstanding the comment
+above `get_install_dir` claiming it "combine[s] the hash of the payload", which the code below
+it does not do.
 
+`version` in `mix.exs` has been `0.1.0` throughout, so every rebuild was a **no-op at
+runtime**. The sidecar kept executing the first build ever made. That is why fix after fix to
+the desktop configuration changed nothing: the code doing the configuring was not in the
+payload being run. Confirmed by reading the cached `_metadata.json`, which still named targets
+`macos_arm`/`linux_x86` — keys renamed to Rust triples long before.
+
+Nothing reports this. The launcher logs `Skipping archive unpacking, this machine already has
+the app installed!` at **debug** level only, which the Tauri host never shows.
+
+**The fix:** `mix.exs` runs `&evict_burrito_payload_cache/1` as the final release step, deleting
+the matching install directory so the binary just built is the one that runs. If you ever need
+to do it by hand:
+
+```bash
+rm -rf ~/Library/Application\ Support/.burrito/desktop_erts-*_0.1.0
 ```
-[tao::…::window]        Creating new window
-[tauri_runtime_wry]     web content process terminated     <-- the webview dies here
-[tauri_plugin_shell]    Creating sidecar …/Contents/MacOS/desktop
-                        Sidecar process started with PID: 47323
-                        Waiting for your phoenix dev server to start on localhost:52819...
-[ExTauri.ShutdownManager] Started - heartbeat monitoring active on …/tauri_heartbeat_….sock
-[info] Running ArmchairMetropolistWeb.Endpoint with Bandit 1.12.4 at 0.0.0.0:52819 (http)
-```
 
-Read in order: the webview's content process terminates **before** the sidecar even starts. The
-sidecar then boots the whole application correctly — ShutdownManager, Bandit, Endpoint on an
-OS-assigned free port (52560 and 52819 on two runs, confirming the dynamic-port design). But with no
-webview there is no heartbeat, so the ShutdownManager does exactly what it was built to do and stops
-the node ~1.5s later. Net effect: blank window, process exits, and the port never becomes reachable
-— `curl` against it returns 000 because the server is already gone.
+(`./burrito_out/desktop_* maintenance uninstall` does the same but prompts for confirmation on
+stdin, so it is useless from a script.)
 
-So the parts are individually healthy and the composition is broken. **What works:** the bundle, the
-sidecar, the Elixir app inside it, the bundled assets, the dynamic port, the shutdown manager.
-**What fails:** the webview content process.
+Two smaller traps in the same area, both of which cost time:
 
-Candidates worth checking first, in rough order of likelihood:
+* **`mix release desktop` alone is not enough to test the bundle.** Burrito writes
+  `burrito_out/desktop_<triple>` with an *underscore*; Tauri's `externalBin` consumes
+  `desktop-<triple>` with a *hyphen*, and only `mix ex_tauri.build` performs that rename. Run
+  `mix release desktop` and then launch the hyphenated file and you are testing an older binary.
+* **`IO.puts` during `Application.start/2` does not reach the sidecar's stdout**, though
+  `Logger` does. An `IO.puts` probe in the boot path proves nothing either way — see the
+  correction below.
 
-1. **Ad-hoc signing.** `codesign -dv` reports `flags=0x20002(adhoc,linker-signed)` with
-   `Identifier=armchair_metropolist-feaba944c5de57fc`. A properly signed bundle with the entitlements
-   WKWebView expects may be required on recent macOS (this host is 26.5).
-2. **`withGlobalTauri: true` plus `script-src 'unsafe-inline'`** in `tauri.conf.json` — the
-   `ex_tauri` default, flagged as loose during the Task 11 review.
-3. **A load-before-ready race.** The webview is pointed at the port before Phoenix is listening;
-   `ex_tauri` prints "Waiting for your phoenix dev server to start", so it intends to retry, but the
-   retry may not survive the content process having already crashed in a release build.
+### Correction: `config/runtime.exs` *is* evaluated in a Burrito sidecar
 
-**Also note:** `screencapture` remains blocked from a shell subprocess even with Screen Recording
-granted to the terminal's parent app — the grant attaches to the granted application, not to a
-`screencapture` binary it spawns. Diagnosing this needs the log above rather than a screenshot,
-which is just as well since there is nothing to see.
+An earlier version of this document claimed, in a section marked CRITICAL, that
+`config/runtime.exs` is never evaluated in a packaged sidecar. **That was wrong.** It is
+evaluated. Verified the right way round this time — by setting a marker key in `runtime.exs` and
+reading it back from inside the running binary (`[probe] runtime.exs marker: true`) rather than
+by trying to print from it.
 
-Burrito's wrapper additionally treats `argv[1]` as a script path (`No file named start`), so there
-is no standalone-server invocation of the sidecar; it is meant to be launched by Tauri.
+The false conclusion came from two compounding faults, and both are worth remembering because
+either alone would have produced the same wrong answer:
+
+1. the probe was an `IO.puts` at the top of `runtime.exs`, and that output does not surface from
+   a sidecar — so its absence meant nothing; and
+2. the payload containing the probe was stale anyway, per the section above.
+
+The original symptom — the packaged app behaving as the *server* target, on local Postgres —
+had a simpler cause: `ARMCHAIR_DESKTOP` was not in the sidecar's environment at all until
+`src-tauri/src/main.rs` was changed to inject it, because `config :ex_tauri, :sidecar_env` is
+read only at install time. With the marker absent, the `if desktop?` block in `runtime.exs`
+correctly did nothing.
+
+`Desktop.Config.apply!/0` is still where desktop settings belong, but for ordinary reasons
+rather than dramatic ones: a config file cannot be reached from a test, and one definition
+cannot drift from itself. The duplicate block in `runtime.exs` has been removed.
+
+### CRITICAL: the sidecar needs `--no-halt` or it exits 0 immediately
+
+Separate bug, and this one is real — **re-verified after the payload-cache fix**, on a freshly
+extracted payload, precisely because the stale-payload discovery cast doubt on every earlier
+measurement. Without `--no-halt` the sidecar exits 0 with no listener; with it, the endpoint
+stays up.
+
+Burrito's `erl` line ends in `-s elixir start_cli`. `start_cli` treats its extra arguments as
+scripts to run and then **halts**. ex_tauri spawns the sidecar with no arguments at all, so the
+sidecar booted Phoenix, logged `Running ...Endpoint`, and exited with **code 0** about a second
+later. A Mix release's own `start` command avoids exactly this by passing `--no-halt`.
+
+`src-tauri/src/main.rs` now spawns the sidecar with `.args(["--no-halt"])`. Verified: the port
+goes from *never* reachable to reachable in 0.81s, and `[wait]`/`[navigate]` both fire.
+
+This is also why `./burrito_out/desktop start` prints `No file named start` — it is trying to
+*run* "start" as a script.
+
+**How it stayed hidden for so long:** ex_tauri's sidecar output handler matched only
+`CommandEvent::Stdout`, discarding `Stderr`, `Terminated` and `Error`. The sidecar therefore
+died in complete silence. `main.rs` now handles all four, and it was the resulting
+`[sidecar] TERMINATED code=Some(0)` — *code 0*, ruling out a crash — that finally identified it.
+
+### Resolved: endpoint-level config now takes effect in the sidecar
+
+This was previously recorded here as open, with a guess that `Phoenix.Endpoint` read its
+configuration before `Application.start/2` could write it. That guess was wrong, and so was the
+framing: there was never anything wrong with the endpoint configuration. The sidecar was running
+a stale payload that did not contain `Desktop.Config` at all — see the payload-cache section
+above. The asymmetry that made it look like a config-ordering problem (adapter keys landing,
+endpoint keys not) had a duller explanation: the *adapter* settings were also being applied by
+the `if desktop?` block in `runtime.exs`, which the old payload did contain, while the endpoint
+settings existed only in the module it did not.
+
+Measured on the packaged `.app` after the fix, at the ephemeral port the Tauri host assigned:
+
+| measure                | before            | after                |
+|------------------------|-------------------|----------------------|
+| endpoint bind          | `0.0.0.0:4095`    | `127.0.0.1:59758`    |
+| `GET /`                | 200               | 200                  |
+| WebSocket upgrade      | 403               | **101**              |
+| origin-check errors    | 1                 | 0                    |
+| Postgres attempts      | 0                 | 0                    |
+
+And end-to-end against the running bundle: `phx-connected`, 19 nodes present in the LiveView
+stream with correct `dom_id`s (`10:6`, not `nodes-10:6`), and the tick advancing 2728 → 2745 →
+2751 across samples — so diffs are genuinely streaming, not a static first render.
 
 ## Notes on the build, kept for reference
 

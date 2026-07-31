@@ -18,6 +18,11 @@ defmodule ArmchairMetropolist.Application do
 
   @impl true
   def start(_type, _args) do
+    # MUST run before the child list is built. config/runtime.exs is never
+    # evaluated in a Burrito sidecar (see Desktop.Config's moduledoc), so this is
+    # the only thing that applies the desktop overrides in a packaged app.
+    :ok = ArmchairMetropolist.Infrastructure.Desktop.Config.apply!()
+
     # Children are assembled from config so a target can leave parts out: the
     # desktop build runs the file snapshot adapter and needs no Repo, and the
     # test run starts its own engine and clock per test.

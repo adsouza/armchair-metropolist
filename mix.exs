@@ -73,9 +73,13 @@ defmodule ArmchairMetropolist.MixProject do
       # executable per target. It requires Zig on PATH — Burrito shells out to
       # `zig build` for every build, native included, despite ex_tauri's docs
       # claiming Zig is cross-compilation-only.
+      #
+      # `&evict_burrito_payload_cache/1` runs last and is load-bearing — see its
+      # own comment. Without it a rebuilt binary silently keeps running the code
+      # from the first build you ever made.
       releases: [
         desktop: [
-          steps: [&build_assets/1, :assemble, &Burrito.wrap/1],
+          steps: [&build_assets/1, :assemble, &Burrito.wrap/1, &evict_burrito_payload_cache/1],
           burrito: [targets: burrito_targets()]
         ]
       ]
@@ -162,6 +166,67 @@ defmodule ArmchairMetropolist.MixProject do
   defp build_assets(%Mix.Release{} = release) do
     Mix.Task.run("assets.build")
     release
+  end
+
+  # Deletes the unpacked payload a previous build left on this machine, so the
+  # binary we just wrote actually gets extracted the next time it runs.
+  #
+  # A Burrito binary carries a compressed release and unpacks it to
+  # `<app data>/.burrito/<name>_erts-<erts>_<app version>` on first launch. In a
+  # production build it then unpacks *never again*: `wrapper.zig` decides with
+  # nothing more than "does `_metadata.json` exist in that directory", and
+  # `wants_clean_install` is hardwired to `!IS_PROD`. The directory name is the
+  # only cache key, and it holds neither a payload hash nor a build timestamp —
+  # despite the comment above `get_install_dir` claiming it "combine[s] the hash
+  # of the payload".
+  #
+  # So while `version` in this file stays put, every rebuild is a no-op at
+  # runtime. This cost a long debugging session: the packaged app kept binding
+  # 0.0.0.0 and rejecting its own LiveView socket on origin, and each new fix
+  # changed nothing, because the sidecar was still executing the *first* build
+  # ever made — one that predated the module doing the configuring. Nothing
+  # anywhere reports this; the launcher logs "Skipping archive unpacking" only at
+  # debug level, which the Tauri host does not show.
+  #
+  # Globbed on the ERTS version because that number is Burrito's, not ours: the
+  # pinned OTP 29.0.3 reports ERTS 17.0.4, and maintaining that mapping here
+  # would just be one more thing to keep in sync.
+  defp evict_burrito_payload_cache(%Mix.Release{} = release) do
+    case burrito_install_base() do
+      nil ->
+        Mix.shell().info("[burrito] unknown app-data dir; clear the payload cache by hand")
+
+      base ->
+        Path.wildcard(Path.join(base, "#{release.name}_erts-*_#{release.version}"))
+        |> Enum.each(fn dir ->
+          File.rm_rf!(dir)
+          Mix.shell().info("[burrito] evicted stale payload #{dir}")
+        end)
+    end
+
+    release
+  end
+
+  # Mirrors `get_app_data_dir/2` in Burrito's `wrapper.zig`. Only the host's own
+  # cache can be evicted, which is the case that matters: a cross-built binary
+  # lands on a machine that has never unpacked it.
+  defp burrito_install_base do
+    case {:os.type(), System.get_env("XDG_DATA_HOME"), System.user_home()} do
+      {_, _, nil} ->
+        nil
+
+      {{:unix, :darwin}, _, home} ->
+        Path.join([home, "Library", "Application Support", ".burrito"])
+
+      {{:unix, _}, nil, home} ->
+        Path.join([home, ".local", "share", ".burrito"])
+
+      {{:unix, _}, xdg, _} ->
+        Path.join(xdg, ".burrito")
+
+      _ ->
+        nil
+    end
   end
 
   # Configuration for the OTP application.
