@@ -13,43 +13,37 @@ fixed and mutation-verified before hand-off.
 
 ## Needs a decision from you
 
-**The Gigalixir deploy job fails on authentication, and the workflow — not the credential — is
-the first suspect.** Every push to `main` runs `deploy to Gigalixir`, and since at least `ad97ecc`
-(2026-08-02) it has ended:
+**The Gigalixir deploy: fixed in `eeb8296`, not yet confirmed green.** From at least `ad97ecc`
+until then, every push to `main` merged code without shipping a release — `deploy to Gigalixir`
+ended in `Sorry, we could not authenticate you.` while everything else passed (run `30764057877`:
+both `mix check` matrix jobs and both Burrito builds green, this job alone red).
 
-```
-gigalixir login -e "$GIGALIXIR_EMAIL" -p "$GIGALIXIR_PASSWORD" -y
-Sorry, we could not authenticate you.
-```
-
-Nothing in the application code is involved: on run `30764057877` both `mix check` matrix jobs and
-both Burrito desktop builds passed and only this job failed. The effect is that **`main` and the
-deployed site have diverged** — code merges, the release does not ship.
-
-Both secrets exist (`GIGALIXIR_API_KEY` and `GIGALIXIR_EMAIL`, set 2026-07-30). The suspicious part
-is how they are used. `ci.yml` passes the *API key* into the flag that wants the *account
-password*:
+The cause was in the workflow, not the credential. `ci.yml` fed the *API key* into the flag that
+wants the *account password*:
 
 ```yaml
-GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_API_KEY }}
-...
-gigalixir login -e "$GIGALIXIR_EMAIL" -p "$GIGALIXIR_PASSWORD" -y
+GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_API_KEY }}   # before
+GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_PASSWORD }}  # after, eeb8296
 ```
 
-Gigalixir's own CI documentation never uses `login` for this. It embeds the API key in a git
-remote, and requires the email to be **URI-encoded** (`foo%40gigalixir.com` — an unencoded `@`
-would break the URL, and our secret is almost certainly a plain address):
+A matching `GIGALIXIR_PASSWORD` secret was added 2026-08-02. **The next push to `main` is the
+first real test** — until one goes green, treat the deploy as unverified.
 
-```
-git remote add gigalixir https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git
-git push -f gigalixir HEAD:refs/heads/main
-```
+Two loose ends:
 
-So the likely fix is a workflow change, not a credential rotation — try the documented git-remote
-form before touching the account. Two caveats, both unresolved: an API key genuinely may not be
-accepted by `login -p`, *and* the stored key may separately have expired, in which case the
-rewrite alone will not be enough. The rewrite is still worth doing first because it is free and
-reversible, and it distinguishes the two causes. Rotation is the fallback and needs the owner.
+* `GIGALIXIR_API_KEY` is now referenced by nothing. Delete it, or keep it deliberately for the
+  alternative below — an unused secret that looks live is a trap for the next reader.
+* An account password in CI is not revocable without changing the account password. Gigalixir's
+  own CI documentation avoids `login` entirely and embeds an API key in a git remote, which *is*
+  independently revocable. It needs the email **URI-encoded** (`foo%40gigalixir.com`; an
+  unencoded `@` breaks the URL):
+
+  ```
+  git remote add gigalixir https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git
+  git push -f gigalixir HEAD:refs/heads/main
+  ```
+
+  Worth revisiting if the password approach proves awkward; no reason to churn it while it works.
 
 **Bundle identifier.** `src-tauri/tauri.conf.json` carries
 `io.github.adsouza.armchair-metropolist`, derived from the `adsouza` GitHub account that owns the
