@@ -423,22 +423,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are midpoints of measured windows (expanded [1813, 1988], collapsed
-    # [1215, 1358]), not the wrap points themselves. See the comment in `render/1`: an
+    # The values are midpoints of measured windows (expanded [1935, 2084], collapsed
+    # [1212, 1337]), not the wrap points themselves. See the comment in `render/1`: an
     # earlier pair sat on the windows' lower edges and fell out the moment the cells grew
     # a line. If a legitimate content change moves these, move them to the new *midpoint*.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[1900px]:flex-row"
-      refute expanded =~ "max-[1287px]:flex-row"
+      assert expanded =~ "max-[2010px]:flex-row"
+      refute expanded =~ "max-[1275px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
-      assert collapsed =~ "max-[1287px]:flex-row"
-      refute collapsed =~ "max-[1900px]:flex-row"
+      assert collapsed =~ "max-[1275px]:flex-row"
+      refute collapsed =~ "max-[2010px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across

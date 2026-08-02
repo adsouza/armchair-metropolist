@@ -219,24 +219,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 the sidebar has already dropped underneath. The window is exactly as wide
                 as Metrics plus the gap.
 
-                Measured by binary search on a clone of this row, then confirmed against
-                the live page at the boundary pixel: expanded `[1813, 1988]`, collapsed
-                `[1215, 1358]`. The midpoints below therefore absorb ±88px and ±72px of
+                Measured by binary search on the live page (forcing `flexDirection` on the
+                real inner div and resizing the real viewport, rather than a clone — cheaper
+                to validate and immune to the clone's own `fit-content` quirks), then
+                confirmed at the boundary pixel: expanded `[1935, 2084]`, collapsed
+                `[1212, 1337]`. The midpoints below therefore absorb ±75px and ±63px of
                 content drift before anything misbehaves.
 
-                The previous values were the measured `W_col` — the window's own edge — so
-                the first content change pushed them outside it. Cells gained a per-block
-                line, the matrix grew, and at viewport 1760 the sidebar sat below the grid
-                with Metrics still stacked beneath it. Taking the midpoint is what makes
-                this constant survive ordinary edits; re-measure only if Metrics or the
-                grid changes size, and move the value to the new midpoint rather than to
-                whichever edge you happened to measure.
+                Re-measured when four resource columns became six: the collapsed table has
+                no resource columns at all (both header and body cells are `:if={@detail}`),
+                so its window barely moved, but the expanded matrix's two new columns pushed
+                its window up by roughly 100px on both edges. Taking the midpoint is what
+                makes this constant survive ordinary edits; re-measure only if Metrics, the
+                grid, or the resource vocabulary changes size, and move the value to the new
+                midpoint rather than to whichever edge you happened to measure.
 
                 Tailwind v4 compiles `max-[N]` to `@media (width < N)`, exclusive, so N is
                 the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[1900px]:flex-row", else: "max-[1287px]:flex-row")
+            if(@legend_detail, do: "max-[2010px]:flex-row", else: "max-[1275px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
