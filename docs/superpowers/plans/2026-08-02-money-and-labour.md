@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Resource display order is exactly `[:power, :water, :waste, :traffic, :labour, :money]`.
+- Resource display order is exactly `[:power, :water, :waste, :traffic, :labour, :money]`. This is the **end state**: Task 1 leaves the list at five entries and Task 3 appends `:money`. A task is not wrong for showing an intermediate list.
 - Table values, verbatim: `commercial` produces `money 30.0` and consumes `labour 8.0`; `residential` produces `money 1.0` and `labour 4.0`; `industrial` consumes `labour 12.0`; `water_plant` consumes `money 5.0`; `road_hub` consumes `money 4.0`; `park` consumes `money 3.0`.
 - Baseline capacity gains `labour: 0.0` and `money: 0.0` — explicit zeros, never omitted.
 - `CityMap.money` defaults to `500.0`.
@@ -317,7 +317,26 @@ end
 
 - [ ] **Step 2: Run and watch fail** — `KeyError` on `:carried`.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Put money in the vocabulary, with empty tables**
+
+`:money` must join `@resources` **here**, not in Task 4. `resource_stats/1` builds its map from
+`@resources`, so `Map.fetch!(stats, :money)` in Step 4 below would raise `KeyError` on every tick
+if the vocabulary did not already carry it. The *tables* stay empty until Task 4 — this task adds
+the mechanism, not the numbers.
+
+In `node.ex`, `@resources` becomes `[:power, :water, :waste, :traffic, :labour, :money]` (money
+last) and `@type resource` gains `| :money`. No production or consumption entry changes. In
+`simulation_calculator.ex`, `@baseline_capacity` gains `money: 0.0`, commented: no free income —
+what forces commercial to be built once the tables arrive.
+
+Update the two pinning tests accordingly: `node_test.exs`'s resource-list assertion becomes the
+six-element list, and the `baseline_capacity/0` exact-map assertion gains `money: 0.0`.
+
+With empty tables, money's supply and demand are both `0.0`, so `satisfaction/2`'s
+`demanded == 0.0` clause returns `1.0` and the balance passes through untouched — which is exactly
+what the second test in Step 1 asserts.
+
+- [ ] **Step 4: Implement the carry-over**
 
 Add the carry-over list and thread it through. `resource_stats/1` already receives the city map:
 
@@ -376,22 +395,21 @@ Update `@type resource_stats` in `simulation_metrics.ex` to include `carried: fl
 
 Update the calculator's moduledoc, which currently numbers the tick's steps: step 1 must mention the carried balance, and a new step records that money's surplus persists.
 
-- [ ] **Step 4: Run the suite**
+- [ ] **Step 5: Run the suite**
 
 Run: `mix test`
-Expected: all green. No existing number moves — `carried` is `0.0` everywhere and money has no producers or consumers yet.
+Expected: all green. No existing number moves — `carried` is `0.0` everywhere and money has no producers or consumers yet, so its supply and demand are both zero. The guide is unaffected: no table changed, and a resource nothing produces or consumes cannot alter a sustainability verdict.
 
-- [ ] **Step 5: Mutation-verify** — change `max(0.0, ...)` to `min(0.0, ...)` in `new_balance/1` and confirm the balance test fails; change `carried` to `1.0` for a flow resource and confirm the first test fails. Restore both.
+- [ ] **Step 6: Mutation-verify** — change `max(0.0, ...)` to `min(0.0, ...)` in `new_balance/1` and confirm the balance test fails; change `carried` to `1.0` for a flow resource and confirm the first test fails. Restore both.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ---
 
 ### Task 4: The money tables and the guide's support sets
 
 **Files:**
-- Modify: `lib/armchair_metropolist/domain/entities/node.ex`
-- Modify: `lib/armchair_metropolist/domain/services/simulation_calculator.ex` — `@baseline_capacity`
+- Modify: `lib/armchair_metropolist/domain/entities/node.ex` — `@production_table`, `@consumption_table` only
 - Modify: `test/support/playing_guide.ex` — `@resources`, `@support_sets`, `city_with/1`, `capacities_block/0`
 - Modify: `test/armchair_metropolist/domain/entities/node_test.exs`, `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`
 
@@ -423,9 +441,11 @@ end
 
 - [ ] **Step 2: Run and watch fail.**
 
-- [ ] **Step 3: Add the tables** — `@resources` gains `:money` **last**; `@type resource` gains `| :money`; `commercial` produces `money: 30.0`; `residential` produces `money: 1.0` alongside its labour; `water_plant`, `road_hub` and `park` gain `money:` consumption of `5.0`, `4.0` and `3.0`. `@baseline_capacity` gains `money: 0.0`, commented: no free income is what forces commercial to be built.
+- [ ] **Step 3: Add the tables** — `commercial` produces `money: 30.0`; `residential` produces `money: 1.0` alongside its labour; `water_plant`, `road_hub` and `park` gain `money:` consumption of `5.0`, `4.0` and `3.0`.
 
-- [ ] **Step 4: Update the pinning tests** — the six-element resource list, the exact baseline map, and the production/consumption assertions for all five changed types.
+`@resources`, `@type resource` and `@baseline_capacity` already carry `:money` — Task 3 added them, because `resource_stats/1` had to produce a `:money` entry before `advance_tick/1` could read one. Do not touch them here.
+
+- [ ] **Step 4: Update the pinning tests** — the production/consumption assertions for all five changed types. The resource-list and baseline-map assertions were updated in Task 3 and need no further change.
 
 - [ ] **Step 5: Run the suite and triage**
 
