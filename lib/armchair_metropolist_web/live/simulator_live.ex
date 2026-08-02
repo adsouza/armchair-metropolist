@@ -120,7 +120,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
 
-      <div class="flex flex-col items-start gap-4 min-[1640px]:flex-row">
+      <div class="flex flex-col items-start gap-4 min-[1450px]:flex-row">
         <div
           class="relative shrink-0 border border-base-300"
           style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
@@ -155,7 +155,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </div>
         </div>
 
-        <aside class="w-full min-[1640px]:w-auto">
+        <%!-- `min-w-0` is what makes the `overflow-x-auto` inside `legend/1` actually
+              engage: `<aside>` is the direct flex item of the row above, and a flex
+              item defaults to `min-width: auto` — without this override it refuses
+              to shrink below the table's intrinsic width, and the *page* scrolls
+              sideways instead of the table. --%>
+        <aside class="w-full min-w-0 min-[1450px]:w-auto">
           <button
             id="toggle-sidebar"
             type="button"
@@ -192,11 +197,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     assigns = assign(assigns, :resources, @resources)
 
     ~H"""
-    <%!-- `min-w-0` is what makes the `overflow-x-auto` below actually engage: a flex
-          item defaults to `min-width: auto`, so without this the sidebar refuses to
-          shrink under the table's intrinsic width and the *page* scrolls sideways
-          instead of the table. --%>
-    <div class="w-full min-w-0 min-[1640px]:w-auto">
+    <%!-- The actual shrink-to-scroll behaviour lives on `<aside>` in `render/1`, the
+          direct flex item of the row layout; `min-w-0` here is inert (this div is
+          not itself a flex item) but kept so the widths line up with its parent. --%>
+    <div class="w-full min-w-0 min-[1450px]:w-auto">
       <h2 class="font-semibold mb-2">Types</h2>
 
       <div class="overflow-x-auto">
