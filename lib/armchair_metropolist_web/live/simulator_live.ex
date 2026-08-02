@@ -122,10 +122,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
-            it fits and drops below when it does not. Measured by binary search on a
-            clone of this row and confirmed at the boundary pixel, the switch happens at
-            viewport 1813 expanded and 1215 collapsed — with Metrics stacked. Those are
-            the lower ends of the windows the inner thresholds below sit inside.
+            it fits and drops below when it does not. Measured by forcing `flexDirection`
+            on the real inner div below and resizing the real viewport (not a clone —
+            cheaper to validate and immune to a clone's own `fit-content`/`flex-wrap`
+            quirks), confirmed at the boundary pixel, the switch happens at viewport
+            1935 expanded and 1212 collapsed — with Metrics stacked. Those are the
+            lower ends (`W_col`) of the windows the inner thresholds below sit inside.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
             matrix could fit in it, which is what produced the horizontal scrollbar
@@ -194,14 +196,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           <%!-- Stacked while the sidebar is beside the grid; side by side once it has
                 wrapped underneath, where the full page width is going spare.
 
-                The `max-[1631px]` is a constant, unlike the layout above, and that is a
+                The `max-[Npx]` below is a constant, unlike the layout above, and that is a
                 deliberate trade. It cannot be content-derived: the sidebar's own
                 intrinsic width is what decides where it wraps, so a side-by-side inner
-                row feeds back into that decision — measured, it raises the sidebar's
-                `fit-content` from 655 to 831 and drags the wrap point from 1631 to
-                ~1807, putting the legend under the grid at every ordinary window size.
-                Keeping the children stacked by default keeps the sidebar's intrinsic
-                width at the legend's 655 and the threshold where it belongs.
+                row feeds back into that decision — a row raises the sidebar's own
+                `fit-content` width and, with it, the viewport the sidebar needs to sit
+                beside the grid (`W_row` below is always the larger of the two measured
+                windows, for exactly this reason), putting the legend under the grid at
+                every ordinary window size. Keeping the children stacked by default keeps
+                the sidebar's intrinsic width at the matrix's own natural width (878px
+                expanded) and the wrap threshold at the smaller `W_col`.
 
                 **One threshold per state**, because the sidebar's width is what decides
                 where it wraps and collapsing changes that width. A single constant is
