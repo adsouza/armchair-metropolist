@@ -158,4 +158,99 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     refute render(view) =~ ~s{id="7:8"}
   end
+
+  describe "legend" do
+    test "shows how many of each type are placed, updating as you place", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Every type has a row from the start, including ones with nothing placed.
+      assert has_element?(view, "#legend-row-industrial")
+      assert has_element?(view, ~s{#legend-row-power_plant[data-count="0"]})
+
+      view
+      |> element(~s{button[phx-click="select_type"][phx-value-type="power_plant"]})
+      |> render_click()
+
+      view |> element(~s{[phx-click="place"][phx-value-x="1"][phx-value-y="1"]}) |> render_click()
+      view |> element(~s{[phx-click="place"][phx-value-x="2"][phx-value-y="1"]}) |> render_click()
+
+      # Depends on Task 2: without the command-time broadcast this stays at 0.
+      assert has_element?(view, ~s{#legend-row-power_plant[data-count="2"]})
+    end
+
+    test "a producing cell shows the type's net effect on that resource", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view
+      |> element(~s{button[phx-click="select_type"][phx-value-type="power_plant"]})
+      |> render_click()
+
+      view |> element(~s{[phx-click="place"][phx-value-x="3"][phx-value-y="3"]}) |> render_click()
+
+      # One power plant: power +120, water -20.
+      assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~ "+120"
+      assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
+    end
+
+    test "a resource the type never touches shows an em dash, not a zero", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Positive case first: a road hub does consume power, so that cell holds a number.
+      assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "0"
+
+      # It never touches water, and that must read differently from "nets to zero".
+      water = view |> element(~s{[data-cell="road_hub-water"]}) |> render()
+      assert water =~ "—"
+      refute water =~ "0"
+    end
+
+    test "the totals row reports supply, demand and satisfaction per resource",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
+      render(view)
+
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
+    end
+
+    test "satisfaction appears only in the totals row, not in a Metrics list",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
+      render(view)
+
+      # Positive case: the Metrics block survived the move into the sidebar.
+      assert has_element?(view, "#metrics-tick")
+
+      # And the old per-resource satisfaction list is gone, so the figure is not
+      # rendered twice.
+      refute has_element?(view, "#metrics-resources")
+    end
+  end
+
+  # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
+  # tell one totals cell from another, and "appears once" assertions become impossible.
+  defp metrics_with_distinct_satisfaction do
+    alias ArmchairMetropolist.Domain.Entities.{CityMap, SimulationMetrics}
+
+    stat = fn satisfaction ->
+      %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
+    end
+
+    base = SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+    %{
+      base
+      | tick: 3,
+        resources: %{
+          power: stat.(1.0),
+          water: stat.(0.5),
+          waste: stat.(0.75),
+          traffic: stat.(0.25)
+        }
+    }
+  end
 end

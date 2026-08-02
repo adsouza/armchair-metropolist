@@ -13,14 +13,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   patched — the grid underneath never moves. Nodes are absolutely positioned
   over the grid so the two layers stay independent.
 
-  ## `metrics.resources` before the first tick
+  ## Where the figures come from
 
-  Immediately after mount, `CityEngine.snapshot/0` reports `resources` as an
-  empty map (see `CityEngine`'s moduledoc: `Infrastructure` cannot reach
-  `Domain.Services`, so resource stats only ever arrive via tick metrics).
-  The resource panel iterates `@metrics.resources` as a map rather than
-  indexing fixed keys, and shows a "waiting for first tick" placeholder while
-  it is empty — it self-corrects the moment `{:city_metrics, m}` lands.
+  `CityEngine.snapshot/0` returns full resource statistics at mount, before any tick —
+  it computes them through `UseCases.SummarizeCity`, since `Infrastructure` may not
+  reach `Domain.Services`. The engine also broadcasts `{:city_metrics, …}` after every
+  successful place and demolish, so the legend's counts move on the click rather than
+  on the next tick.
   """
   use ArmchairMetropolistWeb, :live_view
 
@@ -116,73 +115,180 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
 
-      <div class="mb-4">
-        <h2 class="font-semibold mb-2">Place</h2>
-        <div class="flex flex-wrap gap-2">
-          <button
-            :for={type <- @node_types}
-            type="button"
-            phx-click="select_type"
-            phx-value-type={type}
-            class={["btn btn-sm", type == @selected_type && "btn-primary"]}
-          >
-            {type}
-          </button>
-        </div>
-      </div>
-
-      <div class="mb-4">
-        <h2 class="font-semibold mb-2">Metrics</h2>
-        <p>Tick: {@metrics.tick}</p>
-        <p>Nodes: {@metrics.node_count}</p>
-        <p>Avg health: {Float.round(@metrics.avg_health, 1)}</p>
-        <p>Offline: {@metrics.offline_count}</p>
-
-        <p :if={map_size(@metrics.resources) == 0} class="italic opacity-70">
-          Waiting for first tick…
-        </p>
-        <ul :if={map_size(@metrics.resources) > 0}>
-          <li :for={{resource, stats} <- @metrics.resources}>
-            {resource}: {Float.round(stats.satisfaction * 100, 1)}%
-          </li>
-        </ul>
-      </div>
-
-      <div
-        class="relative border border-base-300"
-        style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
-      >
+      <div class="flex flex-col items-start gap-4 min-[1450px]:flex-row">
         <div
-          :for={{x, y} <- @grid_cells}
-          class="absolute border border-base-200 cursor-pointer"
-          style={cell_style(x, y, @cell_size)}
-          phx-click="place"
-          phx-value-x={x}
-          phx-value-y={y}
-          title={"place #{@selected_type} at #{x}:#{y}"}
+          class="relative shrink-0 border border-base-300"
+          style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
         >
-        </div>
-
-        <div id="nodes" phx-update="stream">
           <div
-            :for={{dom_id, node} <- @streams.nodes}
-            id={dom_id}
-            class={[
-              "absolute flex cursor-pointer items-center justify-center text-[8px]",
-              status_class(node.status)
-            ]}
-            style={cell_style(node.x, node.y, @cell_size)}
-            phx-click="demolish"
-            phx-value-x={node.x}
-            phx-value-y={node.y}
-            title={"#{node.id} · #{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
+            :for={{x, y} <- @grid_cells}
+            class="absolute border border-base-200 cursor-pointer"
+            style={cell_style(x, y, @cell_size)}
+            phx-click="place"
+            phx-value-x={x}
+            phx-value-y={y}
+            title={"place #{@selected_type} at #{x}:#{y}"}
           >
-            {short_label(node.type)}
+          </div>
+
+          <div id="nodes" phx-update="stream">
+            <div
+              :for={{dom_id, node} <- @streams.nodes}
+              id={dom_id}
+              class={[
+                "absolute flex cursor-pointer items-center justify-center text-[8px]",
+                status_class(node.status)
+              ]}
+              style={cell_style(node.x, node.y, @cell_size)}
+              phx-click="demolish"
+              phx-value-x={node.x}
+              phx-value-y={node.y}
+              title={"#{node.id} · #{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
+            >
+              {short_label(node.type)}
+            </div>
           </div>
         </div>
+
+        <.legend metrics={@metrics} node_types={@node_types} selected_type={@selected_type} />
       </div>
     </Layouts.app>
     """
+  end
+
+  # The four resource columns are fixed and identical on every row, including where a
+  # type does not touch a resource. Aligned columns are the feature: the question a
+  # player has is "water is short, who is drinking it?", answered by reading one column
+  # down all seven types. Per-row chips would be narrower and unreadable for that.
+  @resources [:power, :water, :waste, :traffic]
+
+  attr :metrics, :map, required: true
+  attr :node_types, :list, required: true
+  attr :selected_type, :atom, required: true
+
+  defp legend(assigns) do
+    assigns = assign(assigns, :resources, @resources)
+
+    ~H"""
+    <%!-- `min-w-0` is what makes the `overflow-x-auto` below actually engage: a flex
+          item defaults to `min-width: auto`, so without this the sidebar refuses to
+          shrink under the table's intrinsic width and the *page* scrolls sideways
+          instead of the table. --%>
+    <div class="w-full min-w-0 min-[1450px]:w-auto">
+      <h2 class="font-semibold mb-2">Types</h2>
+
+      <div class="overflow-x-auto">
+        <table class="table table-xs">
+          <thead>
+            <tr>
+              <th class="text-left">type</th>
+              <th class="text-right">#</th>
+              <th :for={resource <- @resources} class="text-right">{resource}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              :for={type <- @node_types}
+              id={"legend-row-#{type}"}
+              data-count={@metrics.by_type[type].count}
+              class={type == @selected_type && "bg-primary/20"}
+            >
+              <td class="text-left">
+                <%!-- A real button, not a clickable <tr>: the row must stay reachable
+                      by keyboard and expose button semantics to assistive tech. --%>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs w-full justify-start"
+                  phx-click="select_type"
+                  phx-value-type={type}
+                  aria-pressed={to_string(type == @selected_type)}
+                >
+                  {type}
+                </button>
+              </td>
+              <td class="text-right tabular-nums">{@metrics.by_type[type].count}</td>
+              <td
+                :for={resource <- @resources}
+                data-cell={"#{type}-#{resource}"}
+                class="text-right tabular-nums"
+              >
+                {net_cell(@metrics.by_type[type], resource)}
+              </td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr id="legend-totals">
+              <th class="text-left" colspan="2">supplied / demanded</th>
+              <th
+                :for={resource <- @resources}
+                data-total={resource}
+                class="text-right tabular-nums"
+              >
+                {totals_cell(@metrics.resources, resource)}
+              </th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <p class="mt-1 text-xs opacity-60">
+        Totals include the free baseline of 40 per resource, which belongs to no type.
+      </p>
+
+      <div class="mt-4">
+        <h2 class="font-semibold mb-2">Metrics</h2>
+        <p id="metrics-tick">Tick: {@metrics.tick}</p>
+        <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
+        <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
+        <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
+      </div>
+    </div>
+    """
+  end
+
+  # A missing key means the type does not interact with the resource at all, which reads
+  # differently from a net of zero — hence the em dash rather than "0".
+  #
+  # Rated and actual are shown together only when they differ, so a healthy city reads
+  # cleanly and divergence is what draws the eye.
+  defp net_cell(stats, resource) do
+    produced = Map.get(stats.rated_production, resource)
+    actual = Map.get(stats.actual_production, resource)
+    consumed = Map.get(stats.consumption, resource)
+
+    cond do
+      is_nil(produced) and is_nil(consumed) ->
+        "—"
+
+      is_nil(produced) ->
+        signed(-consumed)
+
+      true ->
+        rated_net = produced - (consumed || 0.0)
+        actual_net = actual - (consumed || 0.0)
+
+        if abs(rated_net - actual_net) < 0.05,
+          do: signed(rated_net),
+          else: "#{signed(rated_net)} → #{signed(actual_net)}"
+    end
+  end
+
+  # `resources` is populated from mount via SummarizeCity, so there is no empty-map
+  # case to guard here beyond ordinary defensiveness.
+  defp totals_cell(resources, resource) do
+    case Map.get(resources, resource) do
+      nil ->
+        "—"
+
+      stats ->
+        "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
+          "#{Float.round(stats.satisfaction * 100, 1)}%"
+    end
+  end
+
+  defp signed(value) do
+    rounded = round(value)
+    if rounded > 0, do: "+#{rounded}", else: to_string(rounded)
   end
 
   defp cell_style(x, y, cell_size) do
