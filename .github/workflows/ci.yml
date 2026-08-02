@@ -222,7 +222,7 @@ jobs:
       - name: Deploy
         env:
           GIGALIXIR_EMAIL: ${{ secrets.GIGALIXIR_EMAIL }}
-          GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_API_KEY }}
+          GIGALIXIR_PASSWORD: ${{ secrets.GIGALIXIR_PASSWORD }}
           APP_NAME: "armchair-metropolist"
         run: |
           gigalixir login -e "$GIGALIXIR_EMAIL" -p "$GIGALIXIR_PASSWORD" -y
