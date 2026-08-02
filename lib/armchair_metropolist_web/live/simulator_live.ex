@@ -199,11 +199,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     assigns = assign(assigns, :resources, Node.resources())
 
     ~H"""
-    <%!-- The actual shrink-to-scroll behaviour lives on `<aside>` in `render/1`, the
-          direct flex item of the row layout; `min-w-0` here is inert (this div is
-          not itself a flex item) but kept so the widths line up with its parent. --%>
-    <div class="w-full min-w-0 min-[1450px]:w-auto">
-      <h2 class="font-semibold mb-2">Types</h2>
+    <%!-- No width classes here on purpose. The shrink-to-scroll behaviour lives on
+          `<aside>` in `render/1`, the direct flex item of the row layout; this div is
+          an ordinary block child of that aside, so `min-w-0` would be inert and
+          `w-full`/`w-auto` would each resolve to the width it already takes. The
+          duplicate class list only read as though it were doing the work. --%>
+    <div>
+      <%!-- "Legend" and not "Types": the toggle offers to hide the legend, the row ids
+            are `legend-*`, and docs/PLAYING.md sends the player looking for a legend.
+            The table's own `type` column header is caption enough for the rows. --%>
+      <h2 class="font-semibold mb-2">Legend</h2>
 
       <div class="overflow-x-auto">
         <table class="table table-xs">
@@ -248,7 +253,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </tbody>
           <tfoot>
             <tr id="legend-totals">
-              <th class="text-left" colspan="2">supplied / demanded</th>
+              <%!-- Every figure in the cells below is named here. Without the last
+                    term the percentage went unlabelled anywhere on screen. Terse
+                    because the label shares a narrow row with four numeric columns. --%>
+              <th class="text-left" colspan="2">supplied/demanded · met</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
