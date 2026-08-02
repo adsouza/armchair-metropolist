@@ -288,13 +288,15 @@ Replace the merge body with `stored` and confirm the new test fails with a `KeyE
 The mechanism, with no money in the tables yet — so this task changes behaviour for zero resources and must leave every existing number untouched.
 
 **Files:**
-- Modify: `lib/armchair_metropolist/domain/services/simulation_calculator.ex`
+- Modify: `lib/armchair_metropolist/domain/entities/node.ex` — `@resources` and `@type resource` only
+- Modify: `lib/armchair_metropolist/domain/services/simulation_calculator.ex` — `@baseline_capacity`, `@carryover`, `resource_stats/1`, `advance_tick/1`
 - Modify: `lib/armchair_metropolist/domain/entities/simulation_metrics.ex` — `@type resource_stats`
+- Modify: `test/armchair_metropolist/domain/entities/node_test.exs` (resource list), `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` (baseline map)
 - Test: `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`
 
 **Interfaces:**
 - Consumes: `CityMap.money` from Task 2.
-- Produces: `resource_stats/1` entries gain `carried: float()`. `advance_tick/1` returns a city map whose `money` is `max(0.0, supplied + carried - demanded)`. Task 4 supplies the tables that make this non-trivial; Task 5 reads `carried` and the balance.
+- Produces: `Node.resources/0` returning the final six-element list `[:power, :water, :waste, :traffic, :labour, :money]`. `resource_stats/1` entries gain `carried: float()`. `advance_tick/1` returns a city map whose `money` is `max(0.0, supplied + carried - demanded)`. Task 4 supplies the tables that make this non-trivial; Task 5 reads `carried` and the balance.
 
 - [ ] **Step 1: Write the failing test**
 
