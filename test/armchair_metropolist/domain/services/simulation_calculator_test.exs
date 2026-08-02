@@ -172,8 +172,31 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     test "an untouched city keeps its balance across a tick" do
       {advanced, _delta} = Calc.advance_tick(sustainable_city())
-      # Nothing produces or consumes money yet, so the grant is untouched.
-      assert advanced.money == 500.0
+      # Two residential produce money now (1.0 each) and consume none, so the
+      # grant grows rather than staying put.
+      assert advanced.money == 502.0
+    end
+
+    test "an unpayable upkeep starves the consumer once the treasury is empty" do
+      # One park: upkeep 3/tick, no income. Start it broke rather than simulating
+      # 167 ticks of drain.
+      map = %{map_with([Node.new(0, 0, :park)]) | money: 0.0}
+      stats = Calc.resource_stats(map)
+
+      assert stats.money.demanded == 3.0
+      assert stats.money.carried == 0.0
+      assert stats.money.satisfaction == 0.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert advanced.money == 0.0
+      assert CityMap.get_node(advanced, 0, 0).health < 100.0
+    end
+
+    test "surplus income accumulates in the treasury" do
+      # One commercial (+30) and one park (-3), starting from a known balance.
+      map = %{map_with([Node.new(0, 0, :commercial), Node.new(1, 0, :park)]) | money: 100.0}
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert_in_delta advanced.money, 127.0, 0.001
     end
 
     test "regenerates by 1.0 when fully supplied" do

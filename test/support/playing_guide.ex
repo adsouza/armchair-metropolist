@@ -22,7 +22,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
 
-  @resources [:power, :water, :waste, :traffic, :labour]
+  @resources [:power, :water, :waste, :traffic, :labour, :money]
 
   @doc "Every generated block, keyed by the marker name used in the markdown."
   @spec blocks() :: %{String.t() => String.t()}
@@ -39,22 +39,30 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # The numbers a player actually acts on, so they are worth generating rather than
   # asserting in prose. Each is found by simulation: add residential until the city
   # stops holding at full health.
-  @support_sets [{1, 1, 1, 1}, {2, 2, 1, 1}, {3, 3, 2, 2}]
+  #
+  # Commercial is part of a viable support set now, not an optional extra: without it
+  # a city's only income is 1 per residential, which cannot cover the water plants and
+  # road hubs that residential itself requires.
+  #
+  # These are solved, not guessed. {1,1,1,1,1} has NO viable residential count —
+  # industrial and commercial demand 20 labour (r >= 5) while power caps r at 4 — so
+  # the smallest set carries a second power plant.
+  @support_sets [{2, 1, 1, 1, 1}, {2, 2, 1, 1, 1}, {3, 3, 2, 2, 2}]
 
   defp capacities_block do
     rows =
-      for {pp, wp, ind, rh} <- @support_sets do
-        support = pp + wp + ind + rh
+      for {pp, wp, ind, rh, com} <- @support_sets do
+        support = pp + wp + ind + rh + com
 
-        case residential_range(pp, wp, ind, rh) do
+        case residential_range(pp, wp, ind, rh, com) do
           nil ->
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road, #{com} commercial " <>
               "| #{support} | none | none | none | none |"
 
           {min_r, max_r} ->
             total = support + max_r
 
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road, #{com} commercial " <>
               "| #{support} | #{min_r} | **#{max_r}** | #{total} | #{Float.round(max_r / total, 2)} |"
         end
       end
@@ -82,7 +90,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # the same band in a fraction of the simulations, and it would be wrong the
   # first time the band is not contiguous -- a failure that shows up as a
   # plausible wrong number in a published document, not as a test failure.
-  defp residential_range(pp, wp, ind, rh) do
+  defp residential_range(pp, wp, ind, rh, com) do
     sustainable =
       for r <- 1..40,
           city =
@@ -91,6 +99,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
               water_plant: wp,
               industrial: ind,
               road_hub: rh,
+              commercial: com,
               residential: r
             ),
           final = Enum.reduce(1..120, city, fn _, c -> elem(Calc.advance_tick(c), 0) end),
@@ -114,23 +123,39 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp production_block do
     rows =
-      for type <- sorted_types(), production_of(type) != %{} do
+      for type <- sorted_types(), not Enum.empty?(production_of(type)) do
+        produced = production_of(type)
+
+        # Iterated in the display-order @resources list rather than the raw map's
+        # key order: a map's key order is a hash-seed artifact, not a decision
+        # anyone made, and residential (labour + money, as of this task) is the
+        # first production entry with two keys to expose that non-determinism.
         outputs =
-          type
-          |> Node.production()
-          |> Enum.map_join(", ", fn {r, amount} -> "#{r} #{num(amount)}" end)
+          @resources
+          |> Enum.filter(&Map.has_key?(produced, &1))
+          |> Enum.map_join(", ", fn r -> "#{r} #{num(Map.fetch!(produced, r))}" end)
 
         "| `#{type}` | #{outputs} |"
       end
 
     non_producers =
       sorted_types()
-      |> Enum.filter(&(production_of(&1) == %{}))
+      |> Enum.filter(&Enum.empty?(production_of(&1)))
       |> Enum.map_join(", ", &"`#{&1}`")
 
+    # Commercial's money production means every type produces something now, so
+    # there is no non-producer list to print — `Enum.empty?` sidesteps the dead
+    # comparison `== %{}` would be (every production map is non-empty at the
+    # type level too, which is what made that comparison a compiler warning).
+    footer =
+      if non_producers == "" do
+        "Every type produces something."
+      else
+        "Produce nothing at all: #{non_producers}."
+      end
+
     Enum.join(
-      ["| type | produces |", "|---|---|"] ++
-        rows ++ ["", "Produce nothing at all: #{non_producers}."],
+      ["| type | produces |", "|---|---|"] ++ rows ++ ["", footer],
       "\n"
     )
   end
@@ -225,7 +250,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
         end)
       end)
 
-    city
+    # Not the 500.0 grant. Over the 120-tick window a city whose income falls one
+    # short of its upkeep drains the grant at 1/tick and survives all 120 ticks —
+    # so the guide would certify a city that goes bankrupt on tick 501. Starting
+    # broke measures the steady-state economy: income must cover upkeep every tick.
+    %{city | money: 0.0}
   end
 
   defp health_of(city) do

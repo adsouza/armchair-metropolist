@@ -92,12 +92,12 @@ health:
 <!-- generated:capacities -->
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
-| 1 power, 1 water, 1 industrial, 1 road | 4 | 3 | **5** | 9 | 0.56 |
-| 2 power, 2 water, 1 industrial, 1 road | 6 | 3 | **9** | 15 | 0.6 |
-| 3 power, 3 water, 2 industrial, 2 road | 10 | 6 | **15** | 25 | 0.6 |
+| 2 power, 1 water, 1 industrial, 1 road, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
+| 2 power, 2 water, 1 industrial, 1 road, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
+| 3 power, 3 water, 2 industrial, 2 road, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
 <!-- /generated:capacities -->
 
-About 0.6 residential per tile is the ceiling. Two practical consequences:
+About 0.5 residential per tile is the ceiling. Two practical consequences:
 
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
 before its support starts doing damage on the very next tick.
@@ -109,8 +109,12 @@ disappearing.
 
 Those capacity figures include the one-off baseline 40, so a district that works is not
 automatically tileable: the second copy has no baseline of its own. As the city grows
-the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 road hubs per 13
-residential**.
+the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 road hubs : 2
+commercial per 12 residential**. Commercial belongs in that ratio now, not as an
+optional add-on: a residential block's own income (money 1) can't cover what it costs
+the water plants and road hubs it needs, so a support set without a commercial block is
+insolvent — the treasury drains over the game's lifetime even while every other resource
+reads 100% satisfied.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: `industrial` and `commercial` need workers, and residential is the only source of
@@ -119,29 +123,34 @@ staff instead of power or water — the shortfall just shows up in a different c
 
 ## Rescuing a city that is already dying
 
-**You cannot build your way out of a collapse.** Every one of these was simulated
-against 19 dead residential blocks:
+**A fully collapsed city cannot be rescued by building on top of it.** Once every
+residential block is dead (health 0), it produces zero labour — production is
+health-scaled, same as everything else — and `industrial` and `commercial` both need
+labour to hold their own health. Simulated against 19 dead residential blocks: adding
+5 power, 4 water, 3 industrial and 3 road hubs — a combination that reaches full
+satisfaction on power, water, waste and traffic simultaneously — still fails. The fresh
+`industrial` block starves for workers from the very first tick, decays, and its
+falling waste output drags the rest of the city down before the dead residential can
+recover on power and water alone. Measured: every node's health is still 0.0 after 150
+ticks.
 
-| added to the dead city                     | satisfaction on the first tick | outcome                         |
-|--------------------------------------------|--------------------------------|---------------------------------|
-| 4 power, 3 water, 2 industrial, 1 road     | 0.676                          | still all dead                  |
-| 4 power, 3 water, 3 industrial, 3 road     | 0.888                          | still all dead                  |
-| **5 power, 4 water, 3 industrial, 3 road** | **1.000**                      | **full recovery, 34/34 online** |
+The trap is the labour dependency, not the money one: `industrial` and `commercial`
+need living residential to staff them, and dead residential cannot staff anything, no
+matter how much power and water arrives on the same tick.
 
-The near-misses are the lesson. The rescue has to lift **all four** resources to 1.0
-on the first tick; miss one — traffic, in the first row — and the new plants decay
-alongside everything else. Under-building is indistinguishable from not building, and
-costs the same tiles.
+Two approaches still work, because neither waits on labour to recover first:
 
-Two approaches that work:
+1. **Bulldoze back to what the baseline supports** (two residential, no `industrial` in
+   the mix) and let them heal on power, water, waste and traffic alone — none of which
+   residential needs labour or money for. Verified: both nodes return to 100 health
+   within 100 ticks.
+2. **Never let residential fully die in the first place.** Add support while some
+   residential is still alive — this is the "build producers first" advice above,
+   and it is the only way to keep labour (and, once a commercial block exists, income)
+   flowing through a rescue.
 
-1. **Bulldoze back to what the baseline supports** (two residential), then rebuild
-   properly. Verified to recover to full health.
-2. **Add the entire support set in one go.** Removing dead consumers first makes this
-   much cheaper, since their demand is what you are fighting.
-
-Mixed rescues are fine: five dead residential plus a fresh 1/1/1/1 recovers completely.
-Health returns at a flat rate, so a node at zero is back to full in 100 ticks.
+Health returns at a flat rate once conditions are met, so a node at zero is back to
+full in 100 ticks.
 
 ## How long you have to react
 
@@ -161,9 +170,9 @@ survivable while large ones are not.
 Available with no infrastructure placed at all.
 
 <!-- generated:baseline -->
-| power | water | waste | traffic | labour |
-|---|---|---|---|---|
-| 40 | 40 | 40 | 40 | 0 |
+| power | water | waste | traffic | labour | money |
+|---|---|---|---|---|---|
+| 40 | 40 | 40 | 40 | 0 | 0 |
 <!-- /generated:baseline -->
 
 ### What each type produces
@@ -173,14 +182,15 @@ Production is scaled by the node's health, so a plant at 50% health supplies hal
 <!-- generated:production -->
 | type | produces |
 |---|---|
+| `commercial` | money 30 |
 | `industrial` | waste 90 |
 | `park` | waste 8 |
 | `power_plant` | power 120 |
-| `residential` | labour 4 |
+| `residential` | labour 4, money 1 |
 | `road_hub` | traffic 60 |
 | `water_plant` | water 100 |
 
-Produce nothing at all: `commercial`.
+Every type produces something.
 <!-- /generated:production -->
 
 ### What each type consumes
@@ -189,15 +199,15 @@ Consumption is **never** scaled by health. This is the mechanic behind every dea
 spiral.
 
 <!-- generated:consumption -->
-| type | power | water | waste | traffic | labour |
-|---|---|---|---|---|---|
-| `commercial` | 22 | 8 | 14 | 9 | 8 |
-| `industrial` | 40 | 25 | — | 8 | 12 |
-| `park` | — | 18 | — | 2 | — |
-| `power_plant` | — | 20 | 12 | 3 | — |
-| `residential` | 15 | 12 | 10 | 6 | — |
-| `road_hub` | 8 | — | 2 | — | — |
-| `water_plant` | 25 | — | 6 | 2 | — |
+| type | power | water | waste | traffic | labour | money |
+|---|---|---|---|---|---|---|
+| `commercial` | 22 | 8 | 14 | 9 | 8 | — |
+| `industrial` | 40 | 25 | — | 8 | 12 | — |
+| `park` | — | 18 | — | 2 | — | 3 |
+| `power_plant` | — | 20 | 12 | 3 | — | — |
+| `residential` | 15 | 12 | 10 | 6 | — | — |
+| `road_hub` | 8 | — | 2 | — | — | 4 |
+| `water_plant` | 25 | — | 6 | 2 | — | 5 |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and

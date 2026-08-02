@@ -40,20 +40,20 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     water_plant: %{water: 100.0},
     industrial: %{waste: 90.0},
     road_hub: %{traffic: 60.0},
-    residential: %{labour: 4.0},
-    commercial: %{},
+    residential: %{labour: 4.0, money: 1.0},
+    commercial: %{money: 30.0},
     park: %{waste: 8.0}
   }
 
   # Consumption tables (resource inputs)
   @consumption_table %{
     power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0},
-    water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0},
+    water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0, money: 5.0},
     industrial: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0},
-    road_hub: %{power: 8.0, waste: 2.0},
+    road_hub: %{power: 8.0, waste: 2.0, money: 4.0},
     residential: %{power: 15.0, water: 12.0, waste: 10.0, traffic: 6.0},
     commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0, labour: 8.0},
-    park: %{water: 18.0, traffic: 2.0}
+    park: %{water: 18.0, traffic: 2.0, money: 3.0}
   }
 
   @doc """
