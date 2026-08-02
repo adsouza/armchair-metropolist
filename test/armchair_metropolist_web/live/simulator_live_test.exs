@@ -13,7 +13,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.StubSnapshotRepository
 
@@ -225,32 +227,91 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # Positive case: the Metrics block survived the move into the sidebar.
       assert has_element?(view, "#metrics-tick")
 
-      # And the old per-resource satisfaction list is gone, so the figure is not
-      # rendered twice.
-      refute has_element?(view, "#metrics-resources")
+      # Water's satisfaction is the one figure only it has, and the totals row is where
+      # it belongs.
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
+
+      # "Only" is a claim about how many times the figure is on the page, which no
+      # single-element assertion can make — so count. Re-adding the old per-resource
+      # list would render it a second time and split this into three parts.
+      assert render(view) |> String.split("50.0%") |> length() == 2
+    end
+
+    test "a divergence too small to survive rounding is not shown as an arrow",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Health decays continuously, so actual production drifts below rated by fractions
+      # of a unit long before it drifts by a whole one. Both figures render as 120, and
+      # an arrow from a number to itself is noise.
+      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 119.7)})
+      render(view)
+
+      cell = view |> element(~s{[data-cell="power_plant-power"]}) |> render()
+      assert cell =~ "+120"
+      refute cell =~ "→"
+    end
+
+    test "a divergence big enough to see is shown as rated → actual", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 90.0)})
+      render(view)
+
+      assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~
+               "+120 → +90"
+    end
+
+    test "a resource with no statistics at all shows an em dash in the totals row",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # SummarizeCity always reports all four, so this is the defensive branch. Power is
+      # present to prove the row still renders figures either side of the gap.
+      send(view.pid, {:city_metrics, metrics_with_only_power_statistics()})
+      render(view)
+
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "—"
     end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
   # tell one totals cell from another, and "appears once" assertions become impossible.
   defp metrics_with_distinct_satisfaction do
-    alias ArmchairMetropolist.Domain.Entities.{CityMap, SimulationMetrics}
-
-    stat = fn satisfaction ->
-      %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
-    end
-
-    base = SimulationMetrics.build(CityMap.new(40, 30), %{})
-
     %{
-      base
+      empty_city_metrics()
       | tick: 3,
         resources: %{
-          power: stat.(1.0),
-          water: stat.(0.5),
-          waste: stat.(0.75),
-          traffic: stat.(0.25)
+          power: stat(1.0),
+          water: stat(0.5),
+          waste: stat(0.75),
+          traffic: stat(0.25)
         }
     }
+  end
+
+  # Only power, so `totals_cell/2` has to render the other three from nothing.
+  defp metrics_with_only_power_statistics do
+    %{empty_city_metrics() | resources: %{power: stat(1.0)}}
+  end
+
+  # Placing real nodes cannot produce an exact divergence — actual production is
+  # whatever health decay happens to have left — so the breakdown is written directly.
+  defp metrics_with_power_production(rated, actual) do
+    metrics = empty_city_metrics()
+
+    put_in(metrics.by_type[:power_plant], %{
+      count: 1,
+      rated_production: %{power: rated},
+      actual_production: %{power: actual},
+      consumption: %{water: 20.0, waste: 12.0, traffic: 3.0}
+    })
+  end
+
+  defp empty_city_metrics, do: SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+  defp stat(satisfaction) do
+    %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
   end
 end

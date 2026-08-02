@@ -267,7 +267,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         rated_net = produced - (consumed || 0.0)
         actual_net = actual - (consumed || 0.0)
 
-        if abs(rated_net - actual_net) < 0.05,
+        # Compared as displayed rather than as floats: production scales continuously
+        # with health, so most of the time the two differ by a fraction of a unit that
+        # `signed/1` then rounds away, and the arrow would point from a number to
+        # itself. `SimulationCalculator` makes the same choice one layer down, comparing
+        # `{round(health), status}` so sub-pixel drift never surfaces.
+        if round(rated_net) == round(actual_net),
           do: signed(rated_net),
           else: "#{signed(rated_net)} → #{signed(actual_net)}"
     end

@@ -499,8 +499,29 @@ These use `element/2` and `has_element?/2` rather than matching raw HTML, per
 `AGENTS.md:376`. The first draft used `html =~` and produced an assertion that passed
 regardless of the value under test.
 
+> **Amended after Task 3 review.** Two changes to what this step originally specified.
+>
+> The last test ended `refute has_element?(view, "#metrics-resources")`, which **could
+> not fail**: the deleted markup was `<ul :if={map_size(@metrics.resources) > 0}>` and
+> never carried that id, so the refutation was already true before the change and would
+> stay true if someone re-added the old list verbatim — the one regression it existed to
+> catch. `element/2` cannot express "appears once", so the replacement counts
+> occurrences of water's satisfaction in the rendered page, which is exactly the claim
+> the test's title makes. Mutation-verified by re-adding the old `<ul>`: the count goes
+> to 3 and the test fails.
+>
+> Three tests are also added, covering branches the original set left unexercised:
+> `net_cell/2`'s divergence branch both ways, and `totals_cell/2`'s `nil` branch. The
+> first of them is what caught the Step 4 epsilon bug described there.
+>
+> The `metrics_with_distinct_satisfaction/0` helper is unchanged in behaviour; its
+> anonymous `stat` and its inline `SimulationMetrics.build/2` become named private
+> functions now that three helpers share them, and its function-local `alias` moves to
+> the module's existing alias block.
+
 Append inside the existing `defmodule ... do` in
-`test/armchair_metropolist_web/live/simulator_live_test.exs`, before the final `end`:
+`test/armchair_metropolist_web/live/simulator_live_test.exs`, before the final `end`
+(and add `CityMap` and `SimulationMetrics` to the module's aliases):
 
 ```elixir
   describe "legend" do
@@ -569,33 +590,92 @@ Append inside the existing `defmodule ... do` in
       # Positive case: the Metrics block survived the move into the sidebar.
       assert has_element?(view, "#metrics-tick")
 
-      # And the old per-resource satisfaction list is gone, so the figure is not
-      # rendered twice.
-      refute has_element?(view, "#metrics-resources")
+      # Water's satisfaction is the one figure only it has, and the totals row is where
+      # it belongs.
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
+
+      # "Only" is a claim about how many times the figure is on the page, which no
+      # single-element assertion can make — so count. Re-adding the old per-resource
+      # list would render it a second time and split this into three parts.
+      assert render(view) |> String.split("50.0%") |> length() == 2
+    end
+
+    test "a divergence too small to survive rounding is not shown as an arrow",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Health decays continuously, so actual production drifts below rated by fractions
+      # of a unit long before it drifts by a whole one. Both figures render as 120, and
+      # an arrow from a number to itself is noise.
+      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 119.7)})
+      render(view)
+
+      cell = view |> element(~s{[data-cell="power_plant-power"]}) |> render()
+      assert cell =~ "+120"
+      refute cell =~ "→"
+    end
+
+    test "a divergence big enough to see is shown as rated → actual", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 90.0)})
+      render(view)
+
+      assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~
+               "+120 → +90"
+    end
+
+    test "a resource with no statistics at all shows an em dash in the totals row",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # SummarizeCity always reports all four, so this is the defensive branch. Power is
+      # present to prove the row still renders figures either side of the gap.
+      send(view.pid, {:city_metrics, metrics_with_only_power_statistics()})
+      render(view)
+
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "—"
     end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
   # tell one totals cell from another, and "appears once" assertions become impossible.
   defp metrics_with_distinct_satisfaction do
-    alias ArmchairMetropolist.Domain.Entities.{CityMap, SimulationMetrics}
-
-    stat = fn satisfaction ->
-      %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
-    end
-
-    base = SimulationMetrics.build(CityMap.new(40, 30), %{})
-
     %{
-      base
+      empty_city_metrics()
       | tick: 3,
         resources: %{
-          power: stat.(1.0),
-          water: stat.(0.5),
-          waste: stat.(0.75),
-          traffic: stat.(0.25)
+          power: stat(1.0),
+          water: stat(0.5),
+          waste: stat(0.75),
+          traffic: stat(0.25)
         }
     }
+  end
+
+  # Only power, so `totals_cell/2` has to render the other three from nothing.
+  defp metrics_with_only_power_statistics do
+    %{empty_city_metrics() | resources: %{power: stat(1.0)}}
+  end
+
+  # Placing real nodes cannot produce an exact divergence — actual production is
+  # whatever health decay happens to have left — so the breakdown is written directly.
+  defp metrics_with_power_production(rated, actual) do
+    metrics = empty_city_metrics()
+
+    put_in(metrics.by_type[:power_plant], %{
+      count: 1,
+      rated_production: %{power: rated},
+      actual_production: %{power: actual},
+      consumption: %{water: 20.0, waste: 12.0, traffic: 3.0}
+    })
+  end
+
+  defp empty_city_metrics, do: SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+  defp stat(satisfaction) do
+    %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
   end
 ```
 
@@ -658,9 +738,20 @@ Two details, both from review:
   reflow, so flex must never be allowed to squeeze its container.
 * `min-[1450px]:flex-row`, not `lg:`. At `lg` (1024px) the page has 1024 − 64 of
   padding = **960px**, exactly the grid's width, so a sidebar beside it would overflow.
-  960 grid + 16 gap + ~410 sidebar + 64 padding ≈ 1450.
+  960 grid + 16 gap + ~410 sidebar + 64 padding ≈ 1450. The 410 is a budget the sidebar
+  has to be *made* to fit — see the `min-w-0` note in Step 4; the table's intrinsic
+  width is 652.
 
 - [ ] **Step 4: Add the `legend/1` component `[review]`**
+
+> **Amended after Task 3 review.** `net_cell/2` originally chose between the plain and
+> the arrow form with `abs(rated_net - actual_net) < 0.05`, an epsilon measured on
+> unrounded floats while `signed/1` rounds to whole units. Every divergence in
+> (0.05, 0.5) was therefore above the threshold and invisible after rounding, rendering
+> `+120 → +120`. That range is ordinary play, not a corner: health decays as a
+> continuous float and `effective_production` scales linearly with it, so one power
+> plant passes through it on the way down. Fixed by comparing what is displayed, which
+> also removes the magic number.
 
 Add after `render/1` and before `cell_style/3`:
 
@@ -679,7 +770,11 @@ Add after `render/1` and before `cell_style/3`:
     assigns = assign(assigns, :resources, @resources)
 
     ~H"""
-    <div class="w-full min-[1450px]:w-auto">
+    <%!-- `min-w-0` is what makes the `overflow-x-auto` below actually engage: a flex
+          item defaults to `min-width: auto`, so without this the sidebar refuses to
+          shrink under the table's intrinsic width and the *page* scrolls sideways
+          instead of the table. --%>
+    <div class="w-full min-w-0 min-[1450px]:w-auto">
       <h2 class="font-semibold mb-2">Types</h2>
 
       <div class="overflow-x-auto">
@@ -772,7 +867,12 @@ Add after `render/1` and before `cell_style/3`:
         rated_net = produced - (consumed || 0.0)
         actual_net = actual - (consumed || 0.0)
 
-        if abs(rated_net - actual_net) < 0.05,
+        # Compared as displayed rather than as floats: production scales continuously
+        # with health, so most of the time the two differ by a fraction of a unit that
+        # `signed/1` then rounds away, and the arrow would point from a number to
+        # itself. `SimulationCalculator` makes the same choice one layer down, comparing
+        # `{round(health), status}` so sub-pixel drift never surfaces.
+        if round(rated_net) == round(actual_net),
           do: signed(rated_net),
           else: "#{signed(rated_net)} → #{signed(actual_net)}"
     end
@@ -1076,7 +1176,7 @@ Task 3. Element ids are consistent between the tests and the markup that produce
 | Finding | Resolution |
 |---|---|
 | P1 stale metrics after place/demolish | Task 2 — engine broadcasts the metrics it already computes |
-| P1 duplicate-satisfaction assertion impossible | Task 3 Step 1 — distinct satisfaction per resource, scoped assertions |
+| P1 duplicate-satisfaction assertion impossible | Task 3 Step 1 — distinct satisfaction per resource, and (post-review) an assertion that actually counts the occurrences |
 | P2 vacuous em-dash assertion | Task 3 Step 1 — `element/2` on the cell, positive case first |
 | P2 keyboard access | Task 3 Step 4 — a real `<button>` per row, `aria-pressed` |
 | P2 breakpoint too early | Task 3 Step 3 — `min-[1450px]` and `shrink-0`, arithmetic shown |
