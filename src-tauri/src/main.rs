@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
@@ -58,6 +59,25 @@ fn send_channel_event(name: &str, payload: serde_json::Value) {
 }
 
 fn kill_sidecar(app: &tauri::AppHandle) {
+    // Persist window geometry FIRST, while the windows still exist.
+    //
+    // This call is load-bearing, not belt-and-braces. tauri-plugin-window-state
+    // only updates an in-memory cache on `CloseRequested`/`Resized`/`Moved`; the
+    // single place it writes the state file is its `RunEvent::Exit` handler
+    // (lib.rs:503). Every exit path in this app is a hard `std::process::exit(0)`
+    // — the menu Quit handler, and the `ExitRequested` handler, which calls
+    // `api.prevent_exit()` and then exits from a timer thread. `RunEvent::Exit`
+    // therefore never fires, so without this the plugin would restore state on
+    // launch and never save any: silently a no-op, and indistinguishable from
+    // working until you relaunch and the window is the wrong size.
+    //
+    // `kill_sidecar` is the one choke point all three exit paths share.
+    // `StateFlags::all()` matches `Builder::default()`, whose flags are
+    // `StateFlags::default()` == `all()`, so saved and restored fields agree.
+    if let Err(error) = app.save_window_state(StateFlags::all()) {
+        eprintln!("[window-state] failed to save: {}", error);
+    }
+
     // Stop heartbeating first: the sidecar's ShutdownManager sees the heartbeat
     // stop and begins its own graceful shutdown while we wait below.
     HEARTBEAT_ACTIVE.store(false, Ordering::Relaxed);
@@ -125,6 +145,14 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
             // Focus the main window when a second instance is launched
         }))
+        // Remembers window size, position and maximised state across launches.
+        // The size in tauri.conf.json is only the FIRST-run default: once a state
+        // file exists it wins, so resizing the window sticks.
+        //
+        // Registering it is necessary but NOT sufficient here — see the explicit
+        // save in `kill_sidecar`, without which this plugin silently persists
+        // nothing in this app.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
