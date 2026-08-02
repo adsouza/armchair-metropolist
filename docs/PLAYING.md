@@ -7,9 +7,8 @@ the rules — see [TESTING.md](../TESTING.md).
 
 ## The controls
 
-Selecting what to build and acting on the grid are different gestures. The two grid
-actions are a click on the same square, which is worth knowing because nothing on
-screen separates them:
+There are three things to click, and the last two are the same gesture on the same
+square — worth knowing, because nothing on screen separates them:
 
 * **click a type in the legend** — selects it for placing;
 * **click an empty cell** — places the currently selected type;

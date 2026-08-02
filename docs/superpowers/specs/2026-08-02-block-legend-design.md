@@ -1,7 +1,7 @@
 # Block legend — design
 
 **Date:** 2026-08-02
-**Status:** approved, not yet implemented
+**Status:** implemented — see `docs/superpowers/plans/2026-08-02-block-legend.md`
 
 ## 1. Purpose
 

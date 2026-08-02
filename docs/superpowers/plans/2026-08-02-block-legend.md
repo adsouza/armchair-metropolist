@@ -20,6 +20,13 @@ up to a second later. No simulation rule changes.
 have produced deterministically failing tests, plus one shipped bug the plan had
 inherited. Each fix is marked `[review]` at the step that carries it.
 
+**Status: complete.** All five tasks are implemented, reviewed and merged; every step
+below is ticked. The ledger that tracked them as they were done lives in the git-ignored
+`/.superpowers/`, so until now this file — the only public record — read as un-started
+work. Steps whose specification differs from what actually shipped carry an
+`> **Amended …**` block saying what changed and why; a step with no such block shipped as
+written.
+
 ## Global Constraints
 
 - **Elixir floor is `~> 1.18`.** Do not use standard-library functions introduced after
@@ -103,7 +110,7 @@ than a new module: it is used in exactly one place and depends on that view's as
   missing key means "does not interact" and renders `—`, which is different from a
   present key holding `0.0`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append inside the existing `defmodule ... do` in
 `test/armchair_metropolist/domain/entities/simulation_metrics_test.exs`, before the
@@ -190,12 +197,12 @@ final `end`:
   end
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/armchair_metropolist/domain/entities/simulation_metrics_test.exs`
 Expected: FAIL — `key :by_type not found`.
 
-- [ ] **Step 3: Add the field and the aggregation**
+- [x] **Step 3: Add the field and the aggregation**
 
 In `lib/armchair_metropolist/domain/entities/simulation_metrics.ex`, add the `Node`
 alias beside the existing `CityMap` one:
@@ -297,12 +304,12 @@ Add these private functions before the module's final `end`:
   end
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `mix test test/armchair_metropolist/domain/entities/simulation_metrics_test.exs`
 Expected: PASS, including the pre-existing tests.
 
-- [ ] **Step 5: Mutation-verify the divergence test**
+- [x] **Step 5: Mutation-verify the divergence test**
 
 Temporarily make `sum_actual_production/2` ignore health:
 
@@ -317,12 +324,12 @@ Run: `mix test test/armchair_metropolist/domain/entities/simulation_metrics_test
 Expected: FAIL on "actual production is health-scaled and diverges from rated".
 Restore, and confirm PASS.
 
-- [ ] **Step 6: Run the whole gate**
+- [x] **Step 6: Run the whole gate**
 
 Run: `mix check`
 Expected: exit 0.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/armchair_metropolist/domain/entities/simulation_metrics.ex \
@@ -352,7 +359,7 @@ the app, and **forever in tests**, which do not start `TickServer`. Without this
 legend's counts would not move when you place a block, and Task 3's tests could not
 pass. Found by review of the first draft of this plan.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`,
 inside the existing describe block that covers place/demolish (or a new one):
@@ -391,13 +398,13 @@ inside the existing describe block that covers place/demolish (or a new one):
     end
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
 Expected: FAIL — `assert_receive {:city_metrics, metrics}` times out, because only the
 node message is broadcast today.
 
-- [ ] **Step 3: Broadcast the metrics**
+- [x] **Step 3: Broadcast the metrics**
 
 In `lib/armchair_metropolist/infrastructure/simulation/city_engine.ex`, in the
 successful branch of `handle_call({:place, …})`, replace:
@@ -435,7 +442,7 @@ with:
         {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: metrics}}
 ```
 
-- [ ] **Step 4: Correct the stale moduledoc `[review]`**
+- [x] **Step 4: Correct the stale moduledoc `[review]`**
 
 `CityEngine`'s moduledoc still describes behaviour that `SummarizeCity` fixed — it
 claims `snapshot/0` reports an empty `resources` map until the first tick, which
@@ -453,24 +460,24 @@ claims `snapshot/0` reports an empty `resources` map until the first tick, which
   it.
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `mix test test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
 Expected: PASS, including the pre-existing regression test.
 
-- [ ] **Step 6: Mutation-verify**
+- [x] **Step 6: Mutation-verify**
 
 Remove the `broadcast({:city_metrics, metrics})` line from the place branch only.
 Run the file again.
 Expected: FAIL on "placing broadcasts fresh metrics, not just the node".
 Restore, confirm PASS.
 
-- [ ] **Step 7: Run the whole gate**
+- [x] **Step 7: Run the whole gate**
 
 Run: `mix check`
 Expected: exit 0.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add lib/armchair_metropolist/infrastructure/simulation/city_engine.ex \
@@ -493,7 +500,7 @@ git commit -m "fix(engine): broadcast fresh metrics on place and demolish"
 - Produces: a private function component `legend/1` taking `metrics`, `node_types` and
   `selected_type`. Task 4 wraps its call site in a collapse toggle.
 
-- [ ] **Step 1: Write the failing tests `[review]`**
+- [x] **Step 1: Write the failing tests `[review]`**
 
 These use `element/2` and `has_element?/2` rather than matching raw HTML, per
 `AGENTS.md:376`. The first draft used `html =~` and produced an assertion that passed
@@ -513,6 +520,22 @@ regardless of the value under test.
 > Three tests are also added, covering branches the original set left unexercised:
 > `net_cell/2`'s divergence branch both ways, and `totals_cell/2`'s `nil` branch. The
 > first of them is what caught the Step 4 epsilon bug described there.
+>
+> **Amended again after the final review.** Two of these tests turned out to assert less
+> than their titles claimed, and are strengthened as shipped.
+>
+> "the totals row reports supply, demand and satisfaction per resource" asserted only the
+> two percentages: the `"#{round(stats.supplied)}/#{round(stats.demanded)} · "` prefix in
+> `totals_cell/2` could be deleted whole and the suite stayed green, leaving the row
+> showing bare percentages. It is now asserted. That in turn required `stat/1` to change
+> shape — it returned `supplied: 40.0, demanded: 40.0` for every resource, so a cell that
+> transposed the two figures, or printed one of them twice, rendered identically to a
+> correct one. It now takes both figures, they differ, they differ per resource, and
+> satisfaction is derived from them rather than passed in alongside.
+>
+> The visible count cell was never asserted either — only its `data-count` attribute was,
+> and the two were free to disagree. The cell now carries `data-cell={"#{type}-count"}`,
+> in the same scheme as the resource cells beside it, and the count test reads it.
 >
 > The `metrics_with_distinct_satisfaction/0` helper is unchanged in behaviour; its
 > anonymous `stat` and its inline `SimulationMetrics.build/2` become named private
@@ -679,12 +702,12 @@ Append inside the existing `defmodule ... do` in
   end
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
 Expected: FAIL — no `#legend-row-*` elements exist.
 
-- [ ] **Step 3: Replace the Place row and Metrics block with the sidebar `[review]`**
+- [x] **Step 3: Replace the Place row and Metrics block with the sidebar `[review]`**
 
 In `lib/armchair_metropolist_web/live/simulator_live.ex`, delete the two `<div
 class="mb-4">` blocks holding **Place** and **Metrics**, then replace from the
@@ -740,9 +763,18 @@ Two details, both from review:
   padding = **960px**, exactly the grid's width, so a sidebar beside it would overflow.
   960 grid + 16 gap + ~410 sidebar + 64 padding ≈ 1450. The 410 is a budget the sidebar
   has to be *made* to fit — see the `min-w-0` note in Step 4; the table's intrinsic
-  width is 652.
+  width is 624.
 
-- [ ] **Step 4: Add the `legend/1` component `[review]`**
+> **Amended after the final review.** The intrinsic width read 652 here, an estimate made
+> while writing the plan. Task 4 measured the rendered table twice — `table.offsetWidth`
+> and `table.scrollWidth` both 624 — and neither figure was carried back. Corrected to
+> the measurement. Nothing downstream moves: the sidebar still has to be forced under its
+> 410px budget either way, which is the only thing the number is used for. The final
+> review then lengthened the totals row's label from `supplied / demanded` to
+> `supplied/demanded · met`, which may nudge 624 up by a few pixels; it was not
+> re-measured, and the conclusion is insensitive to it.
+
+- [x] **Step 4: Add the `legend/1` component `[review]`**
 
 > **Amended after Task 3 review.** `net_cell/2` originally chose between the plain and
 > the arrow form with `abs(rated_net - actual_net) < 0.05`, an epsilon measured on
@@ -753,29 +785,59 @@ Two details, both from review:
 > plant passes through it on the way down. Fixed by comparing what is displayed, which
 > also removes the magic number.
 
+> **Amended after the final review.** Three things this step specified are not what
+> shipped.
+>
+> The `min-w-0` note below had it backwards. This div is **not** a flex item — it is an
+> ordinary block child of the `<aside>` that Task 4 introduces, and `<aside>` is the
+> direct flex item of the row. Commit `1153c90` moved the working `min-w-0` there and
+> this step was never amended to match. The final review then dropped the whole
+> `w-full min-w-0 min-[1450px]:w-auto` list from this div: `min-w-0` was inert, and
+> `w-full` and `w-auto` each resolve to the width a block child already takes, so the
+> duplicated list did nothing but read as though it were load-bearing.
+>
+> `@resources` is gone. The same four atoms were written down in three places — the
+> `t:resource/0` typespec, `SimulationCalculator`'s `@resources`, and this copy — and
+> none constrained the others, so a fifth resource would have been silently missing from
+> the legend's columns and its totals row with every test still passing. The domain now
+> publishes `Node.resources/0`, already in display order; the view calls it, and a domain
+> test pins the calculator's baseline table against it as sets.
+>
+> The heading reads **Legend**, not "Types". The toggle offers to hide the legend, the row
+> ids are `legend-*`, and `docs/PLAYING.md` calls it the legend, so a player following the
+> guide was looking for a panel that did not exist by that name. The totals row's label
+> gained a third term for the same reason: cells render `150/120 · 100.0%` and the
+> percentage was unlabelled anywhere on screen.
+
 Add after `render/1` and before `cell_style/3`:
 
 ```elixir
-  # The four resource columns are fixed and identical on every row, including where a
-  # type does not touch a resource. Aligned columns are the feature: the question a
-  # player has is "water is short, who is drinking it?", answered by reading one column
-  # down all seven types. Per-row chips would be narrower and unreadable for that.
-  @resources [:power, :water, :waste, :traffic]
-
+  # The resource columns are fixed and identical on every row, including where a type
+  # does not touch a resource. Aligned columns are the feature: the question a player
+  # has is "water is short, who is drinking it?", answered by reading one column down
+  # all seven types. Per-row chips would be narrower and unreadable for that.
+  #
+  # The vocabulary itself belongs to the domain — `Node.resources/0` is the one list,
+  # already in display order — so adding a resource grows this table by a column
+  # rather than silently omitting it.
   attr :metrics, :map, required: true
   attr :node_types, :list, required: true
   attr :selected_type, :atom, required: true
 
   defp legend(assigns) do
-    assigns = assign(assigns, :resources, @resources)
+    assigns = assign(assigns, :resources, Node.resources())
 
     ~H"""
-    <%!-- `min-w-0` is what makes the `overflow-x-auto` below actually engage: a flex
-          item defaults to `min-width: auto`, so without this the sidebar refuses to
-          shrink under the table's intrinsic width and the *page* scrolls sideways
-          instead of the table. --%>
-    <div class="w-full min-w-0 min-[1450px]:w-auto">
-      <h2 class="font-semibold mb-2">Types</h2>
+    <%!-- No width classes here on purpose. The shrink-to-scroll behaviour lives on
+          `<aside>` in `render/1`, the direct flex item of the row layout; this div is
+          an ordinary block child of that aside, so `min-w-0` would be inert and
+          `w-full`/`w-auto` would each resolve to the width it already takes. The
+          duplicate class list only read as though it were doing the work. --%>
+    <div>
+      <%!-- "Legend" and not "Types": the toggle offers to hide the legend, the row ids
+            are `legend-*`, and docs/PLAYING.md sends the player looking for a legend.
+            The table's own `type` column header is caption enough for the rows. --%>
+      <h2 class="font-semibold mb-2">Legend</h2>
 
       <div class="overflow-x-auto">
         <table class="table table-xs">
@@ -806,7 +868,9 @@ Add after `render/1` and before `cell_style/3`:
                   {type}
                 </button>
               </td>
-              <td class="text-right tabular-nums">{@metrics.by_type[type].count}</td>
+              <td data-cell={"#{type}-count"} class="text-right tabular-nums">
+                {@metrics.by_type[type].count}
+              </td>
               <td
                 :for={resource <- @resources}
                 data-cell={"#{type}-#{resource}"}
@@ -818,7 +882,10 @@ Add after `render/1` and before `cell_style/3`:
           </tbody>
           <tfoot>
             <tr id="legend-totals">
-              <th class="text-left" colspan="2">supplied / demanded</th>
+              <%!-- Every figure in the cells below is named here. Without the last
+                    term the percentage went unlabelled anywhere on screen. Terse
+                    because the label shares a narrow row with four numeric columns. --%>
+              <th class="text-left" colspan="2">supplied/demanded · met</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -897,7 +964,7 @@ Add after `render/1` and before `cell_style/3`:
   end
 ```
 
-- [ ] **Step 5: Correct the stale moduledoc `[review]`**
+- [x] **Step 5: Correct the stale moduledoc `[review]`**
 
 `SimulatorLive`'s moduledoc carries the same false claim as the engine's did. Replace
 the section headed `## metrics.resources before the first tick` with:
@@ -912,19 +979,19 @@ the section headed `## metrics.resources before the first tick` with:
   on the next tick.
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
 Expected: PASS.
 
-- [ ] **Step 7: Mutation-verify the count assertion**
+- [x] **Step 7: Mutation-verify the count assertion**
 
 Temporarily hard-code `data-count="0"` in `legend/1`.
 Run the file again.
 Expected: FAIL on "shows how many of each type are placed, updating as you place".
 Restore, confirm PASS.
 
-- [ ] **Step 8: Verify in a browser**
+- [x] **Step 8: Verify in a browser**
 
 Use the Browser tool — `preview_start` with name `armchair-metropolist` from
 `.claude/launch.json`, never `mix phx.server` via Bash.
@@ -937,12 +1004,12 @@ Use the Browser tool — `preview_start` with name `armchair-metropolist` from
    selects it.
 5. Screenshot the sidebar.
 
-- [ ] **Step 9: Run the whole gate**
+- [x] **Step 9: Run the whole gate**
 
 Run: `mix check`
 Expected: exit 0, coverage at or above 90%.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add lib/armchair_metropolist_web/live/simulator_live.ex \
@@ -963,7 +1030,7 @@ git commit -m "feat(web): replace the Place row with a legend sidebar"
 - Produces: assign `:sidebar_open` (boolean, default `true`) and event
   `"toggle_sidebar"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the `describe "legend"` block:
 
@@ -981,12 +1048,12 @@ Append inside the `describe "legend"` block:
     end
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
 Expected: FAIL — no element with id `toggle-sidebar`.
 
-- [ ] **Step 3: Add the assign**
+- [x] **Step 3: Add the assign**
 
 In `mount/3`, after the `:selected_type` assign:
 
@@ -994,7 +1061,7 @@ In `mount/3`, after the `:selected_type` assign:
       |> assign(:sidebar_open, true)
 ```
 
-- [ ] **Step 4: Add the event handler**
+- [x] **Step 4: Add the event handler**
 
 After the existing `handle_event("demolish", …)` clause:
 
@@ -1004,12 +1071,12 @@ After the existing `handle_event("demolish", …)` clause:
   end
 ```
 
-- [ ] **Step 5: Wrap the legend in the toggle**
+- [x] **Step 5: Wrap the legend in the toggle**
 
 In `render/1`, replace the `<.legend … />` call with:
 
 ```heex
-        <aside class="w-full min-[1450px]:w-auto">
+        <aside class="w-full min-w-0 min-[1450px]:w-auto">
           <button
             id="toggle-sidebar"
             type="button"
@@ -1032,19 +1099,19 @@ In `render/1`, replace the `<.legend … />` call with:
 The outermost element inside `legend/1` is already a plain `<div>`, so the `aside`
 landmark is not nested — leave `legend/1` as written in Task 3.
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
 Expected: PASS.
 
-- [ ] **Step 7: Mutation-verify the toggle**
+- [x] **Step 7: Mutation-verify the toggle**
 
 Make the handler `{:noreply, socket}`.
 Run the file again.
 Expected: FAIL on "the sidebar starts expanded and can be collapsed and reopened".
 Restore, confirm PASS.
 
-- [ ] **Step 8: Verify responsive behaviour in a browser `[review]`**
+- [x] **Step 8: Verify responsive behaviour in a browser `[review]`**
 
 The grid is a fixed 960px and cannot shrink, so the side-by-side layout must not engage
 until both panes genuinely fit. Using the Browser tool's `resize_window`:
@@ -1060,12 +1127,12 @@ until both panes genuinely fit. Using the Browser tool's `resize_window`:
 If the sidebar overflows at 1500px, raise the `min-[…]` threshold to match what it
 actually measures rather than letting the grid shrink.
 
-- [ ] **Step 9: Run the whole gate**
+- [x] **Step 9: Run the whole gate**
 
 Run: `mix check`
 Expected: exit 0.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add lib/armchair_metropolist_web/live/simulator_live.ex \
@@ -1085,7 +1152,21 @@ git commit -m "feat(web): make the legend sidebar collapsible"
 Two existing passages become false when Task 3 lands, and the generated-table test does
 not check prose. **Replace them — appending is not enough.**
 
-- [ ] **Step 1: Replace the stale Place-row reference**
+> **Amended after the final review.** Two things about `docs/PLAYING.md` that this task
+> did not anticipate, recorded here because nothing else in the public record does.
+>
+> Replacing the list in Step 1 turned it from a two-item list into a three-item one, and
+> the sentence introducing it still counted two. A first pass made that sentence no longer
+> false but left it introducing all three bullets as grid actions, which the first one is
+> not. It now says there are three things to click and that the last two are the same
+> gesture — the point worth keeping, since nothing on screen separates placing from
+> demolishing.
+>
+> The legend paragraph in Step 3 was also repositioned and reworded once the responsive
+> behaviour from Task 4 was known: "down the right-hand side" is only true above the
+> `min-[1450px]` breakpoint. The Step 3 block below quotes what shipped.
+
+- [x] **Step 1: Replace the stale Place-row reference**
 
 In `## The controls`, replace:
 
@@ -1102,7 +1183,7 @@ with:
 * **click a placed block** — demolishes it.
 ```
 
-- [ ] **Step 2: Replace the stale metrics-panel reference**
+- [x] **Step 2: Replace the stale metrics-panel reference**
 
 Replace:
 
@@ -1120,31 +1201,32 @@ foot of the legend shows all four satisfaction figures; the lowest one is the on
 number that matters, because each node takes the worst of the resources it consumes.
 ```
 
-- [ ] **Step 3: Describe the legend**
+- [x] **Step 3: Describe the legend**
 
 Add at the end of `## The controls`:
 
 ```markdown
-The legend down the right-hand side lists every type with how many you have placed and
-its net effect on each resource. Where a type produces a resource and its buildings are
-damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
-supplied at current health. A dash means the type does not touch that resource at all,
-which is different from netting to zero. The totals row gives city-wide supply, demand
-and satisfaction, including the free baseline of 40 per resource.
+The legend — to the right of the grid on a wide enough window, stacked below it
+otherwise — lists every type with how many you have placed and its net effect on each
+resource. Where a type produces a resource and its buildings are damaged, the cell shows
+both figures — `+360 → +210` means 360 rated, 210 actually supplied at current health. A
+dash means the type does not touch that resource at all, which is different from
+netting to zero. The totals row gives city-wide supply, demand and satisfaction,
+including the free baseline of 40 per resource.
 ```
 
-- [ ] **Step 4: Confirm the generated tables are untouched**
+- [x] **Step 4: Confirm the generated tables are untouched**
 
 Run: `mix test test/docs/playing_guide_test.exs`
 Expected: PASS. The legend changes no rule, so a failure here means something else
 moved — investigate rather than regenerating.
 
-- [ ] **Step 5: Run the whole gate**
+- [x] **Step 5: Run the whole gate**
 
 Run: `mix check`
 Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/PLAYING.md
@@ -1169,7 +1251,9 @@ which the feature depends on.
 `actual_production`, `consumption`) defined in Task 1, used unchanged by `net_cell/2` in
 Task 3. Element ids are consistent between the tests and the markup that produces them:
 `legend-row-<type>`, `legend-totals`, `toggle-sidebar`, `metrics-tick`, and the
-`data-cell="<type>-<resource>"` / `data-total="<resource>"` attributes.
+`data-cell="<type>-<resource>"` / `data-total="<resource>"` attributes — plus
+`data-cell="<type>-count"`, added in the final review so the count a player reads is
+asserted and not only the `data-count` attribute beside it.
 
 **Review items and where each landed.**
 
