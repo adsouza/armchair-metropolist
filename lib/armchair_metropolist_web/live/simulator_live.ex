@@ -172,7 +172,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               These classes must be written here, in source. Tailwind's JIT only emits
               what it finds in the templates, and neither `flex-wrap` nor `min-w-fit`
               appears anywhere else in this project. --%>
-        <aside class="min-w-fit">
+        <aside class="min-w-fit grow">
           <button
             id="toggle-legend-detail"
             type="button"
@@ -183,19 +183,47 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             {if @legend_detail, do: "Hide detail", else: "Show detail"}
           </button>
 
-          <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
-                the legend: the type rows are the only way to choose what to place. --%>
-          <.legend
-            detail={@legend_detail}
-            metrics={@metrics}
-            node_types={@node_types}
-            selected_type={@selected_type}
-          />
+          <%!-- Stacked while the sidebar is beside the grid; side by side once it has
+                wrapped underneath, where the full page width is going spare.
 
-          <%!-- A sibling of the legend, not a child of it. Metrics used to live inside
-                `legend/1` and so could not survive a collapse — the structural reason
-                the toggle hid them. --%>
-          <.metrics metrics={@metrics} />
+                The `max-[1631px]` is a constant, unlike the layout above, and that is a
+                deliberate trade. It cannot be content-derived: the sidebar's own
+                intrinsic width is what decides where it wraps, so a side-by-side inner
+                row feeds back into that decision — measured, it raises the sidebar's
+                `fit-content` from 655 to 831 and drags the wrap point from 1631 to
+                ~1807, putting the legend under the grid at every ordinary window size.
+                Keeping the children stacked by default keeps the sidebar's intrinsic
+                width at the legend's 655 and the threshold where it belongs.
+
+                1711 is measured, not derived on paper: the row needs a content box of
+                1632 (960 grid + 16 gap + 655 matrix, and 1631 is one short — verified),
+                and `Layouts.app` costs 79px of page chrome, so the sidebar sits beside
+                the grid from viewport 1711 up. Tailwind v4 compiles `max-[N]` to
+                `@media (width < N)`, exclusive, so 1711 is the value that covers 1710
+                and below — 1710 left the boundary pixel uncovered. An earlier draft of this used 1631 and
+                was wrong by exactly that chrome: the number here is a *viewport* width,
+                while the arithmetic above is a content-box width.
+
+                If the table ever outgrows 655, or the layout's padding changes, the two
+                disagree and metrics stays stacked in the band between them — cosmetic,
+                no scrollbar, no broken layout. A stale constant governing *position* was
+                the bug this branch fixed; one governing a cosmetic arrangement is not
+                the same hazard. --%>
+          <div class="flex flex-col gap-4 max-[1711px]:flex-row">
+            <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
+                  the legend: the type rows are the only way to choose what to place. --%>
+            <.legend
+              detail={@legend_detail}
+              metrics={@metrics}
+              node_types={@node_types}
+              selected_type={@selected_type}
+            />
+
+            <%!-- A sibling of the legend, not a child of it. Metrics used to live inside
+                  `legend/1` and so could not survive a collapse — the structural reason
+                  the toggle hid them. --%>
+            <.metrics metrics={@metrics} />
+          </div>
         </aside>
       </div>
     </Layouts.app>
@@ -311,7 +339,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     assigns = assign(assigns, :tightest, tightest_resource(assigns.metrics.resources))
 
     ~H"""
-    <div class="mt-4">
+    <div>
       <h2 class="font-semibold mb-2">Metrics</h2>
       <p id="metrics-tick">Tick: {@metrics.tick}</p>
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
