@@ -106,7 +106,13 @@ defmodule ArmchairMetropolist.MixProject do
           steps: [&deploy_assets/1, :assemble]
         ],
         desktop: [
-          steps: [&build_assets/1, :assemble, &Burrito.wrap/1, &evict_burrito_payload_cache/1],
+          steps: [
+            &assert_linux_erts_supported!/1,
+            &build_assets/1,
+            :assemble,
+            &Burrito.wrap/1,
+            &evict_burrito_payload_cache/1
+          ],
           burrito: [targets: burrito_targets()]
         ]
       ]
@@ -137,15 +143,33 @@ defmodule ArmchairMetropolist.MixProject do
       cpu: :aarch64,
       custom_erts: "#{@erts_cdn}/macos/universal/otp_#{@erts_otp}_macos_universal.tar.gz"
     ],
+    # The Linux targets deliberately do NOT set `custom_erts`, and must not.
+    #
+    # Burrito's musl step only runs for a target whose `erts_source` is
+    # `{:precompiled, _}` (`deps/burrito/lib/steps/fetch/fetch_musl.ex:19`).
+    # `custom_erts` makes it `{:url, _}` instead (`builder/target.ex:47`), so the
+    # step falls through its bare `def execute(context), do: context` clause and
+    # never writes `src/musl-runtime.so`. The wrapper then fails to compile:
+    # `wrapper.zig:241` does `@embedFile("musl-runtime.so")` and its guard at :222
+    # is a *runtime* check, so a comptime-Linux build analyses the embed
+    # regardless. Setting `custom_erts` on a Linux target is an unconditional
+    # wrapper-build failure, which is what reddened both desktop CI jobs.
+    #
+    # Dropping it costs nothing: the precompiled path builds the same CDN URL
+    # these strings did, from the *host's* OTP. CI pins OTP to @erts_otp
+    # (.github/workflows/ci.yml), and `assert_linux_erts_supported!/1` below makes
+    # that agreement fail loudly instead of 404ing mid-build.
+    #
+    # darwin keeps its pin — macOS embeds no musl runtime, so the step is a no-op
+    # there either way, and the pin is what stops this machine's OTP 29.0.4 (which
+    # the CDN has not built) from 404ing.
     "x86_64-unknown-linux-gnu": [
       os: :linux,
-      cpu: :x86_64,
-      custom_erts: "#{@erts_cdn}/linux/x86_64/any/otp_#{@erts_otp}_linux_any_x86_64.tar.gz"
+      cpu: :x86_64
     ],
     "aarch64-unknown-linux-gnu": [
       os: :linux,
-      cpu: :aarch64,
-      custom_erts: "#{@erts_cdn}/linux/aarch64/any/otp_#{@erts_otp}_linux_any_aarch64.tar.gz"
+      cpu: :aarch64
     ]
   ]
 
@@ -169,6 +193,57 @@ defmodule ArmchairMetropolist.MixProject do
       @burrito_all_targets
     else
       Keyword.take(@burrito_all_targets, [host_burrito_target()])
+    end
+  end
+
+  # A release STEP, not a check in `project/0`. `releases:` is evaluated on every
+  # Mix invocation, so raising from there would abort `mix test` on any Linux host
+  # whose OTP differs — including CI's own floor job, which runs a deliberately
+  # older OTP. This only runs during `mix release desktop`.
+  defp assert_linux_erts_supported!(release) do
+    for {name, opts} <- burrito_targets(), opts[:os] == :linux, do: check_host_otp!(name)
+    release
+  end
+
+  # Linux targets take their ERTS from the host's OTP version (see the note on
+  # `@burrito_all_targets`), so that version must be one the CDN has actually
+  # built. Without this, a mismatch surfaces as a 404 partway through a build, or
+  # worse as a confusing Zig error — the failure mode that cost a day here once.
+  # `@erts_otp` is the version probed and confirmed present on the CDN.
+  defp check_host_otp!(target) do
+    case host_otp_version() do
+      # Cannot determine the host version — do not block a build over a missing
+      # file. Burrito's own 404 remains the backstop.
+      nil ->
+        :ok
+
+      @erts_otp ->
+        :ok
+
+      other ->
+        Mix.raise("""
+        Cannot build the Linux Burrito target #{target} on OTP #{other}.
+
+        Linux targets fetch a precompiled ERTS for the host's OTP version, and
+        only #{@erts_otp} is confirmed present on #{@erts_cdn |> String.replace("/OTP-#{@erts_otp}", "")}.
+
+        Either build on OTP #{@erts_otp} (this is what CI pins), or re-probe the
+        CDN for your version and update @erts_otp in mix.exs if it is available.
+
+        Do not "fix" this by adding `custom_erts:` back to a Linux target — that
+        silently disables Burrito's musl fetch and breaks the wrapper build.
+        """)
+    end
+  end
+
+  # OTP's full version (e.g. "29.0.3"); `System.otp_release/0` gives only "29".
+  defp host_otp_version do
+    [to_string(:code.root_dir()), "releases", System.otp_release(), "OTP_VERSION"]
+    |> Path.join()
+    |> File.read()
+    |> case do
+      {:ok, contents} -> String.trim(contents)
+      {:error, _} -> nil
     end
   end
 
