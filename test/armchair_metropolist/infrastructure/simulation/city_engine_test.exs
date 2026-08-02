@@ -272,6 +272,45 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "metrics broadcasts on commands" do
+    setup do
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      :ok
+    end
+
+    test "placing broadcasts fresh metrics, not just the node" do
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      start_supervised!(CityEngine)
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
+
+      assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
+
+      assert_receive {:city_node_placed, _node}
+
+      assert_receive {:city_metrics, metrics}
+      assert metrics.node_count == 1
+
+      assert metrics.by_type.power_plant.count == 1,
+             "a subscriber must see the new node reflected in metrics immediately, " <>
+               "not only after the next tick"
+    end
+
+    test "demolishing broadcasts fresh metrics, not just the id" do
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      start_supervised!(CityEngine)
+      assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
+
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
+      assert {:ok, "0:0"} = CityEngine.demolish(0, 0)
+
+      assert_receive {:city_node_removed, "0:0"}
+
+      assert_receive {:city_metrics, metrics}
+      assert metrics.node_count == 0
+      assert metrics.by_type.power_plant.count == 0
+    end
+  end
+
   describe "persistence" do
     test "the engine's child spec carries the 10s shutdown budget" do
       # The 5s default can kill the process mid-write, so the save-on-shutdown
