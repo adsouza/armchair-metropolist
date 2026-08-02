@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.Domain.Entities.Node do
   @moduledoc "A single piece of placed city infrastructure."
 
-  @type resource :: :power | :water | :waste | :traffic
+  @type resource :: :power | :water | :waste | :traffic | :labour
   @type node_type ::
           :power_plant
           | :water_plant
@@ -32,7 +32,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # rather than derived from the tables below: those are maps, and `Map.keys/1`
   # order is an implementation detail of the term, whereas this order is a display
   # decision the legend depends on.
-  @resources [:power, :water, :waste, :traffic]
+  @resources [:power, :water, :waste, :traffic, :labour]
 
   # Production tables (resource outputs)
   @production_table %{
@@ -40,7 +40,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     water_plant: %{water: 100.0},
     industrial: %{waste: 90.0},
     road_hub: %{traffic: 60.0},
-    residential: %{},
+    residential: %{labour: 4.0},
     commercial: %{},
     park: %{waste: 8.0}
   }
@@ -49,10 +49,10 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   @consumption_table %{
     power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0},
     water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0},
-    industrial: %{power: 40.0, water: 25.0, traffic: 8.0},
+    industrial: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0},
     road_hub: %{power: 8.0, waste: 2.0},
     residential: %{power: 15.0, water: 12.0, waste: 10.0, traffic: 6.0},
-    commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0},
+    commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0, labour: 8.0},
     park: %{water: 18.0, traffic: 2.0}
   }
 

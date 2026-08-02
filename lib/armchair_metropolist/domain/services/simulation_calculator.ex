@@ -30,7 +30,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
 
-  @baseline_capacity %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
+  # No free workers: labour comes only from housing, which is the point of the resource.
+  @baseline_capacity %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0, labour: 0.0}
   @resources Map.keys(@baseline_capacity)
   @no_resources Map.new(@resources, fn resource -> {resource, 0.0} end)
 

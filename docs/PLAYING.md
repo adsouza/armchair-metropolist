@@ -90,11 +90,11 @@ Measured by simulation — add residential until the city no longer holds at ful
 health:
 
 <!-- generated:capacities -->
-| support set                            | support tiles | max residential | total tiles | residential per tile |
-|----------------------------------------|---------------|-----------------|-------------|----------------------|
-| 1 power, 1 water, 1 industrial, 1 road | 4             | **5**           | 9           | 0.56                 |
-| 2 power, 2 water, 1 industrial, 1 road | 6             | **9**           | 15          | 0.6                  |
-| 3 power, 3 water, 2 industrial, 2 road | 10            | **15**          | 25          | 0.6                  |
+| support set | support tiles | min residential | max residential | total tiles | residential per tile |
+|---|---|---|---|---|---|
+| 1 power, 1 water, 1 industrial, 1 road | 4 | 3 | **5** | 9 | 0.56 |
+| 2 power, 2 water, 1 industrial, 1 road | 6 | 3 | **9** | 15 | 0.6 |
+| 3 power, 3 water, 2 industrial, 2 road | 10 | 6 | **15** | 25 | 0.6 |
 <!-- /generated:capacities -->
 
 About 0.6 residential per tile is the ceiling. Two practical consequences:
@@ -111,6 +111,11 @@ Those capacity figures include the one-off baseline 40, so a district that works
 automatically tileable: the second copy has no baseline of its own. As the city grows
 the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 road hubs per 13
 residential**.
+
+The min residential column exists for the same reason the max one does, just at the other
+end: `industrial` and `commercial` need workers, and residential is the only source of
+labour, so build the support set with too few residential and those blocks starve for
+staff instead of power or water — the shortfall just shows up in a different column.
 
 ## Rescuing a city that is already dying
 
@@ -156,9 +161,9 @@ survivable while large ones are not.
 Available with no infrastructure placed at all.
 
 <!-- generated:baseline -->
-| power | water | waste | traffic |
-|-------|-------|-------|---------|
-| 40    | 40    | 40    | 40      |
+| power | water | waste | traffic | labour |
+|---|---|---|---|---|
+| 40 | 40 | 40 | 40 | 0 |
 <!-- /generated:baseline -->
 
 ### What each type produces
@@ -166,15 +171,16 @@ Available with no infrastructure placed at all.
 Production is scaled by the node's health, so a plant at 50% health supplies half.
 
 <!-- generated:production -->
-| type          | produces   |
-|---------------|------------|
-| `industrial`  | waste 90   |
-| `park`        | waste 8    |
-| `power_plant` | power 120  |
-| `road_hub`    | traffic 60 |
-| `water_plant` | water 100  |
+| type | produces |
+|---|---|
+| `industrial` | waste 90 |
+| `park` | waste 8 |
+| `power_plant` | power 120 |
+| `residential` | labour 4 |
+| `road_hub` | traffic 60 |
+| `water_plant` | water 100 |
 
-Produce nothing at all: `commercial`, `residential`.
+Produce nothing at all: `commercial`.
 <!-- /generated:production -->
 
 ### What each type consumes
@@ -183,15 +189,15 @@ Consumption is **never** scaled by health. This is the mechanic behind every dea
 spiral.
 
 <!-- generated:consumption -->
-| type          | power | water | waste | traffic |
-|---------------|-------|-------|-------|---------|
-| `commercial`  | 22    | 8     | 14    | 9       |
-| `industrial`  | 40    | 25    | —     | 8       |
-| `park`        | —     | 18    | —     | 2       |
-| `power_plant` | —     | 20    | 12    | 3       |
-| `residential` | 15    | 12    | 10    | 6       |
-| `road_hub`    | 8     | —     | 2     | —       |
-| `water_plant` | 25    | —     | 6     | 2       |
+| type | power | water | waste | traffic | labour |
+|---|---|---|---|---|---|
+| `commercial` | 22 | 8 | 14 | 9 | 8 |
+| `industrial` | 40 | 25 | — | 8 | 12 |
+| `park` | — | 18 | — | 2 | — |
+| `power_plant` | — | 20 | 12 | 3 | — |
+| `residential` | 15 | 12 | 10 | 6 | — |
+| `road_hub` | 8 | — | 2 | — | — |
+| `water_plant` | 25 | — | 6 | 2 | — |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
@@ -204,12 +210,12 @@ only pays when you have spare water and are waste-limited, which is rare given h
 ### Health and timing
 
 <!-- generated:constants -->
-| rule                                                                    | value                       |
-|-------------------------------------------------------------------------|-----------------------------|
-| health regained per tick when every consumed resource is fully supplied | **+1**                      |
-| health lost per tick, per unit of shortfall                             | **−6 × (1 − satisfaction)** |
-| `:online` at                                                            | health ≥ 60                 |
-| `:degraded` at                                                          | health ≥ 20                 |
-| `:offline` below                                                        | health 20                   |
-| tick length                                                             | 1000 ms                     |
+| rule | value |
+|---|---|
+| health regained per tick when every consumed resource is fully supplied | **+1** |
+| health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
+| `:online` at | health ≥ 60 |
+| `:degraded` at | health ≥ 20 |
+| `:offline` below | health 20 |
+| tick length | 1000 ms |
 <!-- /generated:constants -->

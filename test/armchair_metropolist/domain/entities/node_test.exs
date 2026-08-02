@@ -30,8 +30,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "resources/0" do
-    test "lists the four resources in display order" do
-      assert Node.resources() == [:power, :water, :waste, :traffic]
+    test "lists the five resources in display order" do
+      assert Node.resources() == [:power, :water, :waste, :traffic, :labour]
     end
   end
 
@@ -44,12 +44,18 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.consumption(:water_plant) == %{power: 25.0, waste: 6.0, traffic: 2.0}
 
       assert Node.production(:industrial) == %{waste: 90.0}
-      assert Node.consumption(:industrial) == %{power: 40.0, water: 25.0, traffic: 8.0}
+
+      assert Node.consumption(:industrial) == %{
+               power: 40.0,
+               water: 25.0,
+               traffic: 8.0,
+               labour: 12.0
+             }
 
       assert Node.production(:road_hub) == %{traffic: 60.0}
       assert Node.consumption(:road_hub) == %{power: 8.0, waste: 2.0}
 
-      assert Node.production(:residential) == %{}
+      assert Node.production(:residential) == %{labour: 4.0}
 
       assert Node.consumption(:residential) == %{
                power: 15.0,
@@ -64,7 +70,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                power: 22.0,
                water: 8.0,
                waste: 14.0,
-               traffic: 9.0
+               traffic: 9.0,
+               labour: 8.0
              }
 
       assert Node.production(:park) == %{waste: 8.0}
@@ -139,7 +146,9 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
 
     test "consumers have no production at any health" do
-      node = %Node{Node.new(0, 0, :residential) | health: 100.0}
+      # residential produces labour now, so commercial is the pure consumer
+      # example here.
+      node = %Node{Node.new(0, 0, :commercial) | health: 100.0}
       assert Node.effective_production(node) == %{}
     end
   end

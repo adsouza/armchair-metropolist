@@ -43,8 +43,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "baseline_capacity/0" do
-    test "supplies 40 of every resource" do
-      assert Calc.baseline_capacity() == %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
+    test "supplies 40 of every resource except labour, which has no free supply" do
+      assert Calc.baseline_capacity() == %{
+               power: 40.0,
+               water: 40.0,
+               waste: 40.0,
+               traffic: 40.0,
+               labour: 0.0
+             }
     end
 
     # The calculator derives its own `@resources` from this table's keys, so the table
@@ -96,6 +102,55 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # A power plant consumes water 20 regardless of its own condition.
       assert_in_delta Calc.resource_stats(healthy).water.demanded, 20.0, 0.001
       assert_in_delta Calc.resource_stats(broken).water.demanded, 20.0, 0.001
+    end
+
+    # The housing requirement, stated directly rather than inferred from the tables.
+    # An industrial block with nobody to staff it is the city shape this resource
+    # exists to forbid.
+    test "industry with no housing has no labour and decays at the full rate" do
+      map = map_with([Node.new(0, 0, :industrial)])
+      stats = Calc.resource_stats(map)
+
+      assert stats.labour.demanded == 12.0
+      assert stats.labour.supplied == 0.0
+      assert stats.labour.satisfaction == 0.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      industrial = CityMap.get_node(advanced, 0, 0)
+      # -(1 - 0.0) * 6.0 from a starting 100.0
+      assert_in_delta industrial.health, 94.0, 0.001
+    end
+
+    test "enough housing staffs the industry and stops the decay" do
+      # 3 residential supply 12 labour, exactly the industrial block's demand.
+      #
+      # A bare industrial block plus 3 residential also draws more power and
+      # water than baseline alone covers (industrial 40 + 3*15 = 85 power vs.
+      # 40 baseline; industrial 25 + 3*12 = 61 water vs. 40 baseline) --
+      # unrelated to labour, but enough to starve and decay the block anyway.
+      # A power plant and water plant close those gaps so labour is the only
+      # thing this fixture is testing; traffic and waste already clear
+      # baseline without help.
+      map =
+        map_with([
+          Node.new(0, 0, :industrial),
+          Node.new(0, 2, :power_plant),
+          Node.new(1, 2, :water_plant)
+          | for(x <- 1..3, do: Node.new(x, 0, :residential))
+        ])
+
+      stats = Calc.resource_stats(map)
+
+      # Pinning demanded, not just satisfaction, matters: satisfaction/2 treats
+      # zero demand as automatically satisfied, so a mutated industrial labour
+      # demand of 0.0 would still report satisfaction 1.0 here unless demanded
+      # is checked directly.
+      assert stats.labour.demanded == 12.0
+      assert stats.labour.supplied == 12.0
+      assert stats.labour.satisfaction == 1.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert CityMap.get_node(advanced, 0, 0).health == 100.0
     end
   end
 

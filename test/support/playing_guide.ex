@@ -22,7 +22,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
 
-  @resources [:power, :water, :waste, :traffic]
+  @resources [:power, :water, :waste, :traffic, :labour]
 
   @doc "Every generated block, keyed by the marker name used in the markdown."
   @spec blocks() :: %{String.t() => String.t()}
@@ -45,33 +45,62 @@ defmodule ArmchairMetropolist.PlayingGuide do
     rows =
       for {pp, wp, ind, rh} <- @support_sets do
         support = pp + wp + ind + rh
-        max_r = max_residential(pp, wp, ind, rh)
-        total = support + max_r
 
-        "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road " <>
-          "| #{support} | **#{max_r}** | #{total} | #{Float.round(max_r / total, 2)} |"
+        case residential_range(pp, wp, ind, rh) do
+          nil ->
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road " <>
+              "| #{support} | none | none | none | none |"
+
+          {min_r, max_r} ->
+            total = support + max_r
+
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road " <>
+              "| #{support} | #{min_r} | **#{max_r}** | #{total} | #{Float.round(max_r / total, 2)} |"
+        end
       end
 
     Enum.join(
       [
-        "| support set | support tiles | max residential | total tiles | residential per tile |",
-        "|---|---|---|---|---|"
+        "| support set | support tiles | min residential | max residential | total tiles | residential per tile |",
+        "|---|---|---|---|---|---|"
       ] ++ rows,
       "\n"
     )
   end
 
+  # Labour makes the low end fail too — too few residents cannot staff the
+  # industry — so the sustainable set is a band, not a prefix, and the old
+  # `reduce_while` that halted on the first failure returned 0. Scan the whole
+  # range and report both ends.
+  #
+  # Returns {min, max}, or nil when no residential count is sustainable.
+  #
   # 120 ticks is ample: a shortfall of even 2% costs ~0.12 health per tick, so
   # anything unsustainable is visibly below 100 long before then.
-  defp max_residential(pp, wp, ind, rh) do
-    Enum.reduce_while(1..40, 0, fn r, best ->
-      city =
-        city_with(power_plant: pp, water_plant: wp, industrial: ind, road_hub: rh, residential: r)
+  #
+  # Scan the full range; do not bisect. A two-sided binary search would find
+  # the same band in a fraction of the simulations, and it would be wrong the
+  # first time the band is not contiguous -- a failure that shows up as a
+  # plausible wrong number in a published document, not as a test failure.
+  defp residential_range(pp, wp, ind, rh) do
+    sustainable =
+      for r <- 1..40,
+          city =
+            city_with(
+              power_plant: pp,
+              water_plant: wp,
+              industrial: ind,
+              road_hub: rh,
+              residential: r
+            ),
+          final = Enum.reduce(1..120, city, fn _, c -> elem(Calc.advance_tick(c), 0) end),
+          Calc.metrics(final).avg_health >= 99.9,
+          do: r
 
-      final = Enum.reduce(1..120, city, fn _, c -> elem(Calc.advance_tick(c), 0) end)
-
-      if Calc.metrics(final).avg_health >= 99.9, do: {:cont, r}, else: {:halt, best}
-    end)
+    case sustainable do
+      [] -> nil
+      rs -> {Enum.min(rs), Enum.max(rs)}
+    end
   end
 
   defp baseline_block do
