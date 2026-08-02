@@ -7,16 +7,25 @@ the rules — see [TESTING.md](../TESTING.md).
 
 ## The controls
 
-Both actions are a click on the same square, which is worth knowing because nothing on
+Selecting what to build and acting on the grid are different gestures. The two grid
+actions are a click on the same square, which is worth knowing because nothing on
 screen separates them:
 
 * **click a type in the legend** — selects it for placing;
 * **click an empty cell** — places the currently selected type;
 * **click a placed block** — demolishes it.
 
-Hover either one and the tooltip names the action. Demolishing matters more than it
-looks: it is the only way to reduce demand, and therefore the only way out of a
-collapse.
+Hover either grid square and the tooltip names the action it will perform. Demolishing
+matters more than it looks: it is the only way to reduce demand, and therefore the only
+way out of a collapse.
+
+The legend — to the right of the grid on a wide enough window, stacked below it
+otherwise — lists every type with how many you have placed and its net effect on each
+resource. Where a type produces a resource and its buildings are damaged, the cell shows
+both figures — `+360 → +210` means 360 rated, 210 actually supplied at current health. A
+dash means the type does not touch that resource at all, which is different from
+netting to zero. The totals row gives city-wide supply, demand and satisfaction,
+including the free baseline of 40 per resource.
 
 ### Position does not matter
 
@@ -37,13 +46,6 @@ This is a genuine gap rather than a considered design: there is no adjacency, se
 radius or distance cost anywhere in the domain, and the spec never discussed one. If
 that ever changes, the characterisation test in `simulation_calculator_test.exs` fails
 and takes this section with it.
-
-The legend down the right-hand side lists every type with how many you have placed and
-its net effect on each resource. Where a type produces a resource and its buildings are
-damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
-supplied at current health. A dash means the type does not touch that resource at all,
-which is different from netting to zero. The totals row gives city-wide supply, demand
-and satisfaction, including the free baseline of 40 per resource.
 
 ## Why your first city dies
 
