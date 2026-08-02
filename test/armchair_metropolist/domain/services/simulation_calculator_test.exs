@@ -43,13 +43,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "baseline_capacity/0" do
-    test "supplies 40 of every resource except labour, which has no free supply" do
+    test "supplies 40 of every resource except labour and money, which have no free supply" do
       assert Calc.baseline_capacity() == %{
                power: 40.0,
                water: 40.0,
                waste: 40.0,
                traffic: 40.0,
-               labour: 0.0
+               labour: 0.0,
+               money: 0.0
              }
     end
 
@@ -62,6 +63,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "resource_stats/1" do
+    test "every flow resource carries nothing" do
+      stats = Calc.resource_stats(sustainable_city())
+      # Asserted explicitly so that folding the balance back into `supplied` later
+      # cannot pass silently.
+      for resource <- [:power, :water, :waste, :traffic, :labour] do
+        assert Map.fetch!(stats, resource).carried == 0.0
+      end
+    end
+
     test "satisfaction is capped at 1.0 on surplus" do
       stats = Calc.resource_stats(sustainable_city())
       assert stats.power.satisfaction == 1.0
@@ -158,6 +168,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     test "increments the tick by exactly one" do
       {map, _} = Calc.advance_tick(CityMap.new(40, 30))
       assert map.tick == 1
+    end
+
+    test "an untouched city keeps its balance across a tick" do
+      {advanced, _delta} = Calc.advance_tick(sustainable_city())
+      # Nothing produces or consumes money yet, so the grant is untouched.
+      assert advanced.money == 500.0
     end
 
     test "regenerates by 1.0 when fully supplied" do

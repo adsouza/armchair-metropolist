@@ -104,7 +104,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{metrics: metrics}} = CityEngine.snapshot()
 
-      assert Enum.sort(Map.keys(metrics.resources)) == [:labour, :power, :traffic, :waste, :water],
+      assert Enum.sort(Map.keys(metrics.resources)) == [
+               :labour,
+               :money,
+               :power,
+               :traffic,
+               :waste,
+               :water
+             ],
              "metrics must carry every resource at mount, not an empty map"
 
       assert metrics.resources.power.satisfaction == 1.0

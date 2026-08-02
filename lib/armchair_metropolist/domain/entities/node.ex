@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.Domain.Entities.Node do
   @moduledoc "A single piece of placed city infrastructure."
 
-  @type resource :: :power | :water | :waste | :traffic | :labour
+  @type resource :: :power | :water | :waste | :traffic | :labour | :money
   @type node_type ::
           :power_plant
           | :water_plant
@@ -32,7 +32,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # rather than derived from the tables below: those are maps, and `Map.keys/1`
   # order is an implementation detail of the term, whereas this order is a display
   # decision the legend depends on.
-  @resources [:power, :water, :waste, :traffic, :labour]
+  @resources [:power, :water, :waste, :traffic, :labour, :money]
 
   # Production tables (resource outputs)
   @production_table %{

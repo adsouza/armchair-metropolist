@@ -4,8 +4,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
 
+  @typedoc """
+  Satisfaction is computed over `supplied + carried`, so `supplied` alone is
+  only the flow: production plus baseline capacity, before any carried-over
+  balance is added in. Most resources carry nothing (`carried: 0.0`); money is
+  the one treasury.
+  """
   @type resource_stats :: %{
           supplied: float(),
+          carried: float(),
           demanded: float(),
           deficit: float(),
           satisfaction: float()

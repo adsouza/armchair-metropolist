@@ -30,8 +30,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "resources/0" do
-    test "lists the five resources in display order" do
-      assert Node.resources() == [:power, :water, :waste, :traffic, :labour]
+    test "lists the six resources in display order" do
+      assert Node.resources() == [:power, :water, :waste, :traffic, :labour, :money]
     end
   end
 
