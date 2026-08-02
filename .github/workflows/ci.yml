@@ -250,9 +250,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # `gigalixir git:deploy` pushes this repository to Gigalixir's git
-          # remote, and a shallow clone is rejected there with
-          # `shallow update not allowed`. checkout defaults to depth 1.
+          # Deploying pushes this repository to Gigalixir's git remote, and a
+          # shallow clone is rejected there with `shallow update not allowed`.
+          # checkout defaults to depth 1.
           fetch-depth: 0
 
       # pipx rather than `pip install --user`: PEP 668 marks the runner's system
@@ -261,6 +261,28 @@ jobs:
       # which also removes the need to call it by absolute path.
       - run: pipx install gigalixir
 
+      # `gigalixir git:deploy` no longer exists — CLI 1.16.1 rejects it with
+      # `No such command 'git:deploy'`, and every push to main since 2026-08-02
+      # merged code without shipping a release. A deploy is now a plain git push,
+      # which is what Gigalixir's own CI documentation describes.
+      #
+      # The three commands are one chain, and each depends on the one before:
+      #
+      #   1. `login` authenticates and writes ~/.netrc with the API key the
+      #      server hands back — NOT the password. That file is the only thing
+      #      that authenticates step 3.
+      #   2. `git:remote` takes the app name POSITIONALLY (not `-a`, unlike most
+      #      of this CLI) and adds `https://git.gigalixir.com/<app>.git/` with no
+      #      credentials in the URL, which is why step 1 has to have run. It drops
+      #      any existing `gigalixir` remote first, so it is safe to re-run.
+      #   3. `git push` authenticates from ~/.netrc: git's curl backend reads it
+      #      by default.
+      #
+      # `-f` and the explicit `HEAD:refs/heads/main` refspec both follow
+      # Gigalixir's documented recipe. CI checks out a detached HEAD, so the
+      # refspec is required to say which branch to deploy; the force is because
+      # this remote is a deploy target rather than a source of truth, and a
+      # rejected push there means an un-shipped release, not a saved mistake.
       - name: Deploy
         env:
           GIGALIXIR_EMAIL: ${{ secrets.GIGALIXIR_EMAIL }}
@@ -268,4 +290,5 @@ jobs:
           APP_NAME: "armchair-metropolist"
         run: |
           gigalixir login -e "$GIGALIXIR_EMAIL" -p "$GIGALIXIR_PASSWORD" -y
-          gigalixir git:deploy -a "$APP_NAME"
+          gigalixir git:remote "$APP_NAME"
+          git push -f gigalixir HEAD:refs/heads/main
