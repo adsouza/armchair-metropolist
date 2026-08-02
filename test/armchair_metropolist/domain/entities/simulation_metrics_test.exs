@@ -21,6 +21,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.resources == stats()
   end
 
+  # The LiveView receives metrics and never the city map, so without this field
+  # the treasury balance cannot reach the page at all.
+  test "carries the city's treasury balance" do
+    city_map = %{CityMap.new(40, 30) | money: 275.0}
+    metrics = SimulationMetrics.build(city_map, %{})
+    assert metrics.money == 275.0
+  end
+
   # An empty grid is the default startup state (spec 6.4 hydration fallback),
   # so avg_health must not divide by zero.
   test "an empty city yields zero average health rather than raising" do

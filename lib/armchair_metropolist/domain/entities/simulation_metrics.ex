@@ -36,7 +36,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           node_count: non_neg_integer(),
           avg_health: float(),
           offline_count: non_neg_integer(),
-          by_type: %{Node.node_type() => type_stats()}
+          by_type: %{Node.node_type() => type_stats()},
+          money: float()
         }
 
   defstruct tick: 0,
@@ -44,7 +45,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             node_count: 0,
             avg_health: 0.0,
             offline_count: 0,
-            by_type: %{}
+            by_type: %{},
+            money: 0.0
 
   @doc """
   Build a SimulationMetrics struct from a city map and resource statistics.
@@ -65,7 +67,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       node_count: node_count,
       avg_health: avg_health,
       offline_count: offline_count,
-      by_type: build_by_type(nodes)
+      by_type: build_by_type(nodes),
+      money: city_map.money
     }
   end
 

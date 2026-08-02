@@ -388,6 +388,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert has_element?(view, "#metrics-offline")
     end
 
+    test "the metrics panel shows the treasury", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#metrics-treasury")
+      assert view |> element("#metrics-treasury") |> render() =~ "500"
+    end
+
     # Per-resource satisfaction otherwise lives only in the totals row, which
     # collapsing hides. This line is the one figure that has to survive, so it must
     # name the *lowest* resource rather than whichever the map yields first.

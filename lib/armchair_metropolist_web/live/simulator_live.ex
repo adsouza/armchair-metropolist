@@ -372,6 +372,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
+      <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """
