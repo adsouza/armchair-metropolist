@@ -187,9 +187,51 @@ jobs:
           path: burrito_out/desktop_${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14
+  # The Rust half of what `mix check` does for Elixir. `deps.audit` reads mix.lock
+  # against published advisories; nothing has ever read src-tauri/Cargo.lock, which
+  # pulls 493 crates — almost all of them transitively, through Tauri. The asymmetry
+  # matters because the desktop target is a *redistributed binary*: a vulnerable crate
+  # there ships to someone's machine.
+  #
+  # Deliberately its own job rather than a step in `mix check`. That alias earns its
+  # keep by being one command a laptop and a runner run identically, and a step needing
+  # a Rust toolchain would dilute it for everyone who only touches the web app.
+  #
+  # What it denies, and why RUSTSEC-2024-0429 is excepted, lives in
+  # src-tauri/.cargo/audit.toml next to the entry itself. Settings are in that file
+  # rather than in flags here so a laptop run behaves the same way.
+  rust-advisory:
+    name: rust advisory
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Not rustsec/audit-check: it declares `using: node20` at its latest tag (v2.0.0),
+      # and setup-zig above is already an unavoidable node20 action with a comment
+      # explaining that its deprecation warning cannot be silenced from here. A second,
+      # avoidable one is a poor trade. install-action is `composite` — no Node runtime —
+      # and fetches a prebuilt musl binary, so this takes seconds where
+      # `cargo install cargo-audit --locked` takes about a minute of compilation.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # No toolchain setup and no build step above on purpose: cargo-audit reads
+      # Cargo.lock, which is tracked, and never compiles the crate.
+      #
+      # This fetches RustSec's advisory database over the network on every run, and is
+      # uncached on purpose — a stale database is the failure mode worth avoiding, and
+      # like `deps.audit` this job can turn a green build red with no change to this
+      # repository on the day an advisory lands. That is the point of it.
+      - name: Audit the Rust dependencies
+        working-directory: src-tauri
+        run: cargo audit
+
   # Deploys the *server* target to Gigalixir. The desktop binaries above are a
   # separate product and are deliberately not a gate on this: they can fail
-  # without the web app being any less deployable.
+  # without the web app being any less deployable. The Rust advisory job is the
+  # desktop wrapper's gate and follows the same rule.
   deploy:
     name: deploy to Gigalixir
     runs-on: ubuntu-24.04

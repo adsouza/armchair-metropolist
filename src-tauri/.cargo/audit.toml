@@ -1,0 +1,45 @@
+# Settings for `cargo audit`, run by the `rust advisory` job in .github/workflows/ci.yml.
+#
+# They live in a file rather than in the job's flags so that a laptop run and CI agree
+# without anyone remembering the arguments — the same reason `mix check` defines the
+# Elixir gate once in mix.exs — and so the ignore below can carry its reason with it.
+#
+# See docs/superpowers/specs/2026-08-02-rust-advisory-check-design.md.
+
+[advisories]
+# glib 0.18.5 — RUSTSEC-2024-0429, unsoundness in the `Iterator` and `DoubleEndedIterator`
+# impls for `VariantStrIter`. `impl_get` passed `&p`, an immutable reference to a NULL
+# `*mut c_char`, to a C function that mutates the pointer in place, so `CStr::from_ptr`
+# can be handed NULL. Crash-class, affecting next/next_back/last/nth/nth_back.
+#
+# Not fixable from here. Nothing in Cargo.toml names glib; it arrives by one route only:
+#
+#   glib 0.18.5 -> gtk 0.18.2 -> {libappindicator->tray-icon, muda, tao->tauri-runtime-wry,
+#                                 webkit2gtk} -> tauri 2.11.5
+#
+# The fix is in glib 0.20, which is the gtk-rs 0.20 generation, and Tauri's Linux stack is
+# still on GTK3 — the same GTK3 bindings that raise ten of this lockfile's `unmaintained`
+# warnings. No bump available to this project moves it, which is also why the equivalent
+# Dependabot alert was dismissed rather than fixed.
+#
+# Linux-only: `cargo tree -i glib` finds it under x86_64-unknown-linux-gnu and finds
+# nothing under aarch64-apple-darwin or x86_64-pc-windows-msvc.
+#
+# DROP THIS ENTRY once Tauri moves off GTK3 and glib leaves Cargo.lock. Nothing will tell
+# you: cargo-audit does not report an ignore that no longer matches anything.
+ignore = ["RUSTSEC-2024-0429"]
+
+[output]
+# Vulnerabilities fail by default. `unsound` is added because the desktop target is a
+# redistributed binary, where a soundness bug is a crash on someone else's machine, and
+# because the one such finding today is already accounted for above — so this costs
+# nothing now and catches the next one.
+#
+# `unmaintained` is deliberately NOT denied. Sixteen of this lockfile's findings are that
+# class and ten of them are the GTK3 bindings Tauri pins us to, so denying them would mean
+# a permanent sixteen-entry allowlist dominated by findings no action here can clear.
+deny = ["unsound"]
+
+# Not optional, despite looking like it. The [output] table has no serde defaults, so
+# leaving this out is a fatal `missing field `quiet`` parse error rather than a warning.
+quiet = false
