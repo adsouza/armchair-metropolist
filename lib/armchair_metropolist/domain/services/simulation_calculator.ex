@@ -4,13 +4,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   The simulation is a deterministic function of the city map. One tick:
 
-    1. `supply(r)` is the baseline capacity plus every node's
-       *health-scaled* production of `r`.
+    1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
+       production of `r`, plus whatever balance `r` carried over from the
+       previous tick (every resource but money carries nothing).
     2. `demand(r)` is every node's *full* consumption of `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
-    3. `satisfaction(r)` is `min(1.0, supply / demand)`, or `1.0` when nothing
-       demands the resource.
+    3. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
+       nothing demands the resource, where `available` is supply plus the
+       carried balance.
     4. Each node looks at the satisfaction of only the resources it consumes
        and takes the worst of them.
     5. A fully supplied node regenerates `+1.0` health; a starved one loses
@@ -20,6 +22,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     8. The returned delta holds only those nodes whose display signature
        (`{round(health), status}`) actually changed, so sub-pixel health
        movement does not push a full-grid diff to consumers.
+    9. Money's surplus persists: the city map's `money` balance becomes
+       `max(0.0, supplied + carried - demanded)`, a treasury rather than a
+       per-tick flow.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -30,9 +35,24 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
 
-  @baseline_capacity %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
+  # No free workers: labour comes only from housing, which is the point of the resource.
+  # No free income either: money has no baseline, which is what forces commercial to be
+  # built once the production and consumption tables arrive.
+  @baseline_capacity %{
+    power: 40.0,
+    water: 40.0,
+    waste: 40.0,
+    traffic: 40.0,
+    labour: 0.0,
+    money: 0.0
+  }
   @resources Map.keys(@baseline_capacity)
   @no_resources Map.new(@resources, fn resource -> {resource, 0.0} end)
+
+  # The resources whose unspent supply survives the tick boundary. Every other
+  # resource discards its surplus; money is a treasury. Named as a list rather
+  # than tested against the atom :money at each site.
+  @carryover [:money]
 
   @regen_per_tick 1.0
   @decay_per_tick 6.0
@@ -53,7 +73,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @doc """
   Supply, demand, deficit and satisfaction for every resource in the city.
 
-  Always returns an entry for all four resources, even on an empty map.
+  Always returns an entry for all six resources, even on an empty map.
   Production is scaled by producer health; consumption is not scaled at all.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
@@ -64,13 +84,24 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     Map.new(@resources, fn resource ->
       supplied = Map.fetch!(supply, resource)
+      carried = carried(city_map, resource)
       demanded = Map.fetch!(demand, resource)
+      available = supplied + carried
 
       stats = %{
         supplied: supplied,
+        carried: carried,
         demanded: demanded,
-        deficit: max(0.0, demanded - supplied),
-        satisfaction: satisfaction(supplied, demanded)
+        deficit: max(0.0, demanded - available),
+        satisfaction: satisfaction(available, demanded),
+        # Same ratio, minus `carried`: the per-tick economy, ignoring any treasury
+        # covering for it. `worst_satisfaction/2` (health decay), the deficit
+        # notification and `tightest_resource/1` all answer "what is damaging the
+        # city right now", so they keep the balance-inclusive `satisfaction` above —
+        # a deficit savings are covering must not decay anything or page anyone.
+        # The legend's totals cell answers a different question, "is my per-tick
+        # economy balanced", so it reads this field instead.
+        flow_satisfaction: satisfaction(supplied, demanded)
       }
 
       {resource, stats}
@@ -101,7 +132,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         {Map.put(nodes, key, advanced), delta}
       end)
 
-    {%{city_map | nodes: nodes, tick: city_map.tick + 1}, delta}
+    money = new_balance(Map.fetch!(stats, :money))
+
+    {%{city_map | nodes: nodes, tick: city_map.tick + 1, money: money}, delta}
   end
 
   @doc """
@@ -130,6 +163,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   defp add_resource({resource, amount}, acc) do
     Map.update(acc, resource, amount, &(&1 + amount))
+  end
+
+  # Derived from @carryover rather than matching on :money directly, so the list
+  # is the single place a reader looks to learn which resources are treasuries.
+  defp carried(city_map, resource) when resource in @carryover, do: city_map.money
+  defp carried(_city_map, _resource), do: 0.0
+
+  # Floors at zero: debt is not modelled. An upkeep that cannot be paid shows up
+  # as satisfaction below 1.0, which the existing decay path already handles.
+  defp new_balance(%{supplied: supplied, carried: carried, demanded: demanded}) do
+    max(0.0, supplied + carried - demanded)
   end
 
   defp satisfaction(_supplied, demanded) when demanded == 0.0, do: 1.0

@@ -26,10 +26,18 @@ defmodule ArmchairMetropolist.UseCases.SummarizeCityTest do
   test "reports every resource, not an empty map" do
     assert {:ok, metrics} = SummarizeCity.execute(city_with([Node.new(0, 0, :residential)]))
 
-    assert Enum.sort(Map.keys(metrics.resources)) == [:power, :traffic, :waste, :water]
+    assert Enum.sort(Map.keys(metrics.resources)) == [
+             :labour,
+             :money,
+             :power,
+             :traffic,
+             :waste,
+             :water
+           ]
 
     for {_resource, stats} <- metrics.resources do
       assert is_float(stats.supplied)
+      assert is_float(stats.carried)
       assert is_float(stats.demanded)
       assert is_float(stats.deficit)
       assert is_float(stats.satisfaction)

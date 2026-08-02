@@ -30,8 +30,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "resources/0" do
-    test "lists the four resources in display order" do
-      assert Node.resources() == [:power, :water, :waste, :traffic]
+    test "lists the six resources in display order" do
+      assert Node.resources() == [:power, :water, :waste, :traffic, :labour, :money]
     end
   end
 
@@ -41,15 +41,27 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.consumption(:power_plant) == %{water: 20.0, waste: 12.0, traffic: 3.0}
 
       assert Node.production(:water_plant) == %{water: 100.0}
-      assert Node.consumption(:water_plant) == %{power: 25.0, waste: 6.0, traffic: 2.0}
+
+      assert Node.consumption(:water_plant) == %{
+               power: 25.0,
+               waste: 6.0,
+               traffic: 2.0,
+               money: 5.0
+             }
 
       assert Node.production(:industrial) == %{waste: 90.0}
-      assert Node.consumption(:industrial) == %{power: 40.0, water: 25.0, traffic: 8.0}
+
+      assert Node.consumption(:industrial) == %{
+               power: 40.0,
+               water: 25.0,
+               traffic: 8.0,
+               labour: 12.0
+             }
 
       assert Node.production(:road_hub) == %{traffic: 60.0}
-      assert Node.consumption(:road_hub) == %{power: 8.0, waste: 2.0}
+      assert Node.consumption(:road_hub) == %{power: 8.0, waste: 2.0, money: 4.0}
 
-      assert Node.production(:residential) == %{}
+      assert Node.production(:residential) == %{labour: 4.0, money: 1.0}
 
       assert Node.consumption(:residential) == %{
                power: 15.0,
@@ -58,17 +70,18 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                traffic: 6.0
              }
 
-      assert Node.production(:commercial) == %{}
+      assert Node.production(:commercial) == %{money: 30.0}
 
       assert Node.consumption(:commercial) == %{
                power: 22.0,
                water: 8.0,
                waste: 14.0,
-               traffic: 9.0
+               traffic: 9.0,
+               labour: 8.0
              }
 
       assert Node.production(:park) == %{waste: 8.0}
-      assert Node.consumption(:park) == %{water: 18.0, traffic: 2.0}
+      assert Node.consumption(:park) == %{water: 18.0, traffic: 2.0, money: 3.0}
     end
 
     # Guards the invariant SimulationCalculator's decay rule depends on:
@@ -138,9 +151,12 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert_in_delta Node.effective_production(node).power, 6.0, 0.001
     end
 
-    test "consumers have no production at any health" do
-      node = %Node{Node.new(0, 0, :residential) | health: 100.0}
-      assert Node.effective_production(node) == %{}
+    test "commercial's money production also scales with health" do
+      # Every node type produces something now (commercial produces money),
+      # so there is no longer a pure-consumer example; assert the scaling
+      # instead of an empty map.
+      node = %Node{Node.new(0, 0, :commercial) | health: 50.0}
+      assert_in_delta Node.effective_production(node).money, 15.0, 0.001
     end
   end
 end

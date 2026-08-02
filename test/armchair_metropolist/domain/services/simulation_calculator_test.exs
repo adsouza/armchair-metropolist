@@ -22,6 +22,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6    = 18.0 -> 1.0
   #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 = 11.0 -> 1.0
   #
+  # Money is not in that table because it is not meant to bind here: the water plant
+  # consumes money 5 and each park consumes money 3, for a demand of 14 against a
+  # supply of 0 (nothing here produces it). That would starve the water plant too
+  # (it consumes money, so its own worst ratio would fold money's satisfaction in)
+  # were it not for `CityMap.new/2`'s default 500.0 grant, which covers the 14 as
+  # `carried` and keeps money's satisfaction at 1.0. This fixture is only clean
+  # arithmetic over four resources because the fifth is quietly paid for by that
+  # default; it is not modelling a city with no income.
+  #
   # The power plant consumes water/waste/traffic, so its worst ratio is exactly
   # 0.95 (74.0 * 0.95 == 70.3) and its delta is -(1 - 0.95) * 6.0 = -0.30,
   # taking it from 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the
@@ -43,8 +52,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "baseline_capacity/0" do
-    test "supplies 40 of every resource" do
-      assert Calc.baseline_capacity() == %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
+    test "supplies 40 of every resource except labour and money, which have no free supply" do
+      assert Calc.baseline_capacity() == %{
+               power: 40.0,
+               water: 40.0,
+               waste: 40.0,
+               traffic: 40.0,
+               labour: 0.0,
+               money: 0.0
+             }
     end
 
     # The calculator derives its own `@resources` from this table's keys, so the table
@@ -56,6 +72,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "resource_stats/1" do
+    test "every flow resource carries nothing" do
+      stats = Calc.resource_stats(sustainable_city())
+      # Asserted explicitly so that folding the balance back into `supplied` later
+      # cannot pass silently.
+      for resource <- [:power, :water, :waste, :traffic, :labour] do
+        assert Map.fetch!(stats, resource).carried == 0.0
+      end
+    end
+
     test "satisfaction is capped at 1.0 on surplus" do
       stats = Calc.resource_stats(sustainable_city())
       assert stats.power.satisfaction == 1.0
@@ -97,12 +122,120 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta Calc.resource_stats(healthy).water.demanded, 20.0, 0.001
       assert_in_delta Calc.resource_stats(broken).water.demanded, 20.0, 0.001
     end
+
+    # The housing requirement, stated directly rather than inferred from the tables.
+    # An industrial block with nobody to staff it is the city shape this resource
+    # exists to forbid.
+    test "industry with no housing has no labour and decays at the full rate" do
+      map = map_with([Node.new(0, 0, :industrial)])
+      stats = Calc.resource_stats(map)
+
+      assert stats.labour.demanded == 12.0
+      assert stats.labour.supplied == 0.0
+      assert stats.labour.satisfaction == 0.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      industrial = CityMap.get_node(advanced, 0, 0)
+      # -(1 - 0.0) * 6.0 from a starting 100.0
+      assert_in_delta industrial.health, 94.0, 0.001
+    end
+
+    test "enough housing staffs the industry and stops the decay" do
+      # 3 residential supply 12 labour, exactly the industrial block's demand.
+      #
+      # A bare industrial block plus 3 residential also draws more power and
+      # water than baseline alone covers (industrial 40 + 3*15 = 85 power vs.
+      # 40 baseline; industrial 25 + 3*12 = 61 water vs. 40 baseline) --
+      # unrelated to labour, but enough to starve and decay the block anyway.
+      # A power plant and water plant close those gaps so labour is the only
+      # thing this fixture is testing; traffic and waste already clear
+      # baseline without help.
+      map =
+        map_with([
+          Node.new(0, 0, :industrial),
+          Node.new(0, 2, :power_plant),
+          Node.new(1, 2, :water_plant)
+          | for(x <- 1..3, do: Node.new(x, 0, :residential))
+        ])
+
+      stats = Calc.resource_stats(map)
+
+      # Pinning demanded, not just satisfaction, matters: satisfaction/2 treats
+      # zero demand as automatically satisfied, so a mutated industrial labour
+      # demand of 0.0 would still report satisfaction 1.0 here unless demanded
+      # is checked directly.
+      assert stats.labour.demanded == 12.0
+      assert stats.labour.supplied == 12.0
+      assert stats.labour.satisfaction == 1.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert CityMap.get_node(advanced, 0, 0).health == 100.0
+    end
+
+    # Finding 1's fix: the legend's totals cell reads `flow_satisfaction`, not
+    # `satisfaction`, precisely so a treasury covering a deficit cannot make the
+    # cell's two halves (supplied/demanded) contradict its own percentage.
+    test "a treasury covering a deficit makes flow_satisfaction and satisfaction diverge" do
+      # One park: money demand 3/tick, no income. A treasury of 100 fully covers it
+      # (available 100 vs demand 3), but the flow itself is 0 supplied against 3
+      # demanded.
+      map = %{map_with([Node.new(0, 0, :park)]) | money: 100.0}
+      stats = Calc.resource_stats(map)
+
+      assert stats.money.supplied == 0.0
+      assert stats.money.demanded == 3.0
+      assert stats.money.carried == 100.0
+      assert stats.money.satisfaction == 1.0
+      assert stats.money.flow_satisfaction == 0.0
+    end
+
+    test "flow_satisfaction equals satisfaction for every flow resource" do
+      # Four residential: power demand 60 vs baseline supply 40, so power is
+      # genuinely short. Every flow resource carries 0.0, so the two figures have
+      # no basis on which to differ.
+      map = map_with(for x <- 0..3, do: Node.new(x, 0, :residential))
+      stats = Calc.resource_stats(map)
+
+      for resource <- [:power, :water, :waste, :traffic, :labour] do
+        entry = Map.fetch!(stats, resource)
+        assert entry.flow_satisfaction == entry.satisfaction
+      end
+    end
   end
 
   describe "advance_tick/1 health arithmetic" do
     test "increments the tick by exactly one" do
       {map, _} = Calc.advance_tick(CityMap.new(40, 30))
       assert map.tick == 1
+    end
+
+    test "an untouched city keeps its balance across a tick" do
+      {advanced, _delta} = Calc.advance_tick(sustainable_city())
+      # Two residential produce money now (1.0 each) and consume none, so the
+      # grant grows rather than staying put.
+      assert advanced.money == 502.0
+    end
+
+    test "an unpayable upkeep starves the consumer once the treasury is empty" do
+      # One park: upkeep 3/tick, no income. Start it broke rather than simulating
+      # 167 ticks of drain.
+      map = %{map_with([Node.new(0, 0, :park)]) | money: 0.0}
+      stats = Calc.resource_stats(map)
+
+      assert stats.money.demanded == 3.0
+      assert stats.money.carried == 0.0
+      assert stats.money.satisfaction == 0.0
+
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert advanced.money == 0.0
+      assert CityMap.get_node(advanced, 0, 0).health < 100.0
+    end
+
+    test "surplus income accumulates in the treasury" do
+      # One commercial (+30) and one park (-3), starting from a known balance.
+      map = %{map_with([Node.new(0, 0, :commercial), Node.new(1, 0, :park)]) | money: 100.0}
+      {advanced, _delta} = Calc.advance_tick(map)
+      assert_in_delta advanced.money, 127.0, 0.001
     end
 
     test "regenerates by 1.0 when fully supplied" do

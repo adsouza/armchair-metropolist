@@ -104,7 +104,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{metrics: metrics}} = CityEngine.snapshot()
 
-      assert Enum.sort(Map.keys(metrics.resources)) == [:power, :traffic, :waste, :water],
+      assert Enum.sort(Map.keys(metrics.resources)) == [
+               :labour,
+               :money,
+               :power,
+               :traffic,
+               :waste,
+               :water
+             ],
              "metrics must carry every resource at mount, not an empty map"
 
       assert metrics.resources.power.satisfaction == 1.0
@@ -129,6 +136,28 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
       assert CityMap.nodes(city_map) == []
+    end
+
+    # Every stored city predates `money`. A term encoded without it decodes under
+    # :safe as a struct carrying only the old keys, and reading .money then raises
+    # KeyError *after* a successful load — crash-looping this supervised process
+    # rather than falling back to a new city. Nothing else in the suite constructs a
+    # CityMap from a term missing a field, so without this the regression is silent.
+    test "a snapshot stored before the money field loads with the default balance" do
+      legacy = %{
+        __struct__: ArmchairMetropolist.Domain.Entities.CityMap,
+        width: 40,
+        height: 30,
+        tick: 7,
+        nodes: %{"0:0" => Node.new(0, 0, :park)}
+      }
+
+      round_tripped = :erlang.binary_to_term(:erlang.term_to_binary(legacy), [:safe])
+      loaded = CityEngine.normalize_city_map(round_tripped)
+
+      assert loaded.money == 500.0
+      assert loaded.tick == 7
+      assert map_size(loaded.nodes) == 1
     end
 
     test "start_link/1 returns before a slow repository has answered" do
@@ -501,15 +530,16 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert is_binary(title)
       assert body =~ "power at 18% of demand"
 
-      # Ten commercial nodes against baseline capacity alone: power 40/220,
-      # waste 40/140, traffic 40/90, water 40/80. The order is the severity
-      # signal the operator reads first, so it is pinned, not incidental.
+      # Ten commercial nodes against baseline capacity alone: labour 0/80 (no
+      # housing at all, so 0%), power 40/220, waste 40/140, traffic 40/90,
+      # water 40/80. The order is the severity signal the operator reads
+      # first, so it is pinned, not incidental.
       named =
         body
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["power", "waste", "traffic", "water"]
+      assert named == ["labour", "power", "waste", "traffic", "water"]
     end
 
     test "does not notify a city that is meeting demand" do

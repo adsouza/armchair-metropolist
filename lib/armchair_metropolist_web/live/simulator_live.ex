@@ -122,10 +122,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
-            it fits and drops below when it does not. Measured by binary search on a
-            clone of this row and confirmed at the boundary pixel, the switch happens at
-            viewport 1813 expanded and 1215 collapsed — with Metrics stacked. Those are
-            the lower ends of the windows the inner thresholds below sit inside.
+            it fits and drops below when it does not. Measured by forcing `flexDirection`
+            on the real inner div below and resizing the real viewport (not a clone —
+            cheaper to validate and immune to a clone's own `fit-content`/`flex-wrap`
+            quirks), confirmed at the boundary pixel, the switch happens at viewport
+            1935 expanded and 1212 collapsed — with Metrics stacked. Those are the
+            lower ends (`W_col`) of the windows the inner thresholds below sit inside.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
             matrix could fit in it, which is what produced the horizontal scrollbar
@@ -194,14 +196,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           <%!-- Stacked while the sidebar is beside the grid; side by side once it has
                 wrapped underneath, where the full page width is going spare.
 
-                The `max-[1631px]` is a constant, unlike the layout above, and that is a
+                The `max-[Npx]` below is a constant, unlike the layout above, and that is a
                 deliberate trade. It cannot be content-derived: the sidebar's own
                 intrinsic width is what decides where it wraps, so a side-by-side inner
-                row feeds back into that decision — measured, it raises the sidebar's
-                `fit-content` from 655 to 831 and drags the wrap point from 1631 to
-                ~1807, putting the legend under the grid at every ordinary window size.
-                Keeping the children stacked by default keeps the sidebar's intrinsic
-                width at the legend's 655 and the threshold where it belongs.
+                row feeds back into that decision — a row raises the sidebar's own
+                `fit-content` width and, with it, the viewport the sidebar needs to sit
+                beside the grid (`W_row` below is always the larger of the two measured
+                windows, for exactly this reason), putting the legend under the grid at
+                every ordinary window size. Keeping the children stacked by default keeps
+                the sidebar's intrinsic width at the matrix's own natural width (878px
+                expanded) and the wrap threshold at the smaller `W_col`.
 
                 **One threshold per state**, because the sidebar's width is what decides
                 where it wraps and collapsing changes that width. A single constant is
@@ -219,24 +223,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 the sidebar has already dropped underneath. The window is exactly as wide
                 as Metrics plus the gap.
 
-                Measured by binary search on a clone of this row, then confirmed against
-                the live page at the boundary pixel: expanded `[1813, 1988]`, collapsed
-                `[1215, 1358]`. The midpoints below therefore absorb ±88px and ±72px of
+                Measured by binary search on the live page (forcing `flexDirection` on the
+                real inner div and resizing the real viewport, rather than a clone — cheaper
+                to validate and immune to the clone's own `fit-content` quirks), then
+                confirmed at the boundary pixel: expanded `[1935, 2084]`, collapsed
+                `[1212, 1337]`. The midpoints below therefore absorb ±75px and ±63px of
                 content drift before anything misbehaves.
 
-                The previous values were the measured `W_col` — the window's own edge — so
-                the first content change pushed them outside it. Cells gained a per-block
-                line, the matrix grew, and at viewport 1760 the sidebar sat below the grid
-                with Metrics still stacked beneath it. Taking the midpoint is what makes
-                this constant survive ordinary edits; re-measure only if Metrics or the
-                grid changes size, and move the value to the new midpoint rather than to
-                whichever edge you happened to measure.
+                Re-measured when four resource columns became six: the collapsed table has
+                no resource columns at all (both header and body cells are `:if={@detail}`),
+                so its window barely moved, but the expanded matrix's two new columns pushed
+                its window up by roughly 100px on both edges. Taking the midpoint is what
+                makes this constant survive ordinary edits; re-measure only if Metrics, the
+                grid, or the resource vocabulary changes size, and move the value to the new
+                midpoint rather than to whichever edge you happened to measure.
 
                 Tailwind v4 compiles `max-[N]` to `@media (width < N)`, exclusive, so N is
                 the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[1900px]:flex-row", else: "max-[1287px]:flex-row")
+            if(@legend_detail, do: "max-[2010px]:flex-row", else: "max-[1275px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
@@ -331,8 +337,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <tr id="legend-totals">
               <%!-- Every figure in the cells below is named here. Without the last
                     term the percentage went unlabelled anywhere on screen. Terse
-                    because the label shares a narrow row with four numeric columns. --%>
-              <th class="text-left" colspan="2">supplied/demanded · met</th>
+                    because the label shares a narrow row with six numeric columns.
+                    "this tick" is load-bearing, not decoration: the percentage is
+                    `flow_satisfaction`, which ignores money's carried balance, so
+                    the label has to say *when* it is measuring rather than just
+                    what — "met" alone would still promise the balance-aware figure
+                    the cell no longer shows. --%>
+              <th class="text-left" colspan="2">supplied/demanded · met this tick</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -350,7 +361,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             collapsed sidebar at 437px instead of 127px, and collapsing would reclaim
             almost nothing. Anything added here must stay short or wrappable. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
-        Totals include the free baseline of 40 per resource, which belongs to no type.
+        Totals include the free baseline of 40 for power, water, waste and traffic, which
+        belongs to no type. Labour and money have no free baseline.
       </p>
     </div>
     """
@@ -372,6 +384,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
+      <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """
@@ -387,7 +400,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     percent = round(stats.satisfaction * 100)
 
     # Naming a resource only means something when one is actually behind. With every
-    # resource fully supplied the minimum is a four-way tie and `min_by` breaks it
+    # resource fully supplied the minimum is a six-way tie and `min_by` breaks it
     # arbitrarily, so an untouched city read "Tightest: traffic 100%" — true, and
     # misleading about traffic.
     #
@@ -493,8 +506,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         "—"
 
       stats ->
+        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are supplied
+        # and demanded, both flow-only, so the percentage beside them has to be
+        # computed on that same basis or it stops being derivable from what's on
+        # screen. For money, `satisfaction` also counts the treasury and would make
+        # this cell contradict its own two halves (13/23 while reading 100%).
         "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
-          "#{Float.round(stats.satisfaction * 100, 1)}%"
+          "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
     end
   end
 
