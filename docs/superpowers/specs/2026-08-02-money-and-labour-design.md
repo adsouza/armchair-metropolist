@@ -1,7 +1,7 @@
 # Money and labour: two new resources — design
 
 **Date:** 2026-08-02
-**Status:** approved, not yet implemented
+**Status:** implemented on branch `feat/money-and-labour`
 
 ## 1. Problem
 
