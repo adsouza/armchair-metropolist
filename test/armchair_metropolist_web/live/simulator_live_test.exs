@@ -282,6 +282,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
     end
 
+    # Finding 1: a treasury covering a per-tick deficit must not make the totals
+    # cell contradict its own two halves. Money supplied 13, demanded 23, but a
+    # treasury of 487 (carried) brings the balance-inclusive `satisfaction` to
+    # 1.0 -- exactly the case that used to render "13/23 · 100.0%", where dividing
+    # the two numbers shown gives 57%, not 100%. The cell must read the flow-only
+    # figure instead, so 56.5% (13/23) is what belongs beside 13/23.
+    test "the money totals cell reads the flow-only percentage, not the balance-inclusive one",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_money_deficit_covered_by_treasury()})
+      render(view)
+
+      cell = view |> element(~s{[data-total="money"]}) |> render()
+      assert cell =~ "13/23"
+      assert cell =~ "56.5%"
+      refute cell =~ "100.0%"
+    end
+
     test "satisfaction appears only in the totals row, not in a Metrics list",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -331,7 +350,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # SummarizeCity always reports all four, so this is the defensive branch. Power is
+      # SummarizeCity always reports all six, so this is the defensive branch. Power is
       # present to prove the row still renders figures either side of the gap.
       send(view.pid, {:city_metrics, metrics_with_only_power_statistics()})
       render(view)
@@ -501,9 +520,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     }
   end
 
-  # Only power, so `totals_cell/2` has to render the other three from nothing.
+  # Only power, so `totals_cell/2` has to render the other five from nothing.
   defp metrics_with_only_power_statistics do
     %{empty_city_metrics() | resources: %{power: stat(150.0, 120.0)}}
+  end
+
+  # Money supplied 13, demanded 23, with a 487 treasury covering the 10 shortfall:
+  # `satisfaction` (over supplied + carried, 500/23) is 1.0, `flow_satisfaction`
+  # (over supplied alone, 13/23) is not. Built by hand, not via `stat/2`, because
+  # `stat/2` always sets `carried: 0.0` and so cannot produce this divergence.
+  defp metrics_with_money_deficit_covered_by_treasury do
+    %{
+      empty_city_metrics()
+      | resources: %{
+          money: %{
+            supplied: 13.0,
+            carried: 487.0,
+            demanded: 23.0,
+            deficit: 0.0,
+            satisfaction: 1.0,
+            flow_satisfaction: 13.0 / 23.0
+          }
+        }
+    }
   end
 
   # Placing real nodes cannot produce an exact divergence — actual production is
@@ -524,14 +563,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # Supplied and demanded are distinct, and distinct per resource. The old fixture gave
   # 40.0/40.0 to everything, which renders as "40/40" — a cell that transposed the two
   # figures, or printed one of them twice, would have looked exactly the same.
-  # Satisfaction is derived rather than passed in, so the three numbers in a cell cannot
-  # tell contradictory stories.
+  # `satisfaction` and `flow_satisfaction` are both derived from `supplied`/`demanded`
+  # rather than passed in, and always agree here because `carried` is 0.0 — every
+  # fixture built with this helper models a flow resource, not money, so the two
+  # figures having no reason to diverge is the fixture matching reality, not a
+  # guarantee the real shape still makes. (The real shape's two figures *can*
+  # contradict `carried: 0.0`'s expectation — see the money-specific fixtures in
+  # `simulation_calculator_test.exs` for the case where they diverge.)
   defp stat(supplied, demanded) do
+    satisfaction = min(supplied / demanded, 1.0)
+
     %{
       supplied: supplied,
+      carried: 0.0,
       demanded: demanded,
       deficit: max(demanded - supplied, 0.0),
-      satisfaction: min(supplied / demanded, 1.0)
+      satisfaction: satisfaction,
+      flow_satisfaction: satisfaction
     }
   end
 end

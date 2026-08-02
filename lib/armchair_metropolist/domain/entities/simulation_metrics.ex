@@ -5,17 +5,22 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   alias ArmchairMetropolist.Domain.Entities.Node
 
   @typedoc """
-  Satisfaction is computed over `supplied + carried`, so `supplied` alone is
-  only the flow: production plus baseline capacity, before any carried-over
-  balance is added in. Most resources carry nothing (`carried: 0.0`); money is
-  the one treasury.
+  Two satisfaction figures, on two different bases. `satisfaction` is computed
+  over `supplied + carried` — the balance-inclusive figure that drives health
+  decay, the deficit notification and the *Tightest* line, all of which answer
+  "what is damaging the city right now". `flow_satisfaction` is the same ratio
+  computed over `supplied` alone, ignoring `carried` entirely — the figure the
+  legend's totals cell renders, answering "is my per-tick economy balanced".
+  Most resources carry nothing (`carried: 0.0`), so the two agree; money is the
+  one treasury, and they diverge exactly when savings are covering a deficit.
   """
   @type resource_stats :: %{
           supplied: float(),
           carried: float(),
           demanded: float(),
           deficit: float(),
-          satisfaction: float()
+          satisfaction: float(),
+          flow_satisfaction: float()
         }
 
   @typedoc """

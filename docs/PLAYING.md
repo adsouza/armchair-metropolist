@@ -24,10 +24,11 @@ resource. Where a type produces a resource and its buildings are damaged, the ce
 both figures — `+360 → +210` means 360 rated, 210 actually supplied at current health. A
 dash means the type does not touch that resource at all, which is different from
 netting to zero. The totals row gives city-wide supply, demand and satisfaction,
-including the free baseline of 40 per resource.
+per tick. Four of the six resources have a free baseline of 40 built into that supply;
+labour and money have none, deliberately — see below.
 
 **Show detail / Hide detail** collapses the legend to its type and count columns, which
-is how you make the window narrower — the four resource columns are most of its width.
+is how you make the window narrower — the six resource columns are most of its width.
 Collapsing never takes away the type list, so you can still choose what to place, and it
 never hides the metrics. The satisfaction figures go with the resource columns, so while
 collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
@@ -56,10 +57,11 @@ and takes this section with it.
 
 **On the third residential block.**
 
-The city starts with free baseline capacity — 40 of every resource, no infrastructure
-needed. A residential block draws `power 15`. Two blocks come to 30 and hold at full
-health forever. The third makes 45, against a supply of 40, and from that moment the
-city is dying.
+The city starts with free baseline capacity — 40 each of power, water, waste and
+traffic, no infrastructure needed. Labour and money have no free baseline; they arrive
+only once you build for them. A residential block draws `power 15`. Two blocks come to
+30 and hold at full health forever. The third makes 45, against a supply of 40, and
+from that moment the city is dying.
 
 | residential, no support | worst satisfaction | after 200 ticks    |
 |-------------------------|--------------------|--------------------|
@@ -79,7 +81,7 @@ slightly-overloaded state, because three mechanics compound:
   almost nothing. A collapsing district actively poisons the rest of the city.
 
 So any shortfall reduces supply, which deepens the shortfall. The totals row at the
-foot of the legend shows all four satisfaction figures; the lowest one is the only
+foot of the legend shows all six satisfaction figures; the lowest one is the only
 number that matters, because each node takes the worst of the resources it consumes.
 That lowest figure is exactly what the metrics' *Tightest* line reports, so it stays on
 screen with the legend collapsed.
@@ -102,7 +104,7 @@ About 0.5 residential per tile is the ceiling. Two practical consequences:
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
 before its support starts doing damage on the very next tick.
 
-**Place one node at a time and watch the panel.** Because the four resources are
+**Place one node at a time and watch the panel.** Because the six resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
 fix one shortfall creates demand elsewhere. The binding constraint moves rather than
 disappearing.

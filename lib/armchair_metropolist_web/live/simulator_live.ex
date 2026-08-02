@@ -337,8 +337,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <tr id="legend-totals">
               <%!-- Every figure in the cells below is named here. Without the last
                     term the percentage went unlabelled anywhere on screen. Terse
-                    because the label shares a narrow row with four numeric columns. --%>
-              <th class="text-left" colspan="2">supplied/demanded · met</th>
+                    because the label shares a narrow row with six numeric columns.
+                    "this tick" is load-bearing, not decoration: the percentage is
+                    `flow_satisfaction`, which ignores money's carried balance, so
+                    the label has to say *when* it is measuring rather than just
+                    what — "met" alone would still promise the balance-aware figure
+                    the cell no longer shows. --%>
+              <th class="text-left" colspan="2">supplied/demanded · met this tick</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -356,7 +361,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             collapsed sidebar at 437px instead of 127px, and collapsing would reclaim
             almost nothing. Anything added here must stay short or wrappable. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
-        Totals include the free baseline of 40 per resource, which belongs to no type.
+        Totals include the free baseline of 40 for power, water, waste and traffic, which
+        belongs to no type. Labour and money have no free baseline.
       </p>
     </div>
     """
@@ -394,7 +400,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     percent = round(stats.satisfaction * 100)
 
     # Naming a resource only means something when one is actually behind. With every
-    # resource fully supplied the minimum is a four-way tie and `min_by` breaks it
+    # resource fully supplied the minimum is a six-way tie and `min_by` breaks it
     # arbitrarily, so an untouched city read "Tightest: traffic 100%" — true, and
     # misleading about traffic.
     #
@@ -500,8 +506,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         "—"
 
       stats ->
+        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are supplied
+        # and demanded, both flow-only, so the percentage beside them has to be
+        # computed on that same basis or it stops being derivable from what's on
+        # screen. For money, `satisfaction` also counts the treasury and would make
+        # this cell contradict its own two halves (13/23 while reading 100%).
         "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
-          "#{Float.round(stats.satisfaction * 100, 1)}%"
+          "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
     end
   end
 

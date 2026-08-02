@@ -73,7 +73,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @doc """
   Supply, demand, deficit and satisfaction for every resource in the city.
 
-  Always returns an entry for all four resources, even on an empty map.
+  Always returns an entry for all six resources, even on an empty map.
   Production is scaled by producer health; consumption is not scaled at all.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
@@ -93,7 +93,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         carried: carried,
         demanded: demanded,
         deficit: max(0.0, demanded - available),
-        satisfaction: satisfaction(available, demanded)
+        satisfaction: satisfaction(available, demanded),
+        # Same ratio, minus `carried`: the per-tick economy, ignoring any treasury
+        # covering for it. `worst_satisfaction/2` (health decay), the deficit
+        # notification and `tightest_resource/1` all answer "what is damaging the
+        # city right now", so they keep the balance-inclusive `satisfaction` above —
+        # a deficit savings are covering must not decay anything or page anyone.
+        # The legend's totals cell answers a different question, "is my per-tick
+        # economy balanced", so it reads this field instead.
+        flow_satisfaction: satisfaction(supplied, demanded)
       }
 
       {resource, stats}

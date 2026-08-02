@@ -121,22 +121,39 @@ decay path already handles.
 
 ```elixir
 @type resource_stats :: %{
-        supplied: float(),      # production this tick — flow only
-        carried: float(),       # surplus carried in; 0.0 for every flow resource
+        supplied: float(),           # production this tick — flow only
+        carried: float(),            # surplus carried in; 0.0 for every flow resource
         demanded: float(),
-        deficit: float(),
-        satisfaction: float()   # over supplied + carried
+        deficit: float(),            # over supplied + carried
+        satisfaction: float(),       # over supplied + carried — drives health decay,
+                                      # the deficit notification and the Tightest line
+        flow_satisfaction: float()   # over supplied alone — drives the totals cell
       }
 ```
 
 **Why a separate field rather than folding the balance into `supplied`.** The legend renders
-`supplied/demanded · satisfaction%`. With the balance inside `supplied`, a solvent city reads
-`513/23 · 100%` — the ratio dominated by savings, and the per-tick economy invisible. With the
-balance omitted from the display but still inside the satisfaction the engine computes, it reads
-`13/23 · 100%`, where dividing the two numbers shown gives 57% rather than the 100% printed beside
-them — one cell computed on two bases with nothing saying so. Splitting the field makes the
-invariant explicit and the cell honest: *you are running a 10/tick deficit and savings are
-currently covering it.* Both facts are true, and the field that reconciles them can be pointed at.
+`supplied/demanded · met`. With the balance inside `supplied`, a solvent city reads `513/23 ·
+100%` — the ratio dominated by savings, and the per-tick economy invisible.
+
+**Amended by the whole-branch review (2026-08-02).** The first cut of this design left the totals
+cell rendering `satisfaction` — the balance-inclusive figure — unchanged, reasoning that a
+separate `carried` field made the invariant "explicit enough" without touching the cell itself. It
+did not: with the balance left out of the *display* but still folded into the *satisfaction* the
+engine computed, the cell read `13/23 · 100%` — dividing the two numbers shown gives 57%, not the
+100% printed beside them, and nothing on screen explained the gap. That is a cell contradicting
+itself, not an invariant made explicit; a fresh city with one park read `0/3 · 100.0%`.
+
+The fix adds `flow_satisfaction`: the same `min(1.0, · / ·)` computation as `satisfaction`, with
+the same `demanded == 0.0 -> 1.0` clause, but over `supplied` alone — `carried` never enters it.
+`totals_cell/2` now renders `flow_satisfaction`, so its percentage is always derivable from the two
+numbers beside it. `satisfaction` is untouched and stays balance-inclusive, because its other three
+consumers — `worst_satisfaction/2` (health decay), the deficit notification, and
+`tightest_resource/1` — all answer "what is damaging the city right now", and a deficit the
+treasury is covering must not decay anything or page anyone. The totals cell answers a different
+question, "is my per-tick economy balanced", and now has a field computed on that basis alone. For
+every flow resource `carried` is `0.0`, so `flow_satisfaction == satisfaction` and nothing visibly
+changes there; the two figures diverge only for money, and only while savings are covering a
+shortfall.
 
 ### Old snapshots
 

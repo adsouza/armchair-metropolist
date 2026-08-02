@@ -22,6 +22,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6    = 18.0 -> 1.0
   #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 = 11.0 -> 1.0
   #
+  # Money is not in that table because it is not meant to bind here: the water plant
+  # consumes money 5 and each park consumes money 3, for a demand of 14 against a
+  # supply of 0 (nothing here produces it). That would starve the water plant too
+  # (it consumes money, so its own worst ratio would fold money's satisfaction in)
+  # were it not for `CityMap.new/2`'s default 500.0 grant, which covers the 14 as
+  # `carried` and keeps money's satisfaction at 1.0. This fixture is only clean
+  # arithmetic over four resources because the fifth is quietly paid for by that
+  # default; it is not modelling a city with no income.
+  #
   # The power plant consumes water/waste/traffic, so its worst ratio is exactly
   # 0.95 (74.0 * 0.95 == 70.3) and its delta is -(1 - 0.95) * 6.0 = -0.30,
   # taking it from 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the
@@ -161,6 +170,36 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       {advanced, _delta} = Calc.advance_tick(map)
       assert CityMap.get_node(advanced, 0, 0).health == 100.0
+    end
+
+    # Finding 1's fix: the legend's totals cell reads `flow_satisfaction`, not
+    # `satisfaction`, precisely so a treasury covering a deficit cannot make the
+    # cell's two halves (supplied/demanded) contradict its own percentage.
+    test "a treasury covering a deficit makes flow_satisfaction and satisfaction diverge" do
+      # One park: money demand 3/tick, no income. A treasury of 100 fully covers it
+      # (available 100 vs demand 3), but the flow itself is 0 supplied against 3
+      # demanded.
+      map = %{map_with([Node.new(0, 0, :park)]) | money: 100.0}
+      stats = Calc.resource_stats(map)
+
+      assert stats.money.supplied == 0.0
+      assert stats.money.demanded == 3.0
+      assert stats.money.carried == 100.0
+      assert stats.money.satisfaction == 1.0
+      assert stats.money.flow_satisfaction == 0.0
+    end
+
+    test "flow_satisfaction equals satisfaction for every flow resource" do
+      # Four residential: power demand 60 vs baseline supply 40, so power is
+      # genuinely short. Every flow resource carries 0.0, so the two figures have
+      # no basis on which to differ.
+      map = map_with(for x <- 0..3, do: Node.new(x, 0, :residential))
+      stats = Calc.resource_stats(map)
+
+      for resource <- [:power, :water, :waste, :traffic, :labour] do
+        entry = Map.fetch!(stats, resource)
+        assert entry.flow_satisfaction == entry.satisfaction
+      end
     end
   end
 

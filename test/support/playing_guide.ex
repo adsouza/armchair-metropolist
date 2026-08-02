@@ -107,8 +107,23 @@ defmodule ArmchairMetropolist.PlayingGuide do
           do: r
 
     case sustainable do
-      [] -> nil
-      rs -> {Enum.min(rs), Enum.max(rs)}
+      [] ->
+        nil
+
+      rs ->
+        min_r = Enum.min(rs)
+        max_r = Enum.max(rs)
+
+        # The guard the comment above argues for but the old code never installed:
+        # a non-contiguous band (e.g. {5, 7} sustainable via 5 and 7 but not 6) would
+        # otherwise publish "5 to 7" and silently certify the gap. Recompute the count
+        # a contiguous band would have and compare it to the one actually found.
+        unless max_r - min_r + 1 == length(rs) do
+          raise "residential_range: sustainable set #{inspect(rs)} is not contiguous — " <>
+                  "publishing {#{min_r}, #{max_r}} would certify unsustainable counts in between"
+        end
+
+        {min_r, max_r}
     end
   end
 
