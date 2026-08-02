@@ -7,7 +7,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           width: pos_integer(),
           height: pos_integer(),
           tick: non_neg_integer(),
-          nodes: %{optional(String.t()) => Node.t()}
+          nodes: %{optional(String.t()) => Node.t()},
+          money: float()
         }
 
   # This struct is persisted, and snapshots are decoded with `:safe` — which will
@@ -15,7 +16,12 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # module or Node, or making a new struct reachable from here, means updating
   # Infrastructure.Persistence.SnapshotVocabulary too. Miss it and saved cities are
   # discarded on load, only on cold VMs.
-  defstruct width: 40, height: 30, tick: 0, nodes: %{}
+  #
+  # A field added here is also absent from every already-stored city: decoding an
+  # old snapshot yields a struct carrying only the keys it was written with, so
+  # the new field must be defaulted on load (see CityEngine.normalize_city_map/1)
+  # rather than assumed present.
+  defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: 500.0
 
   @doc """
   Create a new empty city map with the given dimensions.
@@ -25,7 +31,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
       width: width,
       height: height,
       tick: 0,
-      nodes: %{}
+      nodes: %{},
+      money: 500.0
     }
   end
 

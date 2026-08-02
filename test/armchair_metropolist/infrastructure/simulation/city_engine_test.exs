@@ -131,6 +131,28 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert CityMap.nodes(city_map) == []
     end
 
+    # Every stored city predates `money`. A term encoded without it decodes under
+    # :safe as a struct carrying only the old keys, and reading .money then raises
+    # KeyError *after* a successful load — crash-looping this supervised process
+    # rather than falling back to a new city. Nothing else in the suite constructs a
+    # CityMap from a term missing a field, so without this the regression is silent.
+    test "a snapshot stored before the money field loads with the default balance" do
+      legacy = %{
+        __struct__: ArmchairMetropolist.Domain.Entities.CityMap,
+        width: 40,
+        height: 30,
+        tick: 7,
+        nodes: %{"0:0" => Node.new(0, 0, :park)}
+      }
+
+      round_tripped = :erlang.binary_to_term(:erlang.term_to_binary(legacy), [:safe])
+      loaded = CityEngine.normalize_city_map(round_tripped)
+
+      assert loaded.money == 500.0
+      assert loaded.tick == 7
+      assert map_size(loaded.nodes) == 1
+    end
+
     test "start_link/1 returns before a slow repository has answered" do
       # Hydration must happen in handle_continue/2, not init/1: a snapshot read
       # inside init/1 blocks the caller, which at boot is the whole supervision

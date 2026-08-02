@@ -191,7 +191,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
       {:ok, {_stored_tick, city_map}} ->
         # The stored tick is only the repository's ordering key, and it is
         # written from city_map.tick; the map itself carries the authority.
-        city_map
+        normalize_city_map(city_map)
 
       {:error, :not_found} ->
         new_city_map()
@@ -200,6 +200,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         Logger.warning("could not load city snapshot (#{inspect(reason)}), starting a new city")
         new_city_map()
     end
+  end
+
+  @doc false
+  # A stored city is whatever shape CityMap had when it was written. Decoding gives
+  # back a struct with only those keys, so a field added later is *missing*, not
+  # defaulted, and the first read raises KeyError long after the load succeeded.
+  # Merging onto a fresh struct fills new fields and leaves stored ones alone.
+  def normalize_city_map(stored) when is_map(stored) do
+    Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
   end
 
   defp new_city_map do
