@@ -359,6 +359,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       refute line =~ "power"
     end
 
+    # A fresh city has every resource at 1.0, so the minimum is a four-way tie and
+    # `min_by` breaks it arbitrarily — it read "Tightest: traffic 100%", which is true
+    # and says nothing about traffic. The positive assertion above proves the line can
+    # name a resource, so this refutation has a state in which it fails.
+    test "no resource is singled out while everything is fully supplied", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      line = view |> element("#metrics-tightest") |> render()
+
+      assert line =~ "All resources supplied"
+
+      for resource <- Node.resources() do
+        refute line =~ to_string(resource)
+      end
+    end
+
     # Separate from the collapse test above, which only ever asked whether the rows
     # were there. The button is the sole affordance for getting them back, and both
     # the label and `aria-expanded` were free to freeze in one state unnoticed: a

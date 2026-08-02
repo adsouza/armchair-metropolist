@@ -317,9 +317,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
-      <p :if={@tightest} id="metrics-tightest">
-        Tightest: {elem(@tightest, 0)} {elem(@tightest, 1)}%
-      </p>
+      <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """
   end
@@ -331,8 +329,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp tightest_resource(resources) do
     {resource, stats} = Enum.min_by(resources, fn {_resource, stats} -> stats.satisfaction end)
-    {resource, round(stats.satisfaction * 100)}
+    percent = round(stats.satisfaction * 100)
+
+    # Naming a resource only means something when one is actually behind. With every
+    # resource fully supplied the minimum is a four-way tie and `min_by` breaks it
+    # arbitrarily, so an untouched city read "Tightest: traffic 100%" — true, and
+    # misleading about traffic.
+    #
+    # The test is on `percent`, not on the raw float: satisfaction 0.999 renders as
+    # 100%, and "tightest: water 100%" is the same noise. Compare at the precision the
+    # player actually sees.
+    if percent == 100, do: :all_supplied, else: {resource, percent}
   end
+
+  defp tightest_text(:all_supplied), do: "All resources supplied"
+  defp tightest_text({resource, percent}), do: "Tightest: #{resource} #{percent}%"
 
   # A missing key means the type does not interact with the resource at all, which reads
   # differently from a net of zero — hence the em dash rather than "0".
