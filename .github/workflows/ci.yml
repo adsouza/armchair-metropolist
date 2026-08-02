@@ -74,7 +74,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: erlef/setup-beam@v1
         with:
@@ -83,7 +83,7 @@ jobs:
 
       # Keyed on the lock file and the exact version pair: build artefacts are
       # not portable between OTP versions, and a stale _build is worse than none.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             deps
@@ -126,7 +126,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: erlef/setup-beam@v1
         with:
@@ -136,11 +136,19 @@ jobs:
       # Burrito shells out to `zig build` for every build, native included —
       # ex_tauri's docs claiming Zig is cross-compilation-only are wrong. 0.16.0
       # is what Burrito 1.6 targets.
+      #
+      # The only action here still declaring `using: node20`, so it is the sole
+      # remaining source of CI's Node.js 20 deprecation warning. That is not a
+      # version we are behind on: v2.2.1 is the newest tag upstream has and it
+      # declares node20 too, the repository has issues disabled and no open PRs,
+      # and its last commit was 2026-01-19. GitHub forces node20 actions onto the
+      # node24 runtime anyway, so the warning is cosmetic — bumping the pin below
+      # cannot silence it, and only an upstream release will. (Checked 2026-08-02.)
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             deps
@@ -173,7 +181,7 @@ jobs:
 
       # The binary is the artefact worth keeping; the .app/.dmg bundles are
       # macOS-only and are not built here.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.target }}
           path: burrito_out/desktop_${{ matrix.target }}
@@ -198,7 +206,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # `gigalixir git:deploy` pushes this repository to Gigalixir's git
           # remote, and a shallow clone is rejected there with
