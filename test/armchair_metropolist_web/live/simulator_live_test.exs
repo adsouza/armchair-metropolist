@@ -293,16 +293,70 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "—"
     end
 
-    test "the sidebar starts expanded and can be collapsed and reopened", %{conn: conn} do
+    # Collapsing used to remove the rows entirely, which took the only block-type
+    # selector with it — there is no *Place* button row any more, the row IS the
+    # control. Collapsing now drops the resource detail and keeps the control.
+    test "collapsing keeps the type rows, so a block type can still be chosen",
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#legend-row-power_plant"), "must start expanded"
+      view |> element("#toggle-legend-detail") |> render_click()
 
-      view |> element("#toggle-sidebar") |> render_click()
-      refute has_element?(view, "#legend-row-power_plant")
+      assert has_element?(view, "#legend-row-industrial"),
+             "collapsed must still offer the type rows"
 
-      view |> element("#toggle-sidebar") |> render_click()
-      assert has_element?(view, "#legend-row-power_plant"), "reopening must restore it"
+      view |> element(~s{#legend-row-industrial button}) |> render_click()
+
+      assert has_element?(view, ~s{#legend-row-industrial button[aria-pressed="true"]}),
+             "selecting a type while collapsed must work"
+    end
+
+    # Each refutation below is against a selector that demonstrably exists in the
+    # expanded state asserted first, so it can actually go red.
+    test "collapsing drops the resource columns and totals but keeps the count",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{[data-cell="power_plant-power"]})
+      assert has_element?(view, "#legend-totals")
+
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      refute has_element?(view, ~s{[data-cell="power_plant-power"]})
+      refute has_element?(view, "#legend-totals")
+
+      assert has_element?(view, ~s{[data-cell="power_plant-count"]}),
+             "the count must survive collapsing"
+    end
+
+    test "the metrics stay visible whether the legend is expanded or collapsed",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#metrics-tick")
+
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      assert has_element?(view, "#metrics-tick"), "metrics must never be hidden"
+      assert has_element?(view, "#metrics-offline")
+    end
+
+    # Per-resource satisfaction otherwise lives only in the totals row, which
+    # collapsing hides. This line is the one figure that has to survive, so it must
+    # name the *lowest* resource rather than whichever the map yields first.
+    test "the tightest line names the resource with the lowest satisfaction",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
+      render(view)
+
+      # power 100%, waste 75%, water 50%, traffic 25% — traffic is the answer.
+      line = view |> element("#metrics-tightest") |> render()
+
+      assert line =~ "traffic"
+      assert line =~ "25"
+      refute line =~ "power"
     end
 
     # Separate from the collapse test above, which only ever asked whether the rows
@@ -313,18 +367,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="true"]})
-      assert view |> element("#toggle-sidebar") |> render() =~ "Hide legend"
+      assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
+      assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
 
-      view |> element("#toggle-sidebar") |> render_click()
+      view |> element("#toggle-legend-detail") |> render_click()
 
-      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="false"]})
-      assert view |> element("#toggle-sidebar") |> render() =~ "Show legend"
+      assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="false"]})
+      assert view |> element("#toggle-legend-detail") |> render() =~ "Show detail"
 
-      view |> element("#toggle-sidebar") |> render_click()
+      view |> element("#toggle-legend-detail") |> render_click()
 
-      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="true"]})
-      assert view |> element("#toggle-sidebar") |> render() =~ "Hide legend"
+      assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
+      assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
   end
 

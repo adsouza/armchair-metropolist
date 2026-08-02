@@ -49,7 +49,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:metrics, metrics)
       |> assign(:node_types, Node.types())
       |> assign(:selected_type, List.first(Node.types()))
-      |> assign(:sidebar_open, true)
+      |> assign(:legend_detail, true)
       |> assign(:cell_size, @cell_size)
       |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
@@ -81,8 +81,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
-  def handle_event("toggle_sidebar", _params, socket) do
-    {:noreply, assign(socket, :sidebar_open, not socket.assigns.sidebar_open)}
+  def handle_event("toggle_legend_detail", _params, socket) do
+    {:noreply, assign(socket, :legend_detail, not socket.assigns.legend_detail)}
   end
 
   @impl true
@@ -120,7 +120,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
 
-      <div class="flex flex-col items-start gap-4 min-[1450px]:flex-row">
+      <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
+            lets the *content* decide: the sidebar sits beside the grid exactly while
+            it fits and drops below when it does not. Measured, the switch happens at
+            1632px expanded (960 grid + 16 gap + 655 matrix) and ~1103px collapsed.
+
+            The old `min-[1450px]` committed to a side-by-side layout 181px before the
+            matrix could fit in it, which is what produced the horizontal scrollbar
+            inside the sidebar. A corrected constant would drift the moment a resource
+            column or a longer type name changed the table; a derived threshold cannot. --%>
+      <div class="flex flex-wrap items-start gap-4">
         <div
           class="relative shrink-0 border border-base-300"
           style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
@@ -155,28 +164,38 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </div>
         </div>
 
-        <%!-- `min-w-0` is what makes the `overflow-x-auto` inside `legend/1` actually
-              engage: `<aside>` is the direct flex item of the row above, and a flex
-              item defaults to `min-width: auto` — without this override it refuses
-              to shrink below the table's intrinsic width, and the *page* scrolls
-              sideways instead of the table. --%>
-        <aside class="w-full min-w-0 min-[1450px]:w-auto">
+        <%!-- `min-w-fit` (min-width: fit-content) is the other half of the wrapping
+              rule above: it stops this flex item being squeezed below its own content,
+              so it wraps to the next line instead of shrinking. That is what makes the
+              sidebar's horizontal scrollbar unreachable rather than merely unlikely.
+
+              These classes must be written here, in source. Tailwind's JIT only emits
+              what it finds in the templates, and neither `flex-wrap` nor `min-w-fit`
+              appears anywhere else in this project. --%>
+        <aside class="min-w-fit">
           <button
-            id="toggle-sidebar"
+            id="toggle-legend-detail"
             type="button"
             class="btn btn-xs mb-2"
-            phx-click="toggle_sidebar"
-            aria-expanded={to_string(@sidebar_open)}
+            phx-click="toggle_legend_detail"
+            aria-expanded={to_string(@legend_detail)}
           >
-            {if @sidebar_open, do: "Hide legend", else: "Show legend"}
+            {if @legend_detail, do: "Hide detail", else: "Show detail"}
           </button>
 
+          <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
+                the legend: the type rows are the only way to choose what to place. --%>
           <.legend
-            :if={@sidebar_open}
+            detail={@legend_detail}
             metrics={@metrics}
             node_types={@node_types}
             selected_type={@selected_type}
           />
+
+          <%!-- A sibling of the legend, not a child of it. Metrics used to live inside
+                `legend/1` and so could not survive a collapse — the structural reason
+                the toggle hid them. --%>
+          <.metrics metrics={@metrics} />
         </aside>
       </div>
     </Layouts.app>
@@ -194,6 +213,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :metrics, :map, required: true
   attr :node_types, :list, required: true
   attr :selected_type, :atom, required: true
+  attr :detail, :boolean, required: true
 
   defp legend(assigns) do
     assigns = assign(assigns, :resources, Node.resources())
@@ -216,7 +236,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <tr>
               <th class="text-left">type</th>
               <th class="text-right">#</th>
-              <th :for={resource <- @resources} class="text-right">{resource}</th>
+              <th :for={resource <- @resources} :if={@detail} class="text-right">{resource}</th>
             </tr>
           </thead>
           <tbody>
@@ -244,6 +264,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               </td>
               <td
                 :for={resource <- @resources}
+                :if={@detail}
                 data-cell={"#{type}-#{resource}"}
                 class="text-right tabular-nums"
               >
@@ -251,7 +272,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               </td>
             </tr>
           </tbody>
-          <tfoot>
+          <tfoot :if={@detail}>
             <tr id="legend-totals">
               <%!-- Every figure in the cells below is named here. Without the last
                     term the percentage went unlabelled anywhere on screen. Terse
@@ -269,19 +290,48 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         </table>
       </div>
 
-      <p class="mt-1 text-xs opacity-60">
+      <%!-- Hidden with the totals row it explains — and not only for tidiness. A long
+            line of prose sets this sidebar's `fit-content`, so left visible it holds the
+            collapsed sidebar at 437px instead of 127px, and collapsing would reclaim
+            almost nothing. Anything added here must stay short or wrappable. --%>
+      <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 per resource, which belongs to no type.
       </p>
-
-      <div class="mt-4">
-        <h2 class="font-semibold mb-2">Metrics</h2>
-        <p id="metrics-tick">Tick: {@metrics.tick}</p>
-        <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
-        <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
-        <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
-      </div>
     </div>
     """
+  end
+
+  # Always on screen, in both legend states. Tick, nodes, average health and offline
+  # count, plus the tightest resource — which otherwise appears only in the totals row,
+  # and that row is exactly what collapsing hides. `docs/PLAYING.md` calls the lowest
+  # satisfaction the only number that matters, so it is the figure that has to survive.
+  attr :metrics, :map, required: true
+
+  defp metrics(assigns) do
+    assigns = assign(assigns, :tightest, tightest_resource(assigns.metrics.resources))
+
+    ~H"""
+    <div class="mt-4">
+      <h2 class="font-semibold mb-2">Metrics</h2>
+      <p id="metrics-tick">Tick: {@metrics.tick}</p>
+      <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
+      <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
+      <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
+      <p :if={@tightest} id="metrics-tightest">
+        Tightest: {elem(@tightest, 0)} {elem(@tightest, 1)}%
+      </p>
+    </div>
+    """
+  end
+
+  # `resources` is populated from mount, so the empty clause is ordinary defensiveness
+  # rather than a state the app reaches. Rounded to whole percent: this is a glance
+  # figure, and the totals row carries the precise one when the legend is expanded.
+  defp tightest_resource(resources) when map_size(resources) == 0, do: nil
+
+  defp tightest_resource(resources) do
+    {resource, stats} = Enum.min_by(resources, fn {_resource, stats} -> stats.satisfaction end)
+    {resource, round(stats.satisfaction * 100)}
   end
 
   # A missing key means the type does not interact with the resource at all, which reads

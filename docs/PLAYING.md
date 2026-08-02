@@ -26,6 +26,12 @@ dash means the type does not touch that resource at all, which is different from
 netting to zero. The totals row gives city-wide supply, demand and satisfaction,
 including the free baseline of 40 per resource.
 
+**Show detail / Hide detail** collapses the legend to its type and count columns, which
+is how you make the window narrower — the four resource columns are most of its width.
+Collapsing never takes away the type list, so you can still choose what to place, and it
+never hides the metrics. The satisfaction figures go with the resource columns, so while
+collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
+
 ### Position does not matter
 
 **Blocks do not need to be adjacent, or anywhere near each other.** Resources are
@@ -75,6 +81,8 @@ slightly-overloaded state, because three mechanics compound:
 So any shortfall reduces supply, which deepens the shortfall. The totals row at the
 foot of the legend shows all four satisfaction figures; the lowest one is the only
 number that matters, because each node takes the worst of the resources it consumes.
+That lowest figure is exactly what the metrics' *Tightest* line reports, so it stays on
+screen with the legend collapsed.
 
 ## What a support set can carry
 
