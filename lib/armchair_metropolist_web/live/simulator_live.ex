@@ -122,8 +122,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
-            it fits and drops below when it does not. Measured, the switch happens at
-            1632px expanded (960 grid + 16 gap + 655 matrix) and ~1103px collapsed.
+            it fits and drops below when it does not. Measured by binary search on a
+            clone of this row and confirmed at the boundary pixel, the switch happens at
+            viewport 1813 expanded and 1215 collapsed — with Metrics stacked. Those are
+            the lower ends of the windows the inner thresholds below sit inside.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
             matrix could fit in it, which is what produced the horizontal scrollbar
@@ -172,7 +174,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               These classes must be written here, in source. Tailwind's JIT only emits
               what it finds in the templates, and neither `flex-wrap` nor `min-w-fit`
               appears anywhere else in this project. --%>
-        <aside class="min-w-fit grow">
+        <%!-- No `grow`. daisyUI styles `.table` as `width: 100%`, so the matrix is only
+              as wide as this aside — and `grow` made the aside swallow its whole flex
+              line. Alone on a line below the grid that is the full page width, which
+              stretched a 757px matrix across 1681px and pushed Metrics off the end.
+              The aside must never be wider than its content; the table's `100%` is then
+              a fixpoint at the matrix's natural width. --%>
+        <aside class="min-w-fit">
           <button
             id="toggle-legend-detail"
             type="button"
@@ -196,29 +204,39 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 width at the legend's 655 and the threshold where it belongs.
 
                 **One threshold per state**, because the sidebar's width is what decides
-                where it wraps and collapsing changes that width. Collapsed it is ~160px
-                wide and returns beside the grid at 1200; expanded it is 655px and needs
-                1711. A single constant is right in one state and wrong in the other —
-                with only the expanded value, collapsing a wrapped legend moved it back
-                beside the grid while Metrics stayed stubbornly alongside it.
+                where it wraps and collapsing changes that width. A single constant is
+                right in one state and wrong in the other — with only the expanded value,
+                collapsing a wrapped legend moved it back beside the grid while Metrics
+                stayed stubbornly alongside it.
 
-                1711 is measured, not derived on paper: the row needs a content box of
-                1632 (960 grid + 16 gap + 655 matrix, and 1631 is one short — verified),
-                and `Layouts.app` costs 79px of page chrome, so the sidebar sits beside
-                the grid from viewport 1711 up. Tailwind v4 compiles `max-[N]` to
-                `@media (width < N)`, exclusive, so 1711 is the value that covers 1710
-                and below — 1710 left the boundary pixel uncovered. An earlier draft of this used 1631 and
-                was wrong by exactly that chrome: the number here is a *viewport* width,
-                while the arithmetic above is a content-box width.
+                **Each threshold is the midpoint of a window, not a measured edge.** There
+                are two wrap points per state, because the arrangement chosen here feeds
+                back into the sidebar's own width: stacked, the sidebar is as wide as the
+                matrix and fits beside the grid from viewport `W_col`; side by side it is
+                a whole Metrics column wider and needs `W_row`. Any constant strictly
+                inside `[W_col, W_row]` is self-consistent — at or above it the children
+                stack and the sidebar fits beside the grid, below it they sit in a row and
+                the sidebar has already dropped underneath. The window is exactly as wide
+                as Metrics plus the gap.
 
-                If the table ever outgrows 655, or the layout's padding changes, the two
-                disagree and metrics stays stacked in the band between them — cosmetic,
-                no scrollbar, no broken layout. A stale constant governing *position* was
-                the bug this branch fixed; one governing a cosmetic arrangement is not
-                the same hazard. --%>
+                Measured by binary search on a clone of this row, then confirmed against
+                the live page at the boundary pixel: expanded `[1813, 1988]`, collapsed
+                `[1215, 1358]`. The midpoints below therefore absorb ±88px and ±72px of
+                content drift before anything misbehaves.
+
+                The previous values were the measured `W_col` — the window's own edge — so
+                the first content change pushed them outside it. Cells gained a per-block
+                line, the matrix grew, and at viewport 1760 the sidebar sat below the grid
+                with Metrics still stacked beneath it. Taking the midpoint is what makes
+                this constant survive ordinary edits; re-measure only if Metrics or the
+                grid changes size, and move the value to the new midpoint rather than to
+                whichever edge you happened to measure.
+
+                Tailwind v4 compiles `max-[N]` to `@media (width < N)`, exclusive, so N is
+                the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[1711px]:flex-row", else: "max-[1200px]:flex-row")
+            if(@legend_detail, do: "max-[1900px]:flex-row", else: "max-[1287px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
@@ -300,14 +318,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               <td data-cell={"#{type}-count"} class="text-right tabular-nums">
                 {@metrics.by_type[type].count}
               </td>
-              <td
+              <.resource_cell
                 :for={resource <- @resources}
                 :if={@detail}
-                data-cell={"#{type}-#{resource}"}
-                class="text-right tabular-nums"
-              >
-                {net_cell(@metrics.by_type[type], resource)}
-              </td>
+                type={type}
+                resource={resource}
+                stats={@metrics.by_type[type]}
+              />
             </tr>
           </tbody>
           <tfoot :if={@detail}>
@@ -383,19 +400,72 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp tightest_text(:all_supplied), do: "All resources supplied"
   defp tightest_text({resource, percent}), do: "Tightest: #{resource} #{percent}%"
 
+  # Two figures, stacked. Width is the scarce dimension in this sidebar and height is
+  # not — measured, stacking costs 0px of width where an inline `+360 (+120 ea)` costs
+  # 111px, which would push the wrap threshold from 1711 to ~1822 and drop the legend
+  # below the grid at an ordinary window size.
+  attr :type, :atom, required: true
+  attr :resource, :atom, required: true
+  attr :stats, :map, required: true
+
+  defp resource_cell(assigns) do
+    assigns =
+      assigns
+      |> assign(:marginal, marginal_cell(assigns.type, assigns.resource))
+      |> assign(:total, total_cell(assigns.stats, assigns.resource))
+
+    ~H"""
+    <td data-cell={"#{@type}-#{@resource}"} class="text-right tabular-nums">
+      <%!-- Position and weight already separate these two, so the colour is reinforcing
+            rather than load-bearing — the cell still reads without it.
+
+            A different hue per theme, which is forced rather than chosen: no single
+            accent clears WCAG AA against both backgrounds. Measured, `secondary` is
+            4.55 on the light theme but only 4.01 on the dark even after that theme's
+            base-100 was darkened, while `info` is 4.69 on the dark and just 3.58 on
+            the light. These are 11px data figures, so AA is the bar. --%>
+      <div class="text-secondary dark:text-info">{@marginal}</div>
+      <div :if={@total} class="font-semibold">{@total}</div>
+    </td>
+    """
+  end
+
+  # What one more block of this type would do — the figure a player needs to choose what
+  # to place, and the one the old cell never showed: everything was scaled by the count,
+  # so a type with none placed read "+0" in every column.
+  #
+  # Rated, deliberately. A newly placed node starts at full health, so its contribution
+  # *is* its rated figure. Taken from the domain's own tables rather than from `by_type`
+  # because this is a property of the type, fixed, not of the current city.
+  defp marginal_cell(type, resource) do
+    produced = Map.get(Node.production(type), resource)
+    consumed = Map.get(Node.consumption(type), resource)
+
+    if is_nil(produced) and is_nil(consumed) do
+      "—"
+    else
+      signed((produced || 0.0) - (consumed || 0.0))
+    end
+  end
+
   # A missing key means the type does not interact with the resource at all, which reads
   # differently from a net of zero — hence the em dash rather than "0".
   #
   # Rated and actual are shown together only when they differ, so a healthy city reads
   # cleanly and divergence is what draws the eye.
-  defp net_cell(stats, resource) do
+  #
+  # `nil` rather than a string when nothing is placed: the total of nothing is zero and
+  # saying so is noise, and the per-block line above already carries the row's meaning.
+  defp total_cell(%{count: 0}, _resource), do: nil
+
+  defp total_cell(stats, resource) do
     produced = Map.get(stats.rated_production, resource)
     actual = Map.get(stats.actual_production, resource)
     consumed = Map.get(stats.consumption, resource)
 
     cond do
       is_nil(produced) and is_nil(consumed) ->
-        "—"
+        nil
 
       is_nil(produced) ->
         signed(-consumed)

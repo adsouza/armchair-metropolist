@@ -204,11 +204,58 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
     end
 
+    # The gap this fixes: every figure in a row was multiplied by the count, so a type
+    # with nothing placed read "+0" everywhere — no help at all in deciding what to
+    # place, which is exactly when a player consults the legend.
+    test "a type with none placed still shows what one block would do", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#legend-row-power_plant[data-count="0"]}),
+             "precondition: nothing placed"
+
+      power = view |> element(~s{[data-cell="power_plant-power"]}) |> render()
+
+      assert power =~ "+120", "must show the per-block figure with none placed"
+
+      # And no city total line, because there is no city yet — a "0" would be noise.
+      # Refuted against `font-semibold`, the total line's own class, because that is
+      # what the markup actually emits: an earlier version of this refuted the word
+      # "total", which appears nowhere, and passed against a deliberately broken
+      # build. The next test asserts this class *is* present once blocks exist, so
+      # the refutation has a state in which it fails.
+      refute power =~ "font-semibold"
+    end
+
+    test "placing blocks adds a city total beside the per-block figure", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view
+      |> element(~s{button[phx-click="select_type"][phx-value-type="power_plant"]})
+      |> render_click()
+
+      for {x, y} <- [{5, 5}, {6, 5}, {7, 5}] do
+        view
+        |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
+        |> render_click()
+      end
+
+      power = view |> element(~s{[data-cell="power_plant-power"]}) |> render()
+
+      # Per block stays constant; the total is three of them.
+      assert power =~ "+120", "the per-block figure must not scale with count"
+      assert power =~ "+360", "three plants must total +360"
+
+      assert power =~ "font-semibold",
+             "the total line must appear once blocks exist — the positive case for the " <>
+               "refutation in the test above"
+    end
+
     test "a resource the type never touches shows an em dash, not a zero", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # Positive case first: a road hub does consume power, so that cell holds a number.
-      assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "0"
+      # The specific figure, not the incidental "0" the old count-scaled cell rendered.
+      assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "-8"
 
       # It never touches water, and that must read differently from "nets to zero".
       # No `refute water =~ "0"` here: the assert above already carries the claim, and
@@ -364,22 +411,37 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
     # Where Metrics sits relative to the legend is CSS, but *which* threshold governs it
-    # is server-rendered, and it has to change with the state: collapsed, the sidebar is
-    # ~160px and returns beside the grid at 1200; expanded it is 655px and needs 1711.
-    # One constant for both is the bug this pins — collapsing a wrapped legend moved it
-    # back beside the grid while Metrics stayed alongside it.
+    # is server-rendered, and it has to change with the state: the sidebar's width decides
+    # where it wraps and collapsing changes that width. One constant for both is the bug
+    # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
+    # stayed alongside it.
+    #
+    # The values are midpoints of measured windows (expanded [1813, 1988], collapsed
+    # [1215, 1358]), not the wrap points themselves. See the comment in `render/1`: an
+    # earlier pair sat on the windows' lower edges and fell out the moment the cells grew
+    # a line. If a legitimate content change moves these, move them to the new *midpoint*.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[1711px]:flex-row"
-      refute expanded =~ "max-[1200px]:flex-row"
+      assert expanded =~ "max-[1900px]:flex-row"
+      refute expanded =~ "max-[1287px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
-      assert collapsed =~ "max-[1200px]:flex-row"
-      refute collapsed =~ "max-[1711px]:flex-row"
+      assert collapsed =~ "max-[1287px]:flex-row"
+      refute collapsed =~ "max-[1900px]:flex-row"
+    end
+
+    # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
+    # the whole page whenever the sidebar was alone on its flex line. The sidebar must be
+    # content-sized in both positions; that is what makes the table's `100%` a fixpoint.
+    test "the sidebar is never wider than its own content", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      aside = view |> element("aside") |> render()
+      refute aside =~ ~r/<aside[^>]*class="[^"]*\bgrow\b/
     end
 
     test "no resource is singled out while everything is fully supplied", %{conn: conn} do

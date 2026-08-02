@@ -26,7 +26,21 @@
   default: false;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
+  /* 16%, down from 30.33%. At 30.33% this "dark" theme was mid-slate, and no accent
+     colour in the palette reached WCAG AA (4.5:1) against it — measured: info 3.27,
+     success 3.68, warning 4.12, secondary 2.90. Coloured *data* was therefore
+     unreadable, not merely low-contrast decoration.
+
+     At 16%: info 4.69, success 5.28, warning 5.92, base-content 18.06. Only
+     base-100 moves; leaving base-200/300 where they are makes them slightly lighter
+     than the surface, which nudges the 24px grid lines from 1.17 to 1.23 — marginally
+     more visible than before, not less. The grid's outer border (base-300) does lose
+     definition, 1.33 to 1.08.
+
+     Note secondary still fails at 16% (4.15) and cannot be fixed by darkening at all:
+     at its hue and chroma it tops out around 4.4 even against pure black. Anything
+     rendering coloured data in the dark theme wants info, success or warning. */
+  --color-base-100: oklch(16% 0.016 252.42);
   --color-base-200: oklch(25.26% 0.014 253.1);
   --color-base-300: oklch(20.15% 0.012 254.09);
   --color-base-content: oklch(97.807% 0.029 256.847);
