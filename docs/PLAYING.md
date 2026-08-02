@@ -10,7 +10,8 @@ the rules — see [TESTING.md](../TESTING.md).
 Both actions are a click on the same square, which is worth knowing because nothing on
 screen separates them:
 
-* **click an empty cell** — places the type currently selected in the *Place* row;
+* **click a type in the legend** — selects it for placing;
+* **click an empty cell** — places the currently selected type;
 * **click a placed block** — demolishes it.
 
 Hover either one and the tooltip names the action. Demolishing matters more than it
@@ -36,6 +37,13 @@ This is a genuine gap rather than a considered design: there is no adjacency, se
 radius or distance cost anywhere in the domain, and the spec never discussed one. If
 that ever changes, the characterisation test in `simulation_calculator_test.exs` fails
 and takes this section with it.
+
+The legend down the right-hand side lists every type with how many you have placed and
+its net effect on each resource. Where a type produces a resource and its buildings are
+damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
+supplied at current health. A dash means the type does not touch that resource at all,
+which is different from netting to zero. The totals row gives city-wide supply, demand
+and satisfaction, including the free baseline of 40 per resource.
 
 ## Why your first city dies
 
@@ -63,9 +71,9 @@ slightly-overloaded state, because three mechanics compound:
 * **`:offline` is cosmetic.** A dead node still draws its full demand while producing
   almost nothing. A collapsing district actively poisons the rest of the city.
 
-So any shortfall reduces supply, which deepens the shortfall. The metrics panel shows
-all four satisfaction figures; the lowest one is the only number that matters, because
-each node takes the worst of the resources it consumes.
+So any shortfall reduces supply, which deepens the shortfall. The totals row at the
+foot of the legend shows all four satisfaction figures; the lowest one is the only
+number that matters, because each node takes the worst of the resources it consumes.
 
 ## What a support set can carry
 
