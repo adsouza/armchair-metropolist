@@ -32,3 +32,7 @@ erl_crash.dump
 # with a hyphen in its name.
 /priv/static/*-????????????????????????????????.*
 /priv/static/*.gz
+
+# Subagent-driven-development scratch: ledgers, task briefs, implementer reports and
+# review packages for in-flight plans. Regenerable coordination state, not source.
+/.superpowers/
