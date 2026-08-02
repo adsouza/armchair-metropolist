@@ -28,10 +28,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## Broadcasts
 
-  On `"city_simulation"`: `{:city_delta, delta}` and `{:city_metrics, metrics}`
-  every tick and on every successful `place`/`demolish`, `{:city_node_placed, node}`
-  and `{:city_node_removed, id}` on successful commands. Rejected commands broadcast
-  nothing.
+  On `"city_simulation"`: `{:city_delta, delta}` on every tick; `{:city_metrics,
+  metrics}` on every tick and on every successful `place`/`demolish`;
+  `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
+  Rejected commands broadcast nothing.
 
   ## Critical deficit notifications
 
