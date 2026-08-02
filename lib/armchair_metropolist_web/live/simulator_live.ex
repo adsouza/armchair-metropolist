@@ -195,6 +195,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 Keeping the children stacked by default keeps the sidebar's intrinsic
                 width at the legend's 655 and the threshold where it belongs.
 
+                **One threshold per state**, because the sidebar's width is what decides
+                where it wraps and collapsing changes that width. Collapsed it is ~160px
+                wide and returns beside the grid at 1200; expanded it is 655px and needs
+                1711. A single constant is right in one state and wrong in the other —
+                with only the expanded value, collapsing a wrapped legend moved it back
+                beside the grid while Metrics stayed stubbornly alongside it.
+
                 1711 is measured, not derived on paper: the row needs a content box of
                 1632 (960 grid + 16 gap + 655 matrix, and 1631 is one short — verified),
                 and `Layouts.app` costs 79px of page chrome, so the sidebar sits beside
@@ -209,7 +216,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 no scrollbar, no broken layout. A stale constant governing *position* was
                 the bug this branch fixed; one governing a cosmetic arrangement is not
                 the same hazard. --%>
-          <div class="flex flex-col gap-4 max-[1711px]:flex-row">
+          <div class={[
+            "flex flex-col gap-4",
+            if(@legend_detail, do: "max-[1711px]:flex-row", else: "max-[1200px]:flex-row")
+          ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
             <.legend

@@ -363,6 +363,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # `min_by` breaks it arbitrarily — it read "Tightest: traffic 100%", which is true
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
+    # Where Metrics sits relative to the legend is CSS, but *which* threshold governs it
+    # is server-rendered, and it has to change with the state: collapsed, the sidebar is
+    # ~160px and returns beside the grid at 1200; expanded it is 655px and needs 1711.
+    # One constant for both is the bug this pins — collapsing a wrapped legend moved it
+    # back beside the grid while Metrics stayed alongside it.
+    test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      expanded = view |> element(~s{aside div.flex}) |> render()
+      assert expanded =~ "max-[1711px]:flex-row"
+      refute expanded =~ "max-[1200px]:flex-row"
+
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      collapsed = view |> element(~s{aside div.flex}) |> render()
+      assert collapsed =~ "max-[1200px]:flex-row"
+      refute collapsed =~ "max-[1711px]:flex-row"
+    end
+
     test "no resource is singled out while everything is fully supplied", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
