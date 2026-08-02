@@ -49,6 +49,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:metrics, metrics)
       |> assign(:node_types, Node.types())
       |> assign(:selected_type, List.first(Node.types()))
+      |> assign(:sidebar_open, true)
       |> assign(:cell_size, @cell_size)
       |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
@@ -78,6 +79,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       {:ok, id} -> {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
       {:error, _reason} -> {:noreply, socket}
     end
+  end
+
+  def handle_event("toggle_sidebar", _params, socket) do
+    {:noreply, assign(socket, :sidebar_open, not socket.assigns.sidebar_open)}
   end
 
   @impl true
@@ -115,7 +120,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
 
-      <div class="flex flex-col items-start gap-4 min-[1450px]:flex-row">
+      <div class="flex flex-col items-start gap-4 min-[1640px]:flex-row">
         <div
           class="relative shrink-0 border border-base-300"
           style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
@@ -150,7 +155,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </div>
         </div>
 
-        <.legend metrics={@metrics} node_types={@node_types} selected_type={@selected_type} />
+        <aside class="w-full min-[1640px]:w-auto">
+          <button
+            id="toggle-sidebar"
+            type="button"
+            class="btn btn-xs mb-2"
+            phx-click="toggle_sidebar"
+            aria-expanded={to_string(@sidebar_open)}
+          >
+            {if @sidebar_open, do: "Hide legend", else: "Show legend"}
+          </button>
+
+          <.legend
+            :if={@sidebar_open}
+            metrics={@metrics}
+            node_types={@node_types}
+            selected_type={@selected_type}
+          />
+        </aside>
       </div>
     </Layouts.app>
     """
@@ -174,7 +196,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           item defaults to `min-width: auto`, so without this the sidebar refuses to
           shrink under the table's intrinsic width and the *page* scrolls sideways
           instead of the table. --%>
-    <div class="w-full min-w-0 min-[1450px]:w-auto">
+    <div class="w-full min-w-0 min-[1640px]:w-auto">
       <h2 class="font-semibold mb-2">Types</h2>
 
       <div class="overflow-x-auto">

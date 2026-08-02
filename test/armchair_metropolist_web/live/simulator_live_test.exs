@@ -274,6 +274,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "—"
     end
+
+    test "the sidebar starts expanded and can be collapsed and reopened", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#legend-row-power_plant"), "must start expanded"
+
+      view |> element("#toggle-sidebar") |> render_click()
+      refute has_element?(view, "#legend-row-power_plant")
+
+      view |> element("#toggle-sidebar") |> render_click()
+      assert has_element?(view, "#legend-row-power_plant"), "reopening must restore it"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
