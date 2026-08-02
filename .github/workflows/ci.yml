@@ -34,16 +34,19 @@ jobs:
       matrix:
         include:
           # The floor declared in mix.exs. This entry is the point of the matrix:
-          # a floor that nothing builds is a guess, and this project has already
-          # shipped one function that did not exist in the version it claimed to
-          # support.
+          # a floor that nothing builds is a guess, and this project has now twice
+          # shipped code that did not exist in the version it claimed to support —
+          # `Enum.sum_by/2` under a 1.17 claim, then the `E` regex modifier under a
+          # 1.18 one. Both times this entry is what caught it. Keep it pinned to the
+          # exact floor `mix.exs` declares, patch version included: `E` (`:export`)
+          # arrived in 1.19.3, so 1.19.0 here would pass a floor that is a lie.
           #
           # It runs the gate *without* the format check. Elixir's formatter output
-          # changes between versions, so checking 1.20-formatted code under 1.18
+          # changes between versions, so checking 1.20-formatted code under the floor
           # tests the formatter rather than this project — a failure there would be
           # noise. A warnings-as-errors compile failure on the floor is real signal
           # and is still enforced.
-          - elixir: "1.18.4"
+          - elixir: "1.19.3"
             otp: "27.3"
             gate: mix do compile --force --warnings-as-errors + test --cover
           # The version actually developed against: the full gate, identical to

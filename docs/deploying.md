@@ -66,7 +66,7 @@ The pieces that make that work, all of which are load-bearing:
 
 | file                                | why                                                                                                                  |
 |-------------------------------------|----------------------------------------------------------------------------------------------------------------------|
-| `.tool-versions`                    | the builder has no other reason to provide the Elixir ≥ 1.18 `mix.exs` requires                                      |
+| `.tool-versions`                    | the builder has no other reason to provide the Elixir ≥ 1.19.3 `mix.exs` requires                                    |
 | `.buildpacks`                       | elixir + releases only; the phoenix-static buildpack is for npm assets and this project has no `assets/package.json` |
 | `default_release:` in `mix.exs`     | the buildpack runs a bare `mix release`, and Mix refuses to choose between `armchair_metropolist` and `desktop`      |
 | release name `armchair_metropolist` | the releases buildpack starts `/app/bin/<otp app name>`                                                              |
