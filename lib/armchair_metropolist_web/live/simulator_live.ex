@@ -234,7 +234,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   {type}
                 </button>
               </td>
-              <td class="text-right tabular-nums">{@metrics.by_type[type].count}</td>
+              <td data-cell={"#{type}-count"} class="text-right tabular-nums">
+                {@metrics.by_type[type].count}
+              </td>
               <td
                 :for={resource <- @resources}
                 data-cell={"#{type}-#{resource}"}

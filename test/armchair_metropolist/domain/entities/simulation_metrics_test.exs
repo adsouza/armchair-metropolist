@@ -103,9 +103,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       by_type = SimulationMetrics.build(CityMap.new(40, 30), stats()).by_type
 
       assert by_type.power_plant.count == 0
-      assert by_type.power_plant.rated_production.power == 0.0
-      assert by_type.power_plant.actual_production.power == 0.0
-      assert by_type.power_plant.consumption.water == 0.0
+
+      # `===`, not `==`: these three come out of `scale/2`, which returns floats, and
+      # `== 0.0` would also pass for an integer `0`. The type is the requirement.
+      assert by_type.power_plant.rated_production.power === 0.0
+      assert by_type.power_plant.actual_production.power === 0.0
+      assert by_type.power_plant.consumption.water === 0.0
     end
   end
 end

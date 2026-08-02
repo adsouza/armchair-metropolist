@@ -38,10 +38,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     :ok
   end
 
-  test "renders the grid and the type picker", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/")
+  test "renders the grid and the legend", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/")
     assert html =~ "Armchair Metropolist"
     assert html =~ "power_plant"
+
+    # The old name promised a "type picker", a control this branch deleted; the grid
+    # it also named went unasserted. Both halves of the name are now checked.
+    assert has_element?(view, ~s{[phx-click="place"][phx-value-x="0"][phx-value-y="0"]})
+    assert has_element?(view, "#legend-totals")
   end
 
   test "a delta broadcast updates only the affected node", %{conn: conn} do
@@ -178,6 +183,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       # Depends on Task 2: without the command-time broadcast this stays at 0.
       assert has_element?(view, ~s{#legend-row-power_plant[data-count="2"]})
+
+      # `data-count` is a test hook; the cell is the number a player actually reads,
+      # and nothing tied the two together — the cell could be hard-coded and the
+      # attribute would still say 2.
+      assert view |> element(~s{[data-cell="power_plant-count"]}) |> render() =~ "2"
     end
 
     test "a producing cell shows the type's net effect on that resource", %{conn: conn} do
@@ -201,9 +211,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "0"
 
       # It never touches water, and that must read differently from "nets to zero".
-      water = view |> element(~s{[data-cell="road_hub-water"]}) |> render()
-      assert water =~ "—"
-      refute water =~ "0"
+      # No `refute water =~ "0"` here: the assert above already carries the claim, and
+      # any mutation that reaches this line has failed it. What the refute could still
+      # do is false-fail the day someone adds a class or attribute containing a "0".
+      assert view |> element(~s{[data-cell="road_hub-water"]}) |> render() =~ "—"
     end
 
     test "the totals row reports supply, demand and satisfaction per resource",
@@ -212,6 +223,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
       render(view)
+
+      # Supply and demand are half the cell and were asserted nowhere: the whole
+      # "supplied/demanded · " prefix could be deleted and the suite stayed green.
+      # The fixture's two figures differ, and differ per resource, so a transposed
+      # pair reads as wrong rather than as itself.
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "150/120"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "35/70"
 
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
@@ -286,6 +304,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       view |> element("#toggle-sidebar") |> render_click()
       assert has_element?(view, "#legend-row-power_plant"), "reopening must restore it"
     end
+
+    # Separate from the collapse test above, which only ever asked whether the rows
+    # were there. The button is the sole affordance for getting them back, and both
+    # the label and `aria-expanded` were free to freeze in one state unnoticed: a
+    # collapsed sidebar would sit there offering to hide something already hidden.
+    test "the toggle names the action it will perform and reports its state",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="true"]})
+      assert view |> element("#toggle-sidebar") |> render() =~ "Hide legend"
+
+      view |> element("#toggle-sidebar") |> render_click()
+
+      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="false"]})
+      assert view |> element("#toggle-sidebar") |> render() =~ "Show legend"
+
+      view |> element("#toggle-sidebar") |> render_click()
+
+      assert has_element?(view, ~s{#toggle-sidebar[aria-expanded="true"]})
+      assert view |> element("#toggle-sidebar") |> render() =~ "Hide legend"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -295,17 +335,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       empty_city_metrics()
       | tick: 3,
         resources: %{
-          power: stat(1.0),
-          water: stat(0.5),
-          waste: stat(0.75),
-          traffic: stat(0.25)
+          power: stat(150.0, 120.0),
+          water: stat(35.0, 70.0),
+          waste: stat(60.0, 80.0),
+          traffic: stat(25.0, 100.0)
         }
     }
   end
 
   # Only power, so `totals_cell/2` has to render the other three from nothing.
   defp metrics_with_only_power_statistics do
-    %{empty_city_metrics() | resources: %{power: stat(1.0)}}
+    %{empty_city_metrics() | resources: %{power: stat(150.0, 120.0)}}
   end
 
   # Placing real nodes cannot produce an exact divergence — actual production is
@@ -323,7 +363,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
   defp empty_city_metrics, do: SimulationMetrics.build(CityMap.new(40, 30), %{})
 
-  defp stat(satisfaction) do
-    %{supplied: 40.0, demanded: 40.0, deficit: 0.0, satisfaction: satisfaction}
+  # Supplied and demanded are distinct, and distinct per resource. The old fixture gave
+  # 40.0/40.0 to everything, which renders as "40/40" — a cell that transposed the two
+  # figures, or printed one of them twice, would have looked exactly the same.
+  # Satisfaction is derived rather than passed in, so the three numbers in a cell cannot
+  # tell contradictory stories.
+  defp stat(supplied, demanded) do
+    %{
+      supplied: supplied,
+      demanded: demanded,
+      deficit: max(demanded - supplied, 0.0),
+      satisfaction: min(supplied / demanded, 1.0)
+    }
   end
 end

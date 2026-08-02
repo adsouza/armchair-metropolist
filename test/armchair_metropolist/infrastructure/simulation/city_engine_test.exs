@@ -275,12 +275,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   describe "metrics broadcasts on commands" do
     setup do
       StubSnapshotRepository.set_initial({:error, :not_found})
+      start_supervised!(CityEngine)
       :ok
     end
 
     test "placing broadcasts fresh metrics, not just the node" do
-      StubSnapshotRepository.set_initial({:error, :not_found})
-      start_supervised!(CityEngine)
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
 
       assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
@@ -296,8 +295,6 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "demolishing broadcasts fresh metrics, not just the id" do
-      StubSnapshotRepository.set_initial({:error, :not_found})
-      start_supervised!(CityEngine)
       assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
 
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
