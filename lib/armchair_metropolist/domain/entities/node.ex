@@ -28,6 +28,12 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # atom-valued field draws its values from elsewhere.
   defstruct [:id, :x, :y, :type, :health, :status]
 
+  # The resource vocabulary, in the order every reader should see it. Written out
+  # rather than derived from the tables below: those are maps, and `Map.keys/1`
+  # order is an implementation detail of the term, whereas this order is a display
+  # decision the legend depends on.
+  @resources [:power, :water, :waste, :traffic]
+
   # Production tables (resource outputs)
   @production_table %{
     power_plant: %{power: 120.0},
@@ -117,6 +123,16 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   def types do
     Map.keys(@production_table)
   end
+
+  @doc """
+  List every resource the simulation tracks, in display order.
+
+  The single source of truth for the vocabulary `t:resource/0` describes: the web
+  legend renders one column per entry, and `Domain.Services.SimulationCalculator`
+  is pinned against it so its baseline table cannot drift.
+  """
+  @spec resources() :: [resource()]
+  def resources, do: @resources
 
   @doc """
   Calculate the effective production of a node, scaled by its health.

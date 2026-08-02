@@ -14,7 +14,7 @@ native desktop app with no database at all.
 
 ## Running the web app locally
 
-Needs Elixir 1.18+ (this project develops on 1.20.2 / OTP 29) and a local Postgres.
+Needs Elixir 1.19.3+ (this project develops on 1.20.2 / OTP 29) and a local Postgres.
 
 ```bash
 mix setup

@@ -29,6 +29,12 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
   end
 
+  describe "resources/0" do
+    test "lists the four resources in display order" do
+      assert Node.resources() == [:power, :water, :waste, :traffic]
+    end
+  end
+
   describe "production/1 and consumption/1" do
     test "match the specified supply/demand table" do
       assert Node.production(:power_plant) == %{power: 120.0}

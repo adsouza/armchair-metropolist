@@ -46,6 +46,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     test "supplies 40 of every resource" do
       assert Calc.baseline_capacity() == %{power: 40.0, water: 40.0, waste: 40.0, traffic: 40.0}
     end
+
+    # The calculator derives its own `@resources` from this table's keys, so the table
+    # *is* the calculator's vocabulary. Compared as sets, not as lists: `Node.resources/0`
+    # is ordered for display and a map's key order is not a decision anyone made.
+    test "covers exactly the resource vocabulary the domain publishes" do
+      assert MapSet.new(Map.keys(Calc.baseline_capacity())) == MapSet.new(Node.resources())
+    end
   end
 
   describe "resource_stats/1" do

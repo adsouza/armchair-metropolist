@@ -28,9 +28,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## Broadcasts
 
-  On `"city_simulation"`: `{:city_delta, delta}` and `{:city_metrics, metrics}`
-  every tick, `{:city_node_placed, node}` and `{:city_node_removed, id}` on
-  successful commands. Rejected commands broadcast nothing.
+  On `"city_simulation"`: `{:city_delta, delta}` on every tick; `{:city_metrics,
+  metrics}` on every tick and on every successful `place`/`demolish`;
+  `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
+  Rejected commands broadcast nothing.
 
   ## Critical deficit notifications
 
@@ -45,13 +46,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   flag until every resource is satisfied again, which re-arms it. Notifying on
   every tick of a sustained blackout would make notifications unusable.
 
-  ## `metrics.resources` before the first tick
+  ## `metrics.resources` at hydration
 
-  Immediately after hydration `snapshot/0` reports node counts and health, but an
-  empty `resources` map: resource statistics come from `SimulationCalculator`,
-  which lives in a boundary this adapter may not reach, so the engine only ever
-  learns them from the tick metrics that `AdvanceCityTick` returns. They are
-  populated from the first tick onwards.
+  `snapshot/0` reports full resource statistics from the moment the engine hydrates,
+  before any tick has run. `Infrastructure` cannot reach `SimulationCalculator`
+  directly — the boundary graph forbids it — so the figures come via
+  `UseCases.SummarizeCity`. This used to be an empty map, and a LiveView mounting in
+  that window had nothing to render; `city_engine_test.exs` has a regression test for
+  it.
   """
 
   use GenServer, shutdown: 10_000
@@ -127,8 +129,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def handle_call({:place, x, y, type}, _from, state) do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
+        metrics = summarize(city_map)
         broadcast({:city_node_placed, node})
-        {:reply, {:ok, node}, %{state | city_map: city_map, metrics: summarize(city_map)}}
+        # Commands change the city, so subscribers need the new figures now. Without
+        # this the legend's counts would not move until the next tick — and in tests,
+        # where no clock runs, never.
+        broadcast({:city_metrics, metrics})
+        {:reply, {:ok, node}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -138,8 +145,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def handle_call({:demolish, x, y}, _from, state) do
     case ManageInfrastructure.demolish(state.city_map, x, y) do
       {:ok, {city_map, node_id}} ->
+        metrics = summarize(city_map)
         broadcast({:city_node_removed, node_id})
-        {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: summarize(city_map)}}
+        broadcast({:city_metrics, metrics})
+        {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
