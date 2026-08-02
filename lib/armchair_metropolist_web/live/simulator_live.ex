@@ -183,18 +183,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     """
   end
 
-  # The four resource columns are fixed and identical on every row, including where a
-  # type does not touch a resource. Aligned columns are the feature: the question a
-  # player has is "water is short, who is drinking it?", answered by reading one column
-  # down all seven types. Per-row chips would be narrower and unreadable for that.
-  @resources [:power, :water, :waste, :traffic]
-
+  # The resource columns are fixed and identical on every row, including where a type
+  # does not touch a resource. Aligned columns are the feature: the question a player
+  # has is "water is short, who is drinking it?", answered by reading one column down
+  # all seven types. Per-row chips would be narrower and unreadable for that.
+  #
+  # The vocabulary itself belongs to the domain — `Node.resources/0` is the one list,
+  # already in display order — so adding a resource grows this table by a column
+  # rather than silently omitting it.
   attr :metrics, :map, required: true
   attr :node_types, :list, required: true
   attr :selected_type, :atom, required: true
 
   defp legend(assigns) do
-    assigns = assign(assigns, :resources, @resources)
+    assigns = assign(assigns, :resources, Node.resources())
 
     ~H"""
     <%!-- The actual shrink-to-scroll behaviour lives on `<aside>` in `render/1`, the
