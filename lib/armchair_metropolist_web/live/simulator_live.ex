@@ -15,7 +15,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   ## Where the figures come from
 
-  `CityEngine.snapshot/0` returns full resource statistics at mount, before any tick —
+  `CityEngine.snapshot/1` returns full resource statistics at mount, before any tick —
   it computes them through `UseCases.SummarizeCity`, since `Infrastructure` may not
   reach `Domain.Services`. The engine also broadcasts `{:city_metrics, …}` after every
   successful place and demolish, so the legend's counts move on the click rather than
@@ -27,16 +27,54 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
-  @topic "city_simulation"
   @cell_size 24
 
   @impl true
-  def mount(_params, _session, socket) do
+  # Checked before the session, deliberately. The desktop target's window still
+  # loads its page through the same :browser pipeline as the server target — so
+  # EnsureCityId (ensure_city_id.ex) still runs and still puts a real, random
+  # city_id into the desktop's session on every launch. A clause ordered
+  # session-first therefore always matched there too, and :desktop_city_id was
+  # never read: harmless functionally, since FileSnapshotStore ignores whatever id
+  # it is given, but it meant the desktop rendered a re-entry code (below) that
+  # changed every launch and addressed nothing a single-user app could use. Checking
+  # the application env first is what makes Desktop.Config's pin take effect at all.
+  def mount(_params, session, socket) do
+    case Application.get_env(:armchair_metropolist, :desktop_city_id) do
+      nil -> mount_from_session(session, socket)
+      city_id -> do_mount(city_id, socket, show_reentry?: false)
+    end
+  end
+
+  # Plug stores session keys as strings, so this matches "city_id" rather than the
+  # atom the plug wrote.
+  defp mount_from_session(%{"city_id" => city_id}, socket) when is_binary(city_id) do
+    do_mount(city_id, socket, show_reentry?: true)
+  end
+
+  defp mount_from_session(_session, socket) do
+    # A server-target client that presented no session — a socket opened directly at
+    # /live/websocket, where the :browser pipeline and therefore EnsureCityId never
+    # ran — gets a fresh id rather than a shared constant. A LiveView cannot write the
+    # session, so this city lasts only as long as the connection; that is the right
+    # trade against the alternative, which is every such client silently landing in one
+    # shared city and editing each other's work. That was the bug this whole change
+    # exists to remove, and a constant here would have preserved it in a corner.
+    do_mount(ArmchairMetropolistWeb.CityCode.generate(), socket, show_reentry?: true)
+  end
+
+  defp do_mount(city_id, socket, opts) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @topic)
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+
+      # Ties the city's lifetime to this connection. The engine monitors us, so a
+      # closed tab, a crash and a navigation all look the same to it.
+      :ok = CityEngine.attach(city_id, self())
     end
 
-    {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+    {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+
+    socket = assign(socket, city_id: city_id)
 
     grid_cells =
       for y <- 0..(city_map.height - 1), x <- 0..(city_map.width - 1), do: {x, y}
@@ -51,6 +89,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:selected_type, List.first(Node.types()))
       |> assign(:legend_detail, true)
       |> assign(:cell_size, @cell_size)
+      # False only on the desktop target (see mount/3): a recovery code the desktop
+      # cannot use — there is no "elsewhere" to return to it from, and it would
+      # change on every launch — is worse than none.
+      |> assign(:show_reentry?, Keyword.fetch!(opts, :show_reentry?))
       |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
     {:ok, socket}
@@ -65,7 +107,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     x = String.to_integer(x)
     y = String.to_integer(y)
 
-    case CityEngine.place(x, y, socket.assigns.selected_type) do
+    case CityEngine.place(socket.assigns.city_id, x, y, socket.assigns.selected_type) do
       {:ok, node} -> {:noreply, stream_insert(socket, :nodes, node)}
       {:error, _reason} -> {:noreply, socket}
     end
@@ -75,7 +117,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     x = String.to_integer(x)
     y = String.to_integer(y)
 
-    case CityEngine.demolish(x, y) do
+    case CityEngine.demolish(socket.assigns.city_id, x, y) do
       {:ok, id} -> {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
       {:error, _reason} -> {:noreply, socket}
     end
@@ -257,6 +299,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   `legend/1` and so could not survive a collapse — the structural reason
                   the toggle hid them. --%>
             <.metrics metrics={@metrics} />
+          </div>
+
+          <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
+            <span>This city lives in this browser.</span>
+            <span>Return to it elsewhere with code</span>
+            <code class="font-mono select-all">{@city_id}</code>
           </div>
         </aside>
       </div>

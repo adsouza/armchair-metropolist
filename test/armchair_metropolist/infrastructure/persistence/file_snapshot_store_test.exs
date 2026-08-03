@@ -24,47 +24,47 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     # the error. While this adapter used File.write!/File.rename! that branch was
     # unreachable: a read-only snapshot directory raised inside handle_info/2, the
     # engine was restarted, and its state rolled back to the previous checkpoint.
-    test "save/2 returns an error rather than raising when the directory is unwritable",
+    test "save_current/2 returns an error rather than raising when the directory is unwritable",
          %{dir: dir} do
       File.chmod!(dir, 0o500)
       on_exit(fn -> File.chmod!(dir, 0o700) end)
 
-      assert {:error, reason} = FileSnapshotStore.save(1, sample_city())
+      assert {:error, reason} = FileSnapshotStore.save_current(1, sample_city())
       assert reason == :eacces
     end
 
     test "an unwritable directory does not damage the snapshot already stored",
          %{dir: dir} do
-      :ok = FileSnapshotStore.save(4, sample_city())
+      :ok = FileSnapshotStore.save_current(4, sample_city())
 
       File.chmod!(dir, 0o500)
       on_exit(fn -> File.chmod!(dir, 0o700) end)
 
-      assert {:error, :eacces} = FileSnapshotStore.save(5, CityMap.new(12, 12))
+      assert {:error, :eacces} = FileSnapshotStore.save_current(5, CityMap.new(12, 12))
 
       File.chmod!(dir, 0o700)
-      assert {:ok, {4, recovered}} = FileSnapshotStore.load_latest()
+      assert {:ok, {4, recovered}} = FileSnapshotStore.load_current()
       assert recovered == sample_city()
     end
   end
 
-  test "load_latest/0 prefers the backup when it holds the higher tick", %{dir: dir} do
-    # Reachable whenever a save lands out of order, and the reason load_latest/0
+  test "load_current/0 prefers the backup when it holds the higher tick", %{dir: dir} do
+    # Reachable whenever a save lands out of order, and the reason load_current/0
     # cannot simply trust the primary.
-    :ok = FileSnapshotStore.save(2, CityMap.new(12, 12))
-    :ok = FileSnapshotStore.save(3, CityMap.new(13, 13))
+    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current(3, CityMap.new(13, 13))
     # Demote by hand: swap the two files, so the primary now holds the older tick.
     swap(Path.join(dir, "snapshot.bin"), Path.join(dir, "snapshot.bak"))
 
-    assert {:ok, {3, loaded}} = FileSnapshotStore.load_latest()
+    assert {:ok, {3, loaded}} = FileSnapshotStore.load_current()
     assert loaded.width == 13
   end
 
   test "re-saving the same tick overwrites in place", %{dir: dir} do
-    :ok = FileSnapshotStore.save(5, CityMap.new(12, 12))
-    :ok = FileSnapshotStore.save(5, CityMap.new(14, 14))
+    :ok = FileSnapshotStore.save_current(5, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current(5, CityMap.new(14, 14))
 
-    assert {:ok, {5, loaded}} = FileSnapshotStore.load_latest()
+    assert {:ok, {5, loaded}} = FileSnapshotStore.load_current()
     assert loaded.width == 14
     assert File.exists?(Path.join(dir, "snapshot.bak"))
   end
@@ -76,34 +76,34 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
 
     # Previously this surfaced as a FunctionClauseError from Path.join(nil, _),
     # which names neither the setting nor where to set it.
-    err = assert_raise ArgumentError, fn -> FileSnapshotStore.load_latest() end
+    err = assert_raise ArgumentError, fn -> FileSnapshotStore.load_current() end
     assert err.message =~ ":snapshot_dir"
     assert err.message =~ "config/runtime.exs"
   end
 
   test "leaves no temp file behind after a successful save", %{dir: dir} do
-    :ok = FileSnapshotStore.save(1, sample_city())
+    :ok = FileSnapshotStore.save_current(1, sample_city())
     refute File.exists?(Path.join(dir, "snapshot.tmp"))
     assert File.exists?(Path.join(dir, "snapshot.bin"))
   end
 
   test "falls back to the backup when the primary is corrupt", %{dir: dir} do
-    :ok = FileSnapshotStore.save(1, sample_city())
-    :ok = FileSnapshotStore.save(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current(1, sample_city())
+    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
 
     File.write!(Path.join(dir, "snapshot.bin"), "garbage")
 
-    assert {:ok, {1, recovered}} = FileSnapshotStore.load_latest()
+    assert {:ok, {1, recovered}} = FileSnapshotStore.load_current()
     assert recovered == sample_city()
   end
 
   test "returns :not_found when both files are unusable", %{dir: dir} do
-    :ok = FileSnapshotStore.save(1, sample_city())
-    :ok = FileSnapshotStore.save(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current(1, sample_city())
+    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
     File.write!(Path.join(dir, "snapshot.bin"), "garbage")
     File.write!(Path.join(dir, "snapshot.bak"), "also garbage")
 
-    assert {:error, :not_found} = FileSnapshotStore.load_latest()
+    assert {:error, :not_found} = FileSnapshotStore.load_current()
   end
 
   # The regression test for the defect the desktop target exposed: `:safe` decoding
@@ -121,7 +121,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   @tag :cold_vm
   test "a saved city survives being loaded by a cold VM", %{dir: dir} do
     city = maximal_city()
-    :ok = FileSnapshotStore.save(city.tick, city)
+    :ok = FileSnapshotStore.save_current(city.tick, city)
 
     {output, status} =
       System.cmd("elixir", ["-e", cold_load_script(dir)],
@@ -183,7 +183,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     if already_loaded != [] do
       IO.puts("VACUOUS \#{inspect(already_loaded)}")
     else
-      case ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore.load_latest() do
+      case ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore.load_current() do
         {:ok, {tick, city}} ->
           IO.puts("OK tick=\#{tick} nodes=\#{map_size(city.nodes)} w=\#{city.width} h=\#{city.height}")
 

@@ -2,13 +2,19 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   @moduledoc """
   Ecto/Postgres adapter implementing the SnapshotRepository port.
 
-  Snapshots are append-only; `load_latest/0` orders by `desc: tick`, so **the
-  highest tick wins** rather than the most recent insert. `FileSnapshotStore`
-  documents the same rule, which is what makes the two interchangeable.
+  One row per city, keyed by `city_id`.
+
+  ## A save cannot move a city backwards
+
+  `save/3` refuses and returns `{:stale, stored_tick}` when the stored row is already
+  at `tick` or later, rather than overwriting it. See the port's moduledoc for why:
+  a crashed-and-replayed engine can otherwise write an older city over a newer one.
+  The read, the comparison and the write happen inside one `FOR UPDATE`-locked
+  transaction so nothing else can slip a save in between the check and the write.
 
   ## Failures are returned, never raised
 
-  `save/2` catches the database talking back. `Repo.insert/1` already answers
+  `save/3` catches the database talking back. `Repo.insert/1` already answers
   `{:error, changeset}` for a rejected changeset, but a dead connection, a
   checkout timeout or a missing table *raise* (`DBConnection.ConnectionError`,
   `Postgrex.Error`) and an exhausted pool `exit`s. Left alone, any of those blew
@@ -25,18 +31,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo, SnapshotVocabulary}
 
   @impl true
-  def load_latest do
+  def load(city_id) do
     # Mandatory before decode/3's `:safe` call — see SnapshotVocabulary. This adapter
     # has no rescue, so without it the ArgumentError escapes CityEngine's hydration
     # and the engine crash-loops.
     SnapshotVocabulary.ensure_loaded!()
 
-    # `desc: s.id` breaks ties deterministically. An engine that crashes and
-    # replays can write two rows at the same tick with different content, and
-    # `desc: s.tick` alone leaves which one wins unspecified.
-    query = from(s in CitySnapshot, order_by: [desc: s.tick, desc: s.id], limit: 1)
-
-    case Repo.one(query) do
+    case Repo.get(CitySnapshot, city_id) do
       nil ->
         {:error, :not_found}
 
@@ -46,15 +47,48 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   end
 
   @impl true
-  def save(tick, city_map) do
+  def save(city_id, tick, city_map) do
     payload = :erlang.term_to_binary(city_map, [:compressed])
     checksum = :crypto.hash(:md5, payload) |> Base.encode16()
 
-    %CitySnapshot{}
-    |> CitySnapshot.changeset(%{tick: tick, payload: payload, checksum: checksum})
-    |> Repo.insert()
+    # Read-then-write in a transaction, rather than a query-based `on_conflict` with a
+    # `where: s.tick < ^tick`. The SQL form is terser and refuses the stale write just
+    # as well, but it gives no way to tell a refused update from an applied one — and
+    # the port requires the refusal be *reportable*, not merely effective.
+    #
+    # `FOR UPDATE` is belt-and-braces: the Registry guarantees one engine per city, so
+    # nothing else writes this row. It costs one lock on a once-per-checkpoint write and
+    # removes the need to reason about that guarantee holding forever.
+    Repo.transaction(fn ->
+      existing =
+        Repo.one(from(s in CitySnapshot, where: s.city_id == ^city_id, lock: "FOR UPDATE"))
+
+      case existing do
+        %CitySnapshot{tick: stored} when stored >= tick ->
+          {:stale, stored}
+
+        _ ->
+          changeset =
+            CitySnapshot.changeset(existing || %CitySnapshot{}, %{
+              city_id: city_id,
+              tick: tick,
+              payload: payload,
+              checksum: checksum
+            })
+
+          # Ecto's timestamps() move updated_at on the update path, which is what the
+          # reaper sweeps on. inserted_at is left alone, so a city keeps its creation
+          # time across every later save.
+          result = if existing, do: Repo.update(changeset), else: Repo.insert(changeset)
+
+          case result do
+            {:ok, _snapshot} -> :ok
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+      end
+    end)
     |> case do
-      {:ok, _snapshot} -> :ok
+      {:ok, outcome} -> outcome
       {:error, reason} -> {:error, reason}
     end
   rescue

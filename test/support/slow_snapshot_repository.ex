@@ -1,6 +1,6 @@
 defmodule ArmchairMetropolist.SlowSnapshotRepository do
   @moduledoc """
-  A SnapshotRepository whose `load_latest/0` stalls, standing in for a slow
+  A SnapshotRepository whose `load/1` stalls, standing in for a slow
   database.
 
   Exists to prove hydration happens in `handle_continue/2` rather than `init/1`:
@@ -19,15 +19,15 @@ defmodule ArmchairMetropolist.SlowSnapshotRepository do
 
   @delay_ms 400
 
-  @doc "How long load_latest/0 stalls for."
+  @doc "How long load/1 stalls for."
   def delay_ms, do: @delay_ms
 
   @impl true
-  def load_latest do
+  def load(city_id) do
     Process.sleep(@delay_ms)
-    StubSnapshotRepository.load_latest()
+    StubSnapshotRepository.load(city_id)
   end
 
   @impl true
-  def save(tick, city_map), do: StubSnapshotRepository.save(tick, city_map)
+  def save(city_id, tick, city_map), do: StubSnapshotRepository.save(city_id, tick, city_map)
 end

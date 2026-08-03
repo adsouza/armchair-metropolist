@@ -28,10 +28,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## Broadcasts
 
-  On `"city_simulation"`: `{:city_delta, delta}` on every tick; `{:city_metrics,
+  On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
-  Rejected commands broadcast nothing.
+  Rejected commands broadcast nothing. Each city's events land on their own topic —
+  a shared one would deliver every visitor's deltas to every other visitor.
 
   ## Critical deficit notifications
 
@@ -48,7 +49,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## `metrics.resources` at hydration
 
-  `snapshot/0` reports full resource statistics from the moment the engine hydrates,
+  `snapshot/1` reports full resource statistics from the moment the engine hydrates,
   before any tick has run. `Infrastructure` cannot reach `SimulationCalculator`
   directly — the boundary graph forbids it — so the figures come via
   `UseCases.SummarizeCity`. This used to be an empty map, and a LiveView mounting in
@@ -56,10 +57,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   it.
   """
 
-  use GenServer, shutdown: 10_000
+  # `restart: :transient`, not the default `:permanent`: `handle_info(:linger_expired,
+  # ...)` stops this process on purpose with reason `:normal` once every viewer has
+  # gone, and a `:permanent` child is restarted by CityRegistry's DynamicSupervisor
+  # no matter how it exits - including `:normal` - which would resurrect the engine
+  # the instant it froze and defeat the whole task. `:transient` still restarts on an
+  # abnormal exit, so a genuine crash keeps today's recovery behaviour.
+  use GenServer, shutdown: 10_000, restart: :transient
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
   alias ArmchairMetropolist.UseCases.SummarizeCity
@@ -67,58 +75,149 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   require Logger
 
   @tick_topic "city_tick"
-  @simulation_topic "city_simulation"
 
   @default_grid_width 40
   @default_grid_height 30
   @default_checkpoint_every_ticks 50
+  @default_city_id "default"
+  @default_linger_ms 30_000
+  # Short on purpose - see handle_continue(:hydrate, ...) for why this timer needs
+  # to be much shorter than the post-viewer linger above.
+  @default_unattached_linger_ms 2_000
 
   # Satisfaction below this counts as a critical deficit. See the moduledoc.
   @critical_satisfaction 1.0
 
-  @doc "The topic every simulation event is broadcast on."
-  def topic, do: @simulation_topic
+  @doc "The topic this city's simulation events are broadcast on."
+  def topic(city_id) when is_binary(city_id), do: "city:" <> city_id
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc """
+  A stable, arbitrary city id.
+
+  Has no production reader: the desktop target addresses its city via
+  `Desktop.Config`'s own `:desktop_city_id` (a separate constant, `"desktop"`), and
+  the web target mints or reads one per session. This exists only so tests that need
+  a fixed id to pin a session or a `start_supervised!/1` engine to — so the view
+  under test and the test's own assertions agree on which city they mean — have one
+  written down in exactly one place rather than repeating a literal string.
+  """
+  def default_city_id, do: @default_city_id
+
+  def start_link(opts) do
+    city_id = Keyword.fetch!(opts, :city_id)
+
+    GenServer.start_link(__MODULE__, opts, name: CityRegistry.via(city_id))
   end
 
   @doc """
   The current city map and the metrics of the most recent tick.
   """
-  @spec snapshot() :: {:ok, %{city_map: CityMap.t(), metrics: SimulationMetrics.t()}}
-  def snapshot, do: GenServer.call(__MODULE__, :snapshot)
+  @spec snapshot(String.t()) :: {:ok, %{city_map: CityMap.t(), metrics: SimulationMetrics.t()}}
+  def snapshot(city_id), do: call(city_id, :snapshot)
 
   @doc """
   Place a node of `type` at `(x, y)`.
   """
-  @spec place(integer(), integer(), atom()) ::
+  @spec place(String.t(), integer(), integer(), atom()) ::
           {:ok, ArmchairMetropolist.Domain.Entities.Node.t()}
           | {:error, :out_of_bounds | :occupied | :unknown_type}
-  def place(x, y, type), do: GenServer.call(__MODULE__, {:place, x, y, type})
+  def place(city_id, x, y, type), do: call(city_id, {:place, x, y, type})
 
   @doc """
   Remove the node at `(x, y)`.
   """
-  @spec demolish(integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
-  def demolish(x, y), do: GenServer.call(__MODULE__, {:demolish, x, y})
+  @spec demolish(String.t(), integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
+  def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
+
+  @doc """
+  Register `pid` as a viewer of `city_id`.
+
+  The engine monitors it, and stops once every viewer has gone — see the moduledoc
+  on freezing. Idempotent per pid: attaching twice monitors twice and both
+  references are removed independently, which is harmless.
+  """
+  def attach(city_id, pid) when is_binary(city_id) and is_pid(pid) do
+    call(city_id, {:attach, pid})
+  end
+
+  # Start-on-demand, then call. The retry exists because an engine can stop between
+  # `ensure_started/1` and the call — idle engines stop themselves on purpose (see
+  # the freezing section of the moduledoc), so this is a normal race rather than an
+  # exotic one. One retry is enough: the second `ensure_started/1` cannot find a
+  # stopping process, because a stopped process is unregistered before the next
+  # lookup.
+  defp call(city_id, message, retries \\ 1) do
+    {:ok, _pid} = CityRegistry.ensure_started(city_id)
+
+    try do
+      GenServer.call(CityRegistry.via(city_id), message)
+    catch
+      :exit, {reason, _} when retries > 0 and reason in [:noproc, :normal, :shutdown] ->
+        call(city_id, message, retries - 1)
+    end
+  end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     # Mandatory. Without this the supervisor's shutdown signal kills the process
     # immediately, terminate/2 never runs, and unsaved state is lost.
     Process.flag(:trap_exit, true)
 
     :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @tick_topic)
 
-    {:ok, %{city_map: nil, metrics: nil, critical?: false}, {:continue, :hydrate}}
+    # start_link/1 already requires :city_id and names this process by it via
+    # CityRegistry.via/1, so Keyword.fetch! there guarantees it is present here too.
+    # get/3 with the default is kept anyway for direct callers that construct this
+    # GenServer's init argument without going through start_link/1 - init/1 has no
+    # other way to know what id to hydrate under.
+    city_id = Keyword.get(opts, :city_id, @default_city_id)
+
+    {:ok,
+     %{
+       city_id: city_id,
+       city_map: nil,
+       metrics: nil,
+       critical?: false,
+       viewers: %{},
+       linger: nil
+     }, {:continue, :hydrate}}
   end
 
   @impl true
   def handle_continue(:hydrate, state) do
-    city_map = load_city_map()
+    city_map = load_city_map(state.city_id)
 
-    {:noreply, %{state | city_map: city_map, metrics: summarize(city_map)}}
+    # Freezing is otherwise triggered only by a viewer *leaving* (see
+    # handle_info({:DOWN, ...}) below), so an engine that never had one has nothing
+    # to stop it. That is reachable: SimulatorLive's dead render starts an engine
+    # via CityEngine.snapshot/1 before connected?(socket) is true, so before
+    # attach/2 is ever called on it. On the ordinary path the live mount that
+    # follows shares the dead render's city id and attaches to this same process,
+    # cancelling this timer - but a client that never completes that live mount
+    # (or one routed to a different city id for it) would otherwise run forever.
+    # Arming here makes whether this engine ever stops a property of the engine,
+    # not of routing ensuring every dead render is eventually attached to.
+    # handle_info(:linger_expired, ...) already re-checks the viewer set, so a
+    # viewer that attaches in time is all this needs to be cancelled safely.
+    #
+    # Uses :engine_unattached_linger_ms, a separate and much shorter timer than the
+    # post-:DOWN :engine_linger_ms below - deliberately. EnsureCityId hands every
+    # session-less request its own city id, so every cookieless HTTP GET (a
+    # crawler, a scanner, a health check with no cookie jar) starts a distinct
+    # engine this way; with the 30s post-viewer linger that engine stayed
+    # subscribed to the global clock and ticking for 30s per request, which at a
+    # modest request rate sustains hundreds of live engines. A real visitor's live
+    # mount follows the dead render within about a second and cancels this timer
+    # long before it matters, so this window only needs to be wide enough to
+    # absorb that ordinary case - not the 30s that exists to absorb a page *reload*
+    # after a viewer has actually been present, which this path is not.
+    {:noreply,
+     %{
+       state
+       | city_map: city_map,
+         metrics: summarize(city_map),
+         linger: arm_linger(:engine_unattached_linger_ms, @default_unattached_linger_ms)
+     }}
   end
 
   @impl true
@@ -130,11 +229,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
         metrics = summarize(city_map)
-        broadcast({:city_node_placed, node})
+        broadcast(state.city_id, {:city_node_placed, node})
         # Commands change the city, so subscribers need the new figures now. Without
         # this the legend's counts would not move until the next tick — and in tests,
         # where no clock runs, never.
-        broadcast({:city_metrics, metrics})
+        broadcast(state.city_id, {:city_metrics, metrics})
         {:reply, {:ok, node}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
@@ -146,13 +245,20 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.demolish(state.city_map, x, y) do
       {:ok, {city_map, node_id}} ->
         metrics = summarize(city_map)
-        broadcast({:city_node_removed, node_id})
-        broadcast({:city_metrics, metrics})
+        broadcast(state.city_id, {:city_node_removed, node_id})
+        broadcast(state.city_id, {:city_metrics, metrics})
         {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:attach, pid}, _from, state) do
+    ref = Process.monitor(pid)
+
+    {:reply, :ok,
+     %{state | viewers: Map.put(state.viewers, ref, pid), linger: cancel_linger(state.linger)}}
   end
 
   # The clock's pulse number is deliberately discarded: city_map.tick is the
@@ -162,12 +268,39 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     {:ok, %{city_map: city_map, delta: delta, metrics: metrics}} =
       AdvanceCityTick.execute(state.city_map)
 
-    broadcast({:city_delta, delta})
-    broadcast({:city_metrics, metrics})
-    maybe_checkpoint(city_map)
+    broadcast(state.city_id, {:city_delta, delta})
+    broadcast(state.city_id, {:city_metrics, metrics})
+    maybe_checkpoint(state.city_id, city_map)
     critical? = notify_deficits(metrics, state.critical?)
 
     {:noreply, %{state | city_map: city_map, metrics: metrics, critical?: critical?}}
+  end
+
+  # A viewer's LiveView process has gone. When the last one goes, save immediately —
+  # the city is frozen from this instant and the save must not wait for the linger,
+  # which might be cut short by an application shutdown.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    viewers = Map.delete(state.viewers, ref)
+
+    if map_size(viewers) == 0 do
+      save(state.city_id, state.city_map)
+
+      {:noreply,
+       %{state | viewers: viewers, linger: arm_linger(:engine_linger_ms, @default_linger_ms)}}
+    else
+      {:noreply, %{state | viewers: viewers}}
+    end
+  end
+
+  def handle_info(:linger_expired, state) do
+    # A viewer that arrived during the linger cancelled the timer, so reaching here
+    # with viewers present means a cancel raced a fired message. Checking rather than
+    # trusting the timer is what stops that race from killing a watched city.
+    if map_size(state.viewers) == 0 do
+      {:stop, :normal, state}
+    else
+      {:noreply, %{state | linger: nil}}
+    end
   end
 
   # Anyone may broadcast on the subscribed topic, so unrecognised messages are
@@ -180,14 +313,24 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @impl true
   def terminate(_reason, %{city_map: nil}), do: :ok
 
-  # `save/1` swallows and logs every failure, so a broken repository cannot stall
+  # `save/2` swallows and logs every failure, so a broken repository cannot stall
   # or abort shutdown here — the process still exits within its 10s budget.
+  #
+  # When the stop came from handle_info(:linger_expired, ...), this is a second save
+  # following the :DOWN handler's - but not of an unchanged city_map. The engine
+  # stays subscribed to "city_tick" throughout the linger and keeps ticking a frozen
+  # city's viewers away, so a full linger window's worth of ticks (~30 at the
+  # default engine_linger_ms) can land between the two saves, and this one is a real
+  # write of a map that has moved on since. (This is a small deviation from the
+  # spec's "a frozen city does not advance": it advances for up to the linger
+  # window after its last viewer leaves, not indefinitely.) Harmless either way,
+  # because save/3 is idempotent for an unchanged tick if the two ever do coincide.
   def terminate(_reason, state) do
-    save(state.city_map)
+    save(state.city_id, state.city_map)
   end
 
-  defp load_city_map do
-    case snapshot_repository().load_latest() do
+  defp load_city_map(city_id) do
+    case snapshot_repository().load(city_id) do
       {:ok, {_stored_tick, city_map}} ->
         # The stored tick is only the repository's ordering key, and it is
         # written from city_map.tick; the map itself carries the authority.
@@ -218,11 +361,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     )
   end
 
-  defp maybe_checkpoint(city_map) do
+  defp maybe_checkpoint(city_id, city_map) do
     every = config(:checkpoint_every_ticks, @default_checkpoint_every_ticks)
 
     if checkpoint?(city_map.tick, every) do
-      save(city_map)
+      save(city_id, city_map)
     else
       :ok
     end
@@ -234,7 +377,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # a far worse failure than not checkpointing.
   #
   # The `tick > 0` test matches the spec literally. It is also unreachable by
-  # construction: maybe_checkpoint/1 only ever sees the map *after*
+  # construction: maybe_checkpoint/2 only ever sees the map *after*
   # AdvanceCityTick has run, so the tick is always >= 1. It stays as a guard
   # against a future caller that checkpoints a freshly hydrated city.
   defp checkpoint?(tick, every) when is_integer(every) and every > 0 do
@@ -250,10 +393,23 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # checkpoint interval of state costs them everything they did in it. And because
   # the checkpoints are `checkpoint_every_ticks` apart, such a restart loop never
   # trips `max_restarts` — it just quietly discards work forever.
-  defp save(city_map) do
-    case snapshot_repository().save(city_map.tick, city_map) do
-      :ok -> :ok
-      {:error, reason} -> log_failed_save(city_map.tick, reason)
+  defp save(city_id, city_map) do
+    case snapshot_repository().save(city_id, city_map.tick, city_map) do
+      :ok ->
+        :ok
+
+      # Not a failure — the adapter refused to move the city backwards. Worth a warning
+      # rather than silence, because reaching here means this engine hydrated from an
+      # older snapshot than the one stored: a crash-and-replay, which is the exact case
+      # the guarantee exists for and the only signal that it happened.
+      {:stale, stored_tick} ->
+        Logger.warning(
+          "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
+            "a newer snapshot at tick #{stored_tick} is already stored"
+        )
+
+      {:error, reason} ->
+        log_failed_save(city_map.tick, reason)
     end
   rescue
     # Both shipped adapters honour the port's `{:error, term()}`. These two clauses
@@ -305,8 +461,25 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
-  defp broadcast(message) do
-    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @simulation_topic, message)
+  defp broadcast(city_id, message) do
+    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, topic(city_id), message)
+  end
+
+  # Two distinct config keys share this one timer mechanism, deliberately: the
+  # pre-attach linger (handle_continue(:hydrate, ...)) absorbs the gap before a dead
+  # render's live mount attaches, and the post-:DOWN linger (handle_info({:DOWN,
+  # ...}), above) absorbs a page reload after a viewer has actually been present.
+  # Those are different windows with different costs to getting wrong, hence
+  # separate keys rather than one - see handle_continue(:hydrate, ...)'s comment.
+  defp arm_linger(config_key, default_ms) do
+    Process.send_after(self(), :linger_expired, config(config_key, default_ms))
+  end
+
+  defp cancel_linger(nil), do: nil
+
+  defp cancel_linger(timer) do
+    Process.cancel_timer(timer)
+    nil
   end
 
   # Both adapters are resolved per call so tests can inject stubs and the

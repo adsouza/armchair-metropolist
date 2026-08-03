@@ -17,6 +17,8 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
   @app_keys [
     :start_repo,
     :start_shutdown_manager,
+    :start_reaper,
+    :desktop_city_id,
     :snapshot_repository,
     :notifier,
     :snapshot_dir
@@ -97,6 +99,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
 
       assert Application.get_env(:armchair_metropolist, :start_repo) == false
       assert Application.get_env(:armchair_metropolist, :start_shutdown_manager) == true
+      assert Application.get_env(:armchair_metropolist, :start_reaper) == false
       assert Application.get_env(:armchair_metropolist, :snapshot_repository) == FileSnapshotStore
       assert Application.get_env(:armchair_metropolist, :notifier) == TauriNotifier
       assert is_binary(Application.get_env(:armchair_metropolist, :snapshot_dir))
@@ -108,7 +111,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
       endpoint = Application.get_env(:armchair_metropolist, @endpoint_key)
 
       assert Keyword.fetch!(endpoint, :check_origin) == false,
-             "an ephemeral per-launch port cannot be whitelisted, so this must be off"
+             "an ephemeral per-launch port cannot be allowlisted, so this must be off"
 
       assert endpoint |> Keyword.fetch!(:http) |> Keyword.fetch!(:ip) == {127, 0, 0, 1},
              "loopback only is what makes check_origin: false a safe trade"

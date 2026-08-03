@@ -61,6 +61,17 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.Config do
   defp do_apply do
     Application.put_env(:armchair_metropolist, :start_repo, false)
     Application.put_env(:armchair_metropolist, :start_shutdown_manager, true)
+    Application.put_env(:armchair_metropolist, :start_reaper, false)
+
+    # The desktop application has one city. SimulatorLive.mount/3 checks this key
+    # before it ever looks at the session, so a desktop launch always opens this
+    # city regardless of whatever city_id its (unused, but still present) browser
+    # session happens to carry — the window's own webview still goes through the
+    # same :browser pipeline as a server request, so EnsureCityId still populates
+    # one. It also suppresses the browser target's re-entry code in the UI, which
+    # would otherwise show a value that changes every launch and addresses nothing
+    # on a single-user app.
+    Application.put_env(:armchair_metropolist, :desktop_city_id, "desktop")
 
     Application.put_env(
       :armchair_metropolist,
@@ -102,7 +113,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.Config do
       |> Keyword.put(:http, http)
       |> Keyword.put(:url, host: "127.0.0.1", port: port(), scheme: "http")
       # Origin checking cannot be pinned when the Tauri host picks a fresh
-      # ephemeral port per launch: there is no host:port pair to whitelist. Left
+      # ephemeral port per launch: there is no host:port pair to allowlist. Left
       # on, it rejected the LiveView socket on every launch and the UI rendered
       # and then sat on "attempting to reconnect".
       |> Keyword.put(:check_origin, false)

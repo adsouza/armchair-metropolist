@@ -2,24 +2,34 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   @moduledoc """
   LiveView tests for the city dashboard.
 
-  `async: false`: the engine is a singleton registered under its module name
-  and these tests inject application-env stub adapters, same as
-  `city_engine_test.exs`. The test environment does not start the engine
-  itself (`start_simulation: false` in `config/test.exs`, so it does not
-  collide with `start_supervised!`/the Ecto sandbox), so each test starts its
-  own `CityEngine` pointed at the in-memory `StubSnapshotRepository`.
+  `async: false`: these tests inject application-env stub adapters, same as
+  `city_engine_test.exs`, which is process-global. The test environment does not
+  start the engine itself (`start_simulation: false` in `config/test.exs`, so it
+  does not collide with `start_supervised!`/the Ecto sandbox), so each test starts
+  its own `CityEngine` pointed at the in-memory `StubSnapshotRepository`, addressed
+  at `CityEngine.default_city_id/0` — a stable constant with no production reader,
+  kept only so a test can pin one value in one place. `mount/3` itself reads the
+  session, so this same value is written into `conn`'s session below; the view and
+  the test agree on which city they are looking at because both were told to, not
+  because `mount/3` derives it from this constant itself.
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.StubSnapshotRepository
 
-  setup do
+  # The topic for the city id this test's session (below) pins the view to —
+  # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
+  @topic CityEngine.topic(CityEngine.default_city_id())
+
+  setup %{conn: conn} do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -33,9 +43,32 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     start_supervised!(StubSnapshotRepository)
     StubSnapshotRepository.set_initial({:error, :not_found})
-    start_supervised!(CityEngine)
+    start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
-    :ok
+    # Every test but the two-visitor one below shares this session's city id with
+    # `start_supervised!`'s engine above, exactly as a single shared deployment did
+    # before Task 4. Without this, EnsureCityId (router.ex) would hand each `conn` its
+    # own random id, mount/3 would open an engine the DynamicSupervisor owns instead of
+    # this test's `start_supervised!`, and it would outlive the test that opened it.
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => CityEngine.default_city_id()})
+
+    # The two-visitor test below still mounts two more cities through the production
+    # ensure_started/1 path rather than start_supervised!/1, so nothing but this stops
+    # them. ExUnit tears down `start_supervised!`'s "default" engine above before
+    # on_exit callbacks run, so anything this sweep finds is one of those two leaks —
+    # left running, each would sit subscribed to the global "city_tick" topic for
+    # engine_linger_ms (30s in prod, unset here) and could checkpoint into whatever
+    # :snapshot_repository a later test configures. Same problem and same fix as
+    # city_engine_test.exs's "freezing when the last viewer leaves" describe block.
+    on_exit(fn ->
+      CityRegistry.Registry
+      |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+      |> Enum.each(fn {_city_id, pid} ->
+        capture_log(fn -> DynamicSupervisor.terminate_child(CityRegistry.Supervisor, pid) end)
+      end)
+    end)
+
+    {:ok, conn: conn}
   end
 
   test "renders the grid and the legend", %{conn: conn} do
@@ -58,7 +91,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     for {x, y} <- [{4, 5}, {6, 7}] do
       Phoenix.PubSub.broadcast(
         ArmchairMetropolist.PubSub,
-        "city_simulation",
+        @topic,
         {:city_node_placed, Node.new(x, y, :power_plant)}
       )
     end
@@ -70,7 +103,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_delta, %{"4:5" => degraded}}
     )
 
@@ -87,6 +120,59 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   defp rendered_node(html, dom_id) do
     [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
     String.slice(tail, 0, 160)
+  end
+
+  test "two visitors with different sessions get different cities", %{conn: conn} do
+    a = Plug.Test.init_test_session(conn, %{"city_id" => "aaaaaaaaaaaaaaaaaaaaaa"})
+    b = Plug.Test.init_test_session(conn, %{"city_id" => "bbbbbbbbbbbbbbbbbbbbbb"})
+
+    {:ok, view_a, _html} = live(a, ~p"/")
+    {:ok, view_b, _html} = live(b, ~p"/")
+
+    render_click(view_a, "place", %{"x" => "3", "y" => "4"})
+
+    # The positive case first, so the refute below cannot be vacuous.
+    assert render(view_a) =~ ~s{id="3:4"}
+    refute render(view_b) =~ ~s{id="3:4"}
+  end
+
+  test "the desktop target uses its configured city id and hides the re-entry code",
+       %{conn: conn} do
+    # Regression for Important finding 6: :desktop_city_id used to be read only from
+    # mount/3's session-less fallback clause, which the desktop's own requests never
+    # reached - the desktop window's page load goes through the same :browser
+    # pipeline as a server request, so EnsureCityId always populates a session, and
+    # the session-first clause always matched instead. Checked *before* the session
+    # is what makes the pin real.
+    desktop_city_id = "desktopdesktopdesktopd"
+    previous = Application.get_env(:armchair_metropolist, :desktop_city_id)
+    on_exit(fn -> Application.put_env(:armchair_metropolist, :desktop_city_id, previous) end)
+    Application.put_env(:armchair_metropolist, :desktop_city_id, desktop_city_id)
+
+    # A session carrying a *different* city id, as any ordinary browser request
+    # would present - proving the desktop id wins over it, not merely that it works
+    # when there is nothing to conflict with.
+    session_city_id = "aaaaaaaaaaaaaaaaaaaaaa"
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => session_city_id})
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_click(view, "place", %{"x" => "3", "y" => "4"})
+
+    # The city actually mounted is the desktop one, not the session's - checked via
+    # CityEngine directly rather than the rendered HTML, because @city_id is not
+    # itself shown anywhere once the re-entry block (asserted absent below) is
+    # hidden.
+    assert {:ok, %{city_map: desktop_map}} = CityEngine.snapshot(desktop_city_id)
+    assert CityMap.occupied?(desktop_map, 3, 4)
+
+    assert {:ok, %{city_map: session_map}} = CityEngine.snapshot(session_city_id)
+    refute CityMap.occupied?(session_map, 3, 4)
+
+    # The desktop UI has no "elsewhere" to return to a code from, and the id is a
+    # fixed constant rather than something worth revealing - so this block must not
+    # render at all, not merely render a value nobody asked for.
+    refute render(view) =~ "Return to it elsewhere with code"
   end
 
   test "clicking a cell places infrastructure", %{conn: conn} do
@@ -130,7 +216,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_node_placed, node}
     )
 
@@ -141,7 +227,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_node_removed, "6:6"}
     )
 

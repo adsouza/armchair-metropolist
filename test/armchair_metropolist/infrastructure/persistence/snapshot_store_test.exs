@@ -5,36 +5,33 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
 
   use ArmchairMetropolist.SnapshotRepositoryContract, adapter: SnapshotStore
 
-  test "breaks a tick tie deterministically, newest row winning" do
-    # A crashed-and-replayed engine can write two rows at the same tick with
-    # different content. `desc: tick` alone leaves the winner unspecified.
-    :ok = SnapshotStore.save(5, CityMap.new(11, 11))
-    :ok = SnapshotStore.save(5, CityMap.new(22, 22))
+  test "load/1 does not see another city's snapshot" do
+    assert :ok = SnapshotStore.save("city-a", 5, CityMap.new(12, 12))
 
-    assert {:ok, {5, loaded}} = SnapshotStore.load_latest()
-    assert loaded.width == 22, "the later row at the same tick must win"
+    assert {:error, :not_found} = SnapshotStore.load("city-b")
   end
 
   test "detects a corrupted payload" do
-    :ok = SnapshotStore.save(1, sample_city())
+    :ok = SnapshotStore.save(@city_id, 1, sample_city())
 
     Repo.one(CitySnapshot)
     |> Ecto.Changeset.change(checksum: "DEADBEEF")
     |> Repo.update!()
 
-    assert {:error, :checksum_mismatch} = SnapshotStore.load_latest()
+    assert {:error, :checksum_mismatch} = SnapshotStore.load(@city_id)
   end
 
-  test "save/2 returns an error rather than raising when the database rejects the write" do
+  test "save/3 returns an error rather than raising when the database rejects the write" do
     # Repo.insert/1 raises Postgrex.Error on a missing table, which used to escape
     # into CityEngine.handle_info/2 and restart the engine. The DROP is inside the
     # sandbox transaction, so it is rolled back when this test ends.
     Repo.query!("DROP TABLE city_snapshots")
 
-    assert {:error, %Postgrex.Error{}} = SnapshotStore.save(1, sample_city())
+    assert {:error, %Postgrex.Error{}} = SnapshotStore.save(@city_id, 1, sample_city())
   end
 
-  test "save/2 returns an error rather than raising when the changeset is invalid" do
-    assert {:error, %Ecto.Changeset{valid?: false}} = SnapshotStore.save(nil, sample_city())
+  test "save/3 returns an error rather than raising when the changeset is invalid" do
+    assert {:error, %Ecto.Changeset{valid?: false}} =
+             SnapshotStore.save(@city_id, nil, sample_city())
   end
 end

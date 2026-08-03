@@ -49,7 +49,24 @@ config :armchair_metropolist,
   grid_width: 40,
   grid_height: 30,
   tick_interval_ms: 1000,
-  checkpoint_every_ticks: 50
+  # How long an engine stays alive after its last viewer disconnects. A page reload
+  # disconnects and reconnects within a second, so stopping immediately would make
+  # every refresh pay a save, a process death, a restart and a hydrate.
+  engine_linger_ms: 30_000,
+  # How long an engine started by a dead render (SimulatorLive.do_mount/2 calls
+  # CityEngine.snapshot/1 before connected?(socket) is true) stays alive if no live
+  # mount ever attaches to it. Deliberately much shorter than engine_linger_ms
+  # above: EnsureCityId hands every cookieless request its own city id, so without
+  # a short bound here a crawler or scanner sustains one live, ticking engine per
+  # request for the full post-viewer linger. The ordinary live mount that follows a
+  # real dead render attaches within about a second, well inside this window.
+  engine_unattached_linger_ms: 2_000,
+  checkpoint_every_ticks: 50,
+  # Cities nobody has opened in this long are deleted. Generous on purpose: someone
+  # returning after months should still find their city, and one row per city means
+  # storage is not the pressure here — unbounded retention of data keyed to a cookie is.
+  snapshot_retention_days: 90,
+  snapshot_sweep_interval_ms: 24 * 60 * 60 * 1000
 
 # Configure the endpoint
 config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,

@@ -12,5 +12,5 @@ defmodule ArmchairMetropolist.Infrastructure do
       Phoenix.PubSub,
       ExTauri
     ],
-    exports: [Simulation.CityEngine, Persistence.Repo, Desktop.Config]
+    exports: [Simulation.CityEngine, Simulation.CityRegistry, Persistence.Repo, Desktop.Config]
 end

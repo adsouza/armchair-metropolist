@@ -16,6 +16,8 @@ defmodule ArmchairMetropolist.Application do
       ExTauri
     ]
 
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
+
   @impl true
   def start(_type, _args) do
     # MUST run before the child list is built. config/runtime.exs is never
@@ -29,6 +31,7 @@ defmodule ArmchairMetropolist.Application do
     children =
       desktop_children() ++
         repo_children() ++
+        reaper_children() ++
         [
           {DNSCluster,
            query: Application.get_env(:armchair_metropolist, :dns_cluster_query) || :ignore},
@@ -75,18 +78,27 @@ defmodule ArmchairMetropolist.Application do
     end
   end
 
-  # The engine is given a 10s shutdown budget: the 5s default can kill it
-  # mid-write and lose the city it was persisting. The clock starts after the
-  # engine so the first pulse has somewhere to land, but it never references the
-  # engine — a dead engine must not be able to stall the clock.
+  # Server target only, and after the Repo — it queries on boot. The desktop target
+  # has one city that must never be reaped.
+  defp reaper_children do
+    if Application.get_env(:armchair_metropolist, :start_reaper, true) do
+      [ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaper]
+    else
+      []
+    end
+  end
+
+  # The registry and its dynamic supervisor start unconditionally: they hold no
+  # state, and any code path that resolves a city needs them — including tests,
+  # which set `start_simulation: false` and start their own engines. The clock
+  # stays gated because tests drive a fast one.
   defp simulation_children do
+    CityRegistry.children() ++ clock_children()
+  end
+
+  defp clock_children do
     if Application.get_env(:armchair_metropolist, :start_simulation, true) do
-      [
-        Supervisor.child_spec(ArmchairMetropolist.Infrastructure.Simulation.CityEngine,
-          shutdown: 10_000
-        ),
-        ArmchairMetropolist.Infrastructure.Simulation.TickServer
-      ]
+      [ArmchairMetropolist.Infrastructure.Simulation.TickServer]
     else
       []
     end

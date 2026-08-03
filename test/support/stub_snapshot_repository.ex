@@ -13,18 +13,48 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
     Agent.start_link(fn -> %{initial: {:error, :not_found}, saves: []} end, name: __MODULE__)
   end
 
-  @doc "Seed what load_latest/0 will return."
+  @doc "Seed what load/1 will return."
   def set_initial(result), do: Agent.update(__MODULE__, &%{&1 | initial: result})
 
-  @doc "Every {tick, city_map} passed to save/2, newest first."
+  @doc "Every {city_id, tick, city_map} passed to save/3, newest first."
   def saves, do: Agent.get(__MODULE__, & &1.saves)
 
-  @impl true
-  def load_latest, do: Agent.get(__MODULE__, & &1.initial)
+  @doc """
+  Make the next `save/3` refuse with `{:stale, tick}`.
+
+  Only the engine's handling of a refusal needs this; the real adapters' own refusal
+  logic is covered by the shared contract.
+  """
+  def refuse_saves_as_stale(stored_tick) do
+    Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_tick))
+  end
+
+  @doc "Make load/1 return the most recent save/3, as a real adapter would."
+  def echo_saves, do: Agent.update(__MODULE__, &Map.put(&1, :echo, true))
 
   @impl true
-  def save(tick, city_map) do
-    Agent.update(__MODULE__, &%{&1 | saves: [{tick, city_map} | &1.saves]})
-    :ok
+  def load(city_id) do
+    Agent.get(__MODULE__, fn state ->
+      case state do
+        %{echo: true, saves: [{^city_id, tick, city_map} | _]} -> {:ok, {tick, city_map}}
+        _ -> state.initial
+      end
+    end)
+  end
+
+  @impl true
+  def save(city_id, tick, city_map) do
+    # get_and_update/2 rather than a separate get then update: the flag has to be
+    # both read and cleared in one step, or a second save between the two calls
+    # could see a `:stale_at` that a concurrent caller had already consumed.
+    Agent.get_and_update(__MODULE__, fn state ->
+      case Map.get(state, :stale_at) do
+        nil ->
+          {:ok, %{state | saves: [{city_id, tick, city_map} | state.saves]}}
+
+        stored_tick ->
+          {{:stale, stored_tick}, Map.delete(state, :stale_at)}
+      end
+    end)
   end
 end

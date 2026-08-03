@@ -9,16 +9,18 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
   per-request policy, which is why it sits in `.sobelow-conf`'s `ignore`.
 
   `async: false` for the same reason as `simulator_live_test.exs`: rendering `/`
-  mounts the LiveView, which reads from `CityEngine` — a singleton the test
-  environment does not start (`start_simulation: false`), so each test starts its own
-  pointed at the in-memory stub.
+  mounts the LiveView, which reads whatever city id the session below carries and
+  talks to `CityEngine` for it — a process the test environment does not start
+  (`start_simulation: false`), so each test starts its own, pinned to
+  `CityEngine.default_city_id/0` and pointed at the in-memory stub, and pins the
+  session to that same id so the two agree.
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.StubSnapshotRepository
 
-  setup do
+  setup %{conn: conn} do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -32,9 +34,18 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
 
     start_supervised!(StubSnapshotRepository)
     StubSnapshotRepository.set_initial({:error, :not_found})
-    start_supervised!(CityEngine)
+    start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
-    :ok
+    # Every request here is a dead render (`get/2`, never `live/2`), so `connected?`
+    # is always false and `do_mount/2` never reaches the `CityEngine.attach/2` call —
+    # the engine it starts via `CityEngine.snapshot/1` gets no viewer to monitor, so the
+    # freeze-after-linger machinery in city_engine.ex never arms and it would run
+    # forever. Pinning the session to the same id `start_supervised!` above already
+    # owns, rather than leaving EnsureCityId (router.ex) to hand this conn a fresh
+    # random one, means this test's engine is the one ExUnit tears down for us.
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => CityEngine.default_city_id()})
+
+    {:ok, conn: conn}
   end
 
   defp policy(conn) do
