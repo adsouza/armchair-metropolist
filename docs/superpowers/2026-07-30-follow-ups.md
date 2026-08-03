@@ -83,9 +83,38 @@ behaviour that contradicts the documentation.
    looks for `burrito_out/desktop_<rustc host triple>`, so a friendly key like `macos_arm` builds
    fine and then dies on `could not copy from "burrito_out/desktop_aarch64-apple-darwin"`.
 
-**Linux binaries still need a Linux runner.** Cross-compilation from macOS fails as above; the
-targets are declared and their ERTS URLs verified, so a Linux CI runner with Zig should work
-unchanged.
+**Linux bundles now build in CI — proven 2026-08-03.** Cross-compilation from macOS still fails as
+above, so each arch builds on its own runner. The `desktop` job in `.github/workflows/ci.yml` runs
+`mix ex_tauri.build --ci --bundles deb` on x86_64 for pushes to `main`, and publishes a 23 MB `.deb`
+as `desktop-bundle-x86_64-unknown-linux-gnu`. Design and rationale:
+`docs/superpowers/specs/2026-08-02-linux-desktop-bundle-design.md`.
+
+Measured: 374 s for the whole job, 240 s of it `mix ex_tauri.build` (the Rust release compile reports
+`Finished in 4m 03s` inside that), 66 s of apt. The sidecar installs to `usr/bin/desktop` and the
+Tauri host to `usr/bin/armchair_metropolist`.
+
+**The trap that cost the first run.** The apt list was derived by enumerating every
+`[package.metadata.system-deps]` table and `pkg_config` probe in the 338-crate Linux tree — and that
+method structurally cannot find one of the requirements. `libayatana-appindicator3-dev` is needed by
+the **Tauri CLI**, which we download as a prebuilt binary and which is therefore absent from
+`Cargo.lock`: `pkgconfig_utils::get_appindicator_library_path`
+(`crates/tauri-cli/src/interface/rust.rs:1711-1722`) shells out to `pkg-config` for
+`ayatana-appindicator3-0.1`, falls back to `appindicator3-0.1`, and panics with `Can't detect any
+appindicator library` when neither `.pc` file exists. The compile succeeded and the *bundler*
+aborted with exit 134. `libappindicator-sys` 0.9 having no `build.rs` is true and irrelevant — it
+describes compiling, not bundling. **Enumerate build inputs by process, not by dependency graph.**
+
+**Two further things worth knowing before you touch this.** Tauri appends its own deb dependencies
+to whatever `tauri.conf.json` declares (`rust.rs:1426`, `:1443`, `:1444`), so `libwebkit2gtk-4.1-0`
+appears twice in the shipped `Depends:` and `libayatana-appindicator3-1` is a hard dependency
+regardless of our `recommends`. Only `libc6 (>= 2.39)` is genuinely ours, and it encodes the real
+constraint: the `.deb` inherits the runner's glibc, so it installs on Ubuntu 24.04+ and Debian 13+
+but not Debian 12 (glibc 2.36). Tauri also names `libgtk-3-0` directly, which resolves anyway
+because `libgtk-3-0t64` declares `Provides: libgtk-3-0`.
+
+**Also: arm64 gets no bundle.** Tauri publishes no prebuilt `cargo-tauri` for
+`aarch64-unknown-linux-gnu`, so that leg would need a multi-minute `cargo install` on top of the Rust
+build. It still produces a sidecar.
 
 ### CRITICAL: a production Burrito binary unpacks its payload once, then never again
 
@@ -259,34 +288,23 @@ install time. **If the installer is ever re-run, verify the injection survived**
 release silently reverts to the server defaults (Postgres, `LogNotifier`, no bounded drain). It
 fails loudly on missing `DATABASE_URL` rather than losing data.
 
-## Worth doing
+## Worth doing — all resolved, verified 2026-08-03
 
-**Merge the two contract modules.** The descending-tick ordering cases live in
-`test/support/snapshot_repository_ordering_contract.ex` rather than
-`snapshot_repository_contract.ex`, because the latter contains `use Boundary` and the fix wave was
-barred from editing boundary files. **A new `SnapshotRepository` adapter must currently `use` both
-modules or it will silently skip the ordering guarantees.** Mechanical merge.
+Every item this section listed has since been done. Checked individually rather than assumed, because
+a standing record that still says "todo" for finished work misleads exactly the reader it is for:
 
-**Delete unused generated components — this is what caps the coverage gate.** `CoreComponents`
-sits at 16.67% and is the single largest reason the honest threshold is 70% rather than the spec's
-90%. `input/1`, `header/1`, `table/1` and `list/1` are referenced nowhere. Removing ~250 lines of
-unreferenced generated code would let the threshold rise substantially. Also unused:
-`config :armchair_metropolist, dev_routes: true` (no reader — the router has no dev scope) and the
-empty `priv/repo/seeds.exs` stub, still run by the `ecto.setup` alias.
+* **Merge the two contract modules** — `snapshot_repository_ordering_contract.ex` no longer exists;
+  its ordering cases live in `snapshot_repository_contract.ex`.
+* **Delete unused generated components** — `input/1`, `header/1`, `table/1` and `list/1` are gone from
+  `CoreComponents`, which now reports 100% coverage rather than the 16.67% that capped the gate.
+* **Add `UseCases.SummarizeCity`** — `lib/armchair_metropolist/use_cases/summarize_city.ex`, at 100%.
+* **Strip the Phoenix scaffolding branding** — no references remain in `layouts.ex` or
+  `root.html.heex`.
+* **Add a formatting gate** — `mix.exs:601`, `"format --check-formatted"` heads the `check:` alias.
+* **`dev_routes` and the empty `seeds.exs`** — both removed.
 
-**Add `UseCases.SummarizeCity`.** `CityEngine.snapshot/0` returns metrics whose `resources` map is
-empty until the first tick, and whose counters lag a place/demolish by up to one tick. The cause
-is structural and correct: `Infrastructure` is deliberately barred from `Domain.Services`, so the
-engine cannot compute resource stats. A read-only use case is the designed fix — `UseCases` *may*
-reach `Domain.Services`. `SimulatorLive` currently handles the empty case with a placeholder.
-
-**Strip the Phoenix scaffolding branding.** `Layouts.app` still renders the Phoenix logo, a version
-badge and Website/GitHub/Get Started links; `root.html.heex` titles the app
-"· Phoenix Framework". This shows in the native desktop window.
-
-**Add a formatting gate.** `mix format --check-formatted` fails on 8 files. `mix check` has no
-format step, and the `precommit` alias runs `format` (which rewrites) rather than
-`--check-formatted` (which fails), so drift ships silently.
+The coverage figure in this document's header is also stale: the suite is now 198 tests (5 properties,
+193 tests) at 94.50%.
 
 ## Known limitations, accepted
 
