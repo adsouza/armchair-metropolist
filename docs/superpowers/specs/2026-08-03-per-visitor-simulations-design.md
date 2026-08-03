@@ -181,8 +181,30 @@ among. Keeping the old name would preserve a claim the storage no longer makes.
 * `tick`, `payload`, `checksum` as today
 * `timestamps()`, with an index on `updated_at` for the reaper (§8)
 
-`SnapshotStore.save/3` uses `Repo.insert/2` with `on_conflict: :replace_all, conflict_target: :city_id`.
-The `desc: s.id` tiebreaker disappears along with the rows it disambiguated.
+`SnapshotStore.save/3` upserts on `city_id`, and the `desc: s.id` tiebreaker disappears along with
+the rows it disambiguated.
+
+**But the upsert is guarded, and the refusal is reportable.** An unconditional upsert would be
+last-write-wins, which silently drops something the append-only layout provided: ordering on tick
+rather than on write time meant a crashed engine that hydrated from an older snapshot could not
+overwrite newer work. `docs/superpowers/2026-07-30-follow-ups.md` records that scenario. So the port
+is:
+
+```elixir
+@callback save(String.t(), non_neg_integer(), CityMap.t()) ::
+            :ok | {:stale, non_neg_integer()} | {:error, term()}
+```
+
+`{:stale, stored_tick}` means the write was declined because a snapshot at that tick or later is
+already stored. It is deliberately not an `{:error, …}`: the engine must log it differently, because a
+refusal means the data was *protected* where a failure means it was lost. Both adapters honour it —
+the Postgres one by a locked read-then-write inside a transaction (a query-based `on_conflict` would
+refuse just as well but could not report having done so), the file one by declining before it rotates
+its primary out to backup.
+
+This also keeps the two adapters honouring one contract, which an unconditional upsert would have
+broken: `FileSnapshotStore.load/1` reads both its files and takes the higher tick, so it satisfies the
+guarantee whatever the write order — the Postgres adapter had to be made to.
 
 **The existing city is preserved, not dropped.** The migration copies the highest-tick existing row
 into a well-known city id (`"legacy"`), so whatever has been built on the deployed instance stays

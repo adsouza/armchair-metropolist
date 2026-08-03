@@ -72,6 +72,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @default_grid_width 40
   @default_grid_height 30
   @default_checkpoint_every_ticks 50
+  @default_city_id "default"
 
   # Satisfaction below this counts as a critical deficit. See the moduledoc.
   @critical_satisfaction 1.0
@@ -104,19 +105,25 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def demolish(x, y), do: GenServer.call(__MODULE__, {:demolish, x, y})
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     # Mandatory. Without this the supervisor's shutdown signal kills the process
     # immediately, terminate/2 never runs, and unsaved state is lost.
     Process.flag(:trap_exit, true)
 
     :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @tick_topic)
 
-    {:ok, %{city_map: nil, metrics: nil, critical?: false}, {:continue, :hydrate}}
+    # Task 2 makes this process addressable by this id. For now it is a singleton that
+    # simply knows which row it owns, which is what lets the port change land on its
+    # own and be tested on its own.
+    city_id = Keyword.get(opts, :city_id, @default_city_id)
+
+    {:ok, %{city_id: city_id, city_map: nil, metrics: nil, critical?: false},
+     {:continue, :hydrate}}
   end
 
   @impl true
   def handle_continue(:hydrate, state) do
-    city_map = load_city_map()
+    city_map = load_city_map(state.city_id)
 
     {:noreply, %{state | city_map: city_map, metrics: summarize(city_map)}}
   end
@@ -164,7 +171,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
     broadcast({:city_delta, delta})
     broadcast({:city_metrics, metrics})
-    maybe_checkpoint(city_map)
+    maybe_checkpoint(state.city_id, city_map)
     critical? = notify_deficits(metrics, state.critical?)
 
     {:noreply, %{state | city_map: city_map, metrics: metrics, critical?: critical?}}
@@ -180,14 +187,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @impl true
   def terminate(_reason, %{city_map: nil}), do: :ok
 
-  # `save/1` swallows and logs every failure, so a broken repository cannot stall
+  # `save/2` swallows and logs every failure, so a broken repository cannot stall
   # or abort shutdown here — the process still exits within its 10s budget.
   def terminate(_reason, state) do
-    save(state.city_map)
+    save(state.city_id, state.city_map)
   end
 
-  defp load_city_map do
-    case snapshot_repository().load_latest() do
+  defp load_city_map(city_id) do
+    case snapshot_repository().load(city_id) do
       {:ok, {_stored_tick, city_map}} ->
         # The stored tick is only the repository's ordering key, and it is
         # written from city_map.tick; the map itself carries the authority.
@@ -218,11 +225,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     )
   end
 
-  defp maybe_checkpoint(city_map) do
+  defp maybe_checkpoint(city_id, city_map) do
     every = config(:checkpoint_every_ticks, @default_checkpoint_every_ticks)
 
     if checkpoint?(city_map.tick, every) do
-      save(city_map)
+      save(city_id, city_map)
     else
       :ok
     end
@@ -234,7 +241,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # a far worse failure than not checkpointing.
   #
   # The `tick > 0` test matches the spec literally. It is also unreachable by
-  # construction: maybe_checkpoint/1 only ever sees the map *after*
+  # construction: maybe_checkpoint/2 only ever sees the map *after*
   # AdvanceCityTick has run, so the tick is always >= 1. It stays as a guard
   # against a future caller that checkpoints a freshly hydrated city.
   defp checkpoint?(tick, every) when is_integer(every) and every > 0 do
@@ -250,8 +257,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # checkpoint interval of state costs them everything they did in it. And because
   # the checkpoints are `checkpoint_every_ticks` apart, such a restart loop never
   # trips `max_restarts` — it just quietly discards work forever.
-  defp save(city_map) do
-    case snapshot_repository().save(city_map.tick, city_map) do
+  defp save(city_id, city_map) do
+    case snapshot_repository().save(city_id, city_map.tick, city_map) do
       :ok -> :ok
       {:error, reason} -> log_failed_save(city_map.tick, reason)
     end

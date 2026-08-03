@@ -7,20 +7,16 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
 
   ## Ordering: highest tick wins
 
-  `load_latest/0` reads *both* files and returns whichever holds the **higher
-  tick**, not whichever was written most recently. This matches `SnapshotStore`,
-  whose `order_by: [desc: s.tick]` has always meant highest-tick-wins, and it
-  matches the port's intent: `save/2` takes the tick precisely so storage can
-  order by it.
+  `load_current/0` reads *both* files and returns whichever holds the **higher
+  tick**, not whichever was written most recently. This matches the port's
+  intent: `save/3` takes the tick precisely so storage can order by it.
 
-  Correspondingly, `save/2` **refuses to demote**. A save whose tick is *older*
+  Correspondingly, `save_current/2` **refuses to demote**. A save whose tick is *older*
   than the tick already stored in the primary is accepted and reported `:ok`, but
   it neither replaces the primary nor rotates the backup. `:ok` rather than an
   error is deliberate: the caller asked for its state to be persisted and a
   strictly newer state already is, so nothing has gone wrong and nothing needs
-  logging. It also keeps the two adapters interchangeable — `SnapshotStore`
-  likewise answers `:ok` for a stale insert, because the row lands in the table
-  but `load_latest/0` will never order it first.
+  logging.
 
   Equal ticks *do* overwrite, so re-saving the current tick behaves as a plain
   update rather than being silently dropped.
@@ -46,8 +42,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   @backup_filename "snapshot.bak"
   @tmp_filename "snapshot.tmp"
 
+  # The city id is accepted and ignored. This adapter backs the desktop target, which
+  # has exactly one city and one pair of files; honouring the id would mean a file per
+  # city for a application that can only ever show one. The port's shape is shared, the
+  # semantics are not.
   @impl true
-  def load_latest do
+  def load(_city_id), do: load_current()
+
+  @impl true
+  def save(_city_id, tick, city_map), do: save_current(tick, city_map)
+
+  def load_current do
     # Mandatory before any `:safe` decode below, and the reason is not obvious —
     # see SnapshotVocabulary. Without it a saved city is discarded in silence.
     SnapshotVocabulary.ensure_loaded!()
@@ -68,8 +73,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
     end
   end
 
-  @impl true
-  def save(tick, city_map) do
+  def save_current(tick, city_map) do
     if stale?(tick) do
       # A strictly newer city is already stored. See "Ordering" above.
       :ok

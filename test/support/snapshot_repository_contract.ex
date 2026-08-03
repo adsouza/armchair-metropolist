@@ -30,6 +30,7 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
       alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
 
       @adapter unquote(adapter)
+      @city_id "contract-city"
 
       defp sample_city do
         CityMap.new(40, 30)
@@ -38,32 +39,32 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
       end
 
       test "returns :not_found when nothing is stored" do
-        assert {:error, :not_found} = @adapter.load_latest()
+        assert {:error, :not_found} = @adapter.load(@city_id)
       end
 
       test "round-trips a city map" do
         city = sample_city()
-        assert :ok = @adapter.save(7, city)
-        assert {:ok, {7, loaded}} = @adapter.load_latest()
+        assert :ok = @adapter.save(@city_id, 7, city)
+        assert {:ok, {7, loaded}} = @adapter.load(@city_id)
         assert loaded == city
       end
 
       test "returns the most recent snapshot" do
-        assert :ok = @adapter.save(1, sample_city())
-        assert :ok = @adapter.save(9, CityMap.new(10, 10))
-        assert {:ok, {9, loaded}} = @adapter.load_latest()
+        assert :ok = @adapter.save(@city_id, 1, sample_city())
+        assert :ok = @adapter.save(@city_id, 9, CityMap.new(10, 10))
+        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 10
       end
 
-      test "save/2 returns bare :ok, not {:ok, id}" do
-        assert :ok === @adapter.save(3, sample_city())
+      test "save/3 returns bare :ok, not {:ok, id}" do
+        assert :ok === @adapter.save(@city_id, 3, sample_city())
       end
 
-      test "load_latest/0 returns the highest tick, not the last written" do
-        assert :ok = @adapter.save(9, CityMap.new(19, 19))
-        assert :ok = @adapter.save(1, CityMap.new(11, 11))
+      test "load/1 returns the highest tick, not the last written" do
+        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
+        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
 
-        assert {:ok, {9, loaded}} = @adapter.load_latest()
+        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
       end
 
@@ -71,12 +72,26 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
         # Two stale saves in a row must not walk a newer snapshot out of storage,
         # however many times they happen. On a last-write-wins file adapter the
         # second one also overwrote the backup, losing the tick-9 city for good.
-        assert :ok = @adapter.save(9, CityMap.new(19, 19))
-        assert :ok = @adapter.save(0, CityMap.new(40, 30))
-        assert :ok = @adapter.save(0, CityMap.new(40, 30))
+        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
+        assert :ok = @adapter.save(@city_id, 0, CityMap.new(40, 30))
+        assert :ok = @adapter.save(@city_id, 0, CityMap.new(40, 30))
 
-        assert {:ok, {9, loaded}} = @adapter.load_latest()
+        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
+      end
+
+      test "load/1 does not see another city's snapshot" do
+        assert :ok = @adapter.save("city-a", 5, CityMap.new(12, 12))
+
+        assert {:error, :not_found} = @adapter.load("city-b")
+      end
+
+      test "save/3 overwrites the same city rather than accumulating" do
+        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+        assert :ok = @adapter.save(@city_id, 2, CityMap.new(12, 12))
+
+        assert {:ok, {2, loaded}} = @adapter.load(@city_id)
+        assert loaded.width == 12
       end
     end
   end

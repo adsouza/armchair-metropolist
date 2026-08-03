@@ -2,13 +2,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   @moduledoc """
   Ecto/Postgres adapter implementing the SnapshotRepository port.
 
-  Snapshots are append-only; `load_latest/0` orders by `desc: tick`, so **the
-  highest tick wins** rather than the most recent insert. `FileSnapshotStore`
-  documents the same rule, which is what makes the two interchangeable.
+  One row per city, keyed by `city_id`, upserted on every save.
 
   ## Failures are returned, never raised
 
-  `save/2` catches the database talking back. `Repo.insert/1` already answers
+  `save/3` catches the database talking back. `Repo.insert/1` already answers
   `{:error, changeset}` for a rejected changeset, but a dead connection, a
   checkout timeout or a missing table *raise* (`DBConnection.ConnectionError`,
   `Postgrex.Error`) and an exhausted pool `exit`s. Left alone, any of those blew
@@ -20,23 +18,16 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
-  import Ecto.Query
-
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo, SnapshotVocabulary}
 
   @impl true
-  def load_latest do
+  def load(city_id) do
     # Mandatory before decode/3's `:safe` call — see SnapshotVocabulary. This adapter
     # has no rescue, so without it the ArgumentError escapes CityEngine's hydration
     # and the engine crash-loops.
     SnapshotVocabulary.ensure_loaded!()
 
-    # `desc: s.id` breaks ties deterministically. An engine that crashes and
-    # replays can write two rows at the same tick with different content, and
-    # `desc: s.tick` alone leaves which one wins unspecified.
-    query = from(s in CitySnapshot, order_by: [desc: s.tick, desc: s.id], limit: 1)
-
-    case Repo.one(query) do
+    case Repo.get(CitySnapshot, city_id) do
       nil ->
         {:error, :not_found}
 
@@ -46,16 +37,28 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   end
 
   @impl true
-  def save(tick, city_map) do
+  def save(city_id, tick, city_map) do
     payload = :erlang.term_to_binary(city_map, [:compressed])
     checksum = :crypto.hash(:md5, payload) |> Base.encode16()
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
+    # An explicit `set:` rather than `on_conflict: :replace_all`, for two reasons:
+    # :replace_all would also overwrite inserted_at, losing when the city was first
+    # created; and updated_at must move on every save because the reaper sweeps on it.
     %CitySnapshot{}
-    |> CitySnapshot.changeset(%{tick: tick, payload: payload, checksum: checksum})
-    |> Repo.insert()
+    |> CitySnapshot.changeset(%{
+      city_id: city_id,
+      tick: tick,
+      payload: payload,
+      checksum: checksum
+    })
+    |> Repo.insert(
+      on_conflict: [set: [tick: tick, payload: payload, checksum: checksum, updated_at: now]],
+      conflict_target: :city_id
+    )
     |> case do
       {:ok, _snapshot} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:error, changeset} -> {:error, changeset}
     end
   rescue
     # Postgrex.Error, DBConnection.ConnectionError, and anything else the driver

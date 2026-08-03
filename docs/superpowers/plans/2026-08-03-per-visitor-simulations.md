@@ -90,13 +90,22 @@ Replace the two callbacks in `snapshot_repository.ex`. Keep the existing moduled
               {:ok, {non_neg_integer(), CityMap.t()}} | {:error, term()}
 
   @doc """
-  Persist `city_map` under `city_id`. Overwrites whatever was there.
+  Persist `city_map` under `city_id`.
 
-  `tick` is passed separately because it is the adapter's business what to do
-  with it — the Postgres adapter stores it as a column, and the file adapter puts
-  it in its envelope. `city_map` carries the authoritative tick regardless.
+  Returns `{:stale, stored_tick}` and writes nothing when a snapshot at `tick` or
+  later is already stored. **That is not an error.** It is the guarantee that a
+  crashed engine which hydrated from an older snapshot cannot overwrite newer work
+  with older — the case `docs/superpowers/2026-07-30-follow-ups.md` records, and the
+  one the previous append-only layout protected against by ordering on tick rather
+  than on write time. Adapters must honour it; callers rely on a save never moving a
+  city backwards.
+
+  `tick` is passed separately because it is the adapter's business what to do with
+  it — the Postgres adapter stores it as a column, and the file adapter puts it in
+  its envelope. `city_map` carries the authoritative tick regardless.
   """
-  @callback save(String.t(), non_neg_integer(), CityMap.t()) :: :ok | {:error, term()}
+  @callback save(String.t(), non_neg_integer(), CityMap.t()) ::
+              :ok | {:stale, non_neg_integer()} | {:error, term()}
 ```
 
 - [ ] **Step 2: Write the migration**
@@ -203,25 +212,45 @@ and add `:city_id` to both `cast/3` and `validate_required/2`.
   def save(city_id, tick, city_map) do
     payload = :erlang.term_to_binary(city_map, [:compressed])
     checksum = :crypto.hash(:md5, payload) |> Base.encode16()
-    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
-    # An explicit `set:` rather than `on_conflict: :replace_all`, for two reasons:
-    # :replace_all would also overwrite inserted_at, losing when the city was first
-    # created; and updated_at must move on every save because the reaper sweeps on it.
-    %CitySnapshot{}
-    |> CitySnapshot.changeset(%{
-      city_id: city_id,
-      tick: tick,
-      payload: payload,
-      checksum: checksum
-    })
-    |> Repo.insert(
-      on_conflict: [set: [tick: tick, payload: payload, checksum: checksum, updated_at: now]],
-      conflict_target: :city_id
-    )
+    # Read-then-write in a transaction, rather than a query-based `on_conflict` with a
+    # `where: s.tick < ^tick`. The SQL form is terser and refuses the stale write just
+    # as well, but it gives no way to tell a refused update from an applied one — and
+    # the port requires the refusal be *reportable*, not merely effective.
+    #
+    # `FOR UPDATE` is belt-and-braces: the Registry guarantees one engine per city, so
+    # nothing else writes this row. It costs one lock on a once-per-checkpoint write and
+    # removes the need to reason about that guarantee holding forever.
+    Repo.transaction(fn ->
+      existing = Repo.one(from(s in CitySnapshot, where: s.city_id == ^city_id, lock: "FOR UPDATE"))
+
+      case existing do
+        %CitySnapshot{tick: stored} when stored >= tick ->
+          {:stale, stored}
+
+        _ ->
+          changeset =
+            CitySnapshot.changeset(existing || %CitySnapshot{}, %{
+              city_id: city_id,
+              tick: tick,
+              payload: payload,
+              checksum: checksum
+            })
+
+          # Ecto's timestamps() move updated_at on the update path, which is what the
+          # reaper sweeps on. inserted_at is left alone, so a city keeps its creation
+          # time across every later save.
+          result = if existing, do: Repo.update(changeset), else: Repo.insert(changeset)
+
+          case result do
+            {:ok, _snapshot} -> :ok
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+      end
+    end)
     |> case do
-      {:ok, _snapshot} -> :ok
-      {:error, changeset} -> {:error, changeset}
+      {:ok, outcome} -> outcome
+      {:error, reason} -> {:error, reason}
     end
   end
 ```
@@ -238,8 +267,17 @@ Only the arity changes. The id is ignored, with the reason stated:
   @impl true
   def load(_city_id), do: load_current()
 
+  # Honours the port's staleness guarantee by declining the write, where before a stale
+  # save landed on the primary and `load_current/0`'s max_by(tick) simply ignored it.
+  # Observably identical through `load/1`, and strictly better on disk: refusing the
+  # write also leaves the backup in place instead of rotating a newer snapshot out of it.
   @impl true
-  def save(_city_id, tick, city_map), do: save_current(tick, city_map)
+  def save(_city_id, tick, city_map) do
+    case load_current() do
+      {:ok, {stored, _city_map}} when stored >= tick -> {:stale, stored}
+      _ -> save_current(tick, city_map)
+    end
+  end
 ```
 
 Rename the existing `load_latest/0` body to `load_current/0` and the existing `save/2` body to `save_current/2`, leaving their internals — including the primary/backup recovery — untouched.
@@ -282,26 +320,112 @@ and
 ```elixir
   defp save(city_id, city_map) do
     case snapshot_repository().save(city_id, city_map.tick, city_map) do
+      :ok ->
+        :ok
+
+      # Not a failure — the adapter refused to move the city backwards. Worth a warning
+      # rather than silence, because reaching here means this engine hydrated from an
+      # older snapshot than the one stored: a crash-and-replay, which is the exact case
+      # the guarantee exists for and the only signal that it happened.
+      {:stale, stored_tick} ->
+        Logger.warning(
+          "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
+            "a newer snapshot at tick #{stored_tick} is already stored"
+        )
+
+      {:error, reason} ->
+        log_failed_save(city_map.tick, reason)
+    end
+  end
+```
+
+Replace the whole existing `save/1` body with the above — its old two-clause `case` is
+subsumed. The `rescue`/`catch` clauses and `log_failed_save/2` stay exactly as they are.
+
+The original two-clause form, for reference, was:
+
+```elixir
+  defp save(city_map) do
+    case snapshot_repository().save(city_map.tick, city_map) do
+      :ok -> :ok
+      {:error, reason} -> log_failed_save(city_map.tick, reason)
+    end
 ```
 
 Update `save/1`'s three callers (`maybe_checkpoint/1`, `terminate/2`, and the tick handler) to pass `state.city_id`. `save/2`'s `rescue`/`catch` clauses and `log_failed_save/2` keep working unchanged.
 
 - [ ] **Step 7: Update the test doubles and the contract**
 
-`StubSnapshotRepository`: `def load(_city_id), do: Agent.get(__MODULE__, & &1.initial)` and `def save(city_id, tick, city_map)` recording the id alongside what it already records.
+`StubSnapshotRepository`: `def load(_city_id), do: Agent.get(__MODULE__, & &1.initial)` and `def save(city_id, tick, city_map)` recording the id alongside what it already records. It also needs a way to return the refusal, so the engine's `{:stale, _}` branch is reachable from a test — without it that branch is dead code as far as the coverage gate is concerned:
+
+```elixir
+  @doc """
+  Make the next `save/3` refuse with `{:stale, tick}`.
+
+  Only the engine's handling of a refusal needs this; the real adapters' own refusal
+  logic is covered by the shared contract.
+  """
+  def refuse_saves_as_stale(stored_tick) do
+    Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_tick))
+  end
+```
+
+and `save/3` returns `{:stale, stored}` when `:stale_at` is set, before recording anything.
 
 `SlowSnapshotRepository`: `def load(city_id)` stalls then delegates; `def save(city_id, tick, city_map)` delegates.
 
-`SnapshotRepositoryContract`: every `@adapter.save(tick, city)` becomes `@adapter.save(@city_id, tick, city)` and every `@adapter.load_latest()` becomes `@adapter.load(@city_id)`, with `@city_id "contract-city"` defined in the module. Then **add two cases the old contract could not express**:
+Then add the engine-side test to `city_engine_test.exs`, which is writable now because the engine is still a singleton:
 
 ```elixir
-      test "load/1 does not see another city's snapshot" do
-        assert :ok = @adapter.save("city-a", 5, CityMap.new(12, 12))
+    test "warns rather than failing when the adapter refuses a stale save" do
+      StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
+      start_supervised!(CityEngine)
+      StubSnapshotRepository.refuse_saves_as_stale(99)
 
-        assert {:error, :not_found} = @adapter.load("city-b")
+      log =
+        capture_log(fn ->
+          {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+          Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
+          # Let the engine handle the tick, whose checkpoint attempts the save.
+          {:ok, _} = CityEngine.snapshot()
+        end)
+
+      assert log =~ "declined to persist"
+      assert log =~ "tick 99"
+      refute log =~ "failed to persist"
+    end
+```
+
+The `refute` is the point: a refusal must not be logged as a failure, because the two mean opposite things — one says the data was protected, the other says it was lost.
+
+`SnapshotRepositoryContract`: every `@adapter.save(tick, city)` becomes `@adapter.save(@city_id, tick, city)` and every `@adapter.load_latest()` becomes `@adapter.load(@city_id)`, with `@city_id "contract-city"` defined in the module.
+
+**The two ordering tests stay in the shared contract** — both adapters still guarantee that a save cannot move a city backwards — but they now assert the reportable refusal rather than just the surviving value. Rewrite them as:
+
+```elixir
+      test "save/3 refuses an older tick and says so" do
+        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
+
+        assert {:stale, 9} = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+
+        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
+        assert loaded.width == 19
       end
 
-      test "save/3 overwrites the same city rather than accumulating" do
+      test "save/3 refuses an equal tick, so a replay cannot rewrite a stored tick" do
+        assert :ok = @adapter.save(@city_id, 5, CityMap.new(19, 19))
+
+        assert {:stale, 5} = @adapter.save(@city_id, 5, CityMap.new(11, 11))
+
+        assert {:ok, {5, loaded}} = @adapter.load(@city_id)
+        assert loaded.width == 19
+      end
+```
+
+Then **add one case the old contract could not express**:
+
+```elixir
+      test "save/3 advances the same city rather than accumulating rows" do
         assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
         assert :ok = @adapter.save(@city_id, 2, CityMap.new(12, 12))
 
@@ -310,7 +434,17 @@ Update `save/1`'s three callers (`maybe_checkpoint/1`, `terminate/2`, and the ti
       end
 ```
 
-The isolation case will pass vacuously for `FileSnapshotStore`, which ignores the id and has one city. That is correct and expected — note it in the contract's moduledoc so the next reader does not mistake it for a gap.
+**Per-city isolation is NOT a shared-contract case.** `FileSnapshotStore` ignores the id and keeps one pair of files, so `save("city-a", …)` followed by `load("city-b")` legitimately returns city-a's data there. Asserting isolation of an adapter that does not isolate would be a false claim, and asserting it "vacuously" is worse — the test writes real content first, so it fails outright. It goes in `snapshot_store_test.exs` instead, where isolation is real:
+
+```elixir
+  test "load/1 does not see another city's snapshot" do
+    assert :ok = SnapshotStore.save("city-a", 5, CityMap.new(12, 12))
+
+    assert {:error, :not_found} = SnapshotStore.load("city-b")
+  end
+```
+
+Add a line to the contract's moduledoc saying why isolation is absent from it: the two adapters share a shape and a staleness guarantee, not a tenancy model.
 
 - [ ] **Step 8: Run the suite**
 
@@ -1526,3 +1660,5 @@ exactly the cities people are using."
 * **Task 2 Step 4 wires the LiveView to a constant, which Task 4 replaces.** Deliberate: it keeps Task 2 independently testable rather than forcing the engine and the web changes into one reviewable unit. A reviewer of Task 2 should not flag the constant.
 * **The `city_snapshots` primary key changes type,** so Task 1's migration is not a pure `alter`. It recreates the table, which means it holds an exclusive lock for its duration. The table has at most a few thousand rows on the deployed instance, so this is seconds — but it is a lock, and the deploy is not zero-downtime regardless.
 * **No test covers two *engines* competing for one row,** because they cannot: the registry guarantees one process per city id. That guarantee is what Task 2 Step 9 tests.
+
+**Amended 2026-08-03, mid-execution.** The first draft of Task 1 replaced the append-only layout with an unconditional upsert, which silently dropped the guarantee that a save cannot move a city backwards — the protection against a crashed engine hydrating from an older snapshot and overwriting newer work. The implementer hit it as two failing contract tests and escalated rather than deleting them, which was correct: they were asserting a real guarantee, not a stale one. `save/3` now returns `{:stale, stored_tick}`, both adapters honour it, and the engine logs a refusal distinctly from a failure. Per-city isolation moved out of the shared contract at the same time, because `FileSnapshotStore` does not isolate and never claimed to.

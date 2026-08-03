@@ -10,10 +10,10 @@ defmodule ArmchairMetropolist.FailingSnapshotRepository do
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
   @impl true
-  def load_latest, do: {:error, :not_found}
+  def load(_city_id), do: {:error, :not_found}
 
   @impl true
-  def save(_tick, _city_map) do
+  def save(_city_id, _tick, _city_map) do
     case Application.get_env(:armchair_metropolist, :failing_repository_mode, :error_tuple) do
       :error_tuple -> {:error, :disk_full}
       :raise -> raise File.Error, reason: :eacces, action: "write to", path: "snapshot.bin"
@@ -357,7 +357,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       broadcast_tick(2)
       assert {:ok, %{city_map: at_tick_2}} = CityEngine.snapshot()
-      assert [{2, saved}] = StubSnapshotRepository.saves()
+      assert [{"default", 2, saved}] = StubSnapshotRepository.saves()
 
       # Pin *which* version of the map was written. Saving the pre-tick map
       # instead would store the tick-1 state, which is a different map with
@@ -370,7 +370,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       broadcast_tick(3)
       assert {:ok, %{city_map: %{tick: 3}}} = CityEngine.snapshot()
-      assert [{2, ^saved}] = StubSnapshotRepository.saves(), "tick 3 is not a checkpoint"
+
+      assert [{"default", 2, ^saved}] = StubSnapshotRepository.saves(),
+             "tick 3 is not a checkpoint"
     end
 
     test "treats a non-positive checkpoint interval as checkpointing disabled" do
@@ -399,7 +401,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{0, saved} | _] = StubSnapshotRepository.saves()
+      assert [{"default", 0, saved} | _] = StubSnapshotRepository.saves()
       assert CityMap.occupied?(saved, 1, 1)
     end
 
@@ -414,7 +416,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{1, saved} | _] = StubSnapshotRepository.saves()
+      assert [{"default", 1, saved} | _] = StubSnapshotRepository.saves()
       assert saved.tick == 1
     end
   end
