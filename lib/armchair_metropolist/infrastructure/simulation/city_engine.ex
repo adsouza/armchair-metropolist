@@ -269,6 +269,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   # `save/2` swallows and logs every failure, so a broken repository cannot stall
   # or abort shutdown here — the process still exits within its 10s budget.
+  #
+  # When the stop came from handle_info(:linger_expired, ...), this is a second
+  # save of city_map already written by the :DOWN handler above, unchanged since -
+  # known, and harmless rather than a bug, since save/3 is idempotent for an
+  # unchanged tick.
   def terminate(_reason, state) do
     save(state.city_id, state.city_map)
   end

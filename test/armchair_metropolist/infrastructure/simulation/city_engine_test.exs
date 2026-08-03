@@ -51,6 +51,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   @tick_topic "city_tick"
 
+  # Wide enough that a spawn + GenServer.call round trip landing inside it is not a
+  # race even on a loaded CI runner, and wide enough to give the orphaned-timer test
+  # below a comfortable gap between the deadline a leaked, uncancelled timer would
+  # fire at and the deadline the correct, fresh one actually fires at. Shared between
+  # the two tests that need it rather than each picking its own value.
+  @wide_linger_ms 400
+
   @overridden_keys [
     :snapshot_repository,
     :notifier,
@@ -705,13 +712,21 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "a viewer arriving during the linger cancels the stop", %{city_id: city_id} do
+      # Widened from the describe's 50ms default: this test needs the spawn +
+      # GenServer.call round trip below to land inside the linger, and 50ms is not
+      # a safe margin for that on a loaded runner - if it lands outside, the timer
+      # fires with zero viewers and the engine stops before the next line runs,
+      # which would make :sys.get_state(pid) below crash on a dead pid rather than
+      # fail cleanly. @wide_linger_ms leaves ample room for the round trip.
+      Application.put_env(:armchair_metropolist, :engine_linger_ms, @wide_linger_ms)
+
       {:ok, pid} = CityRegistry.ensure_started(city_id)
       first = spawn(fn -> Process.sleep(:infinity) end)
       :ok = CityEngine.attach(city_id, first)
       ref = Process.monitor(pid)
 
       Process.exit(first, :kill)
-      # Inside the 50ms linger.
+      # Inside the linger.
       second = spawn(fn -> Process.sleep(:infinity) end)
       :ok = CityEngine.attach(city_id, second)
 
@@ -728,6 +743,57 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       refute_receive {:DOWN, ^ref, :process, ^pid, _}, 300
       assert CityRegistry.whereis(city_id) == pid
+    end
+
+    test "an orphaned timer left running by a missed cancel does not stop the engine early",
+         %{city_id: city_id} do
+      # Widened for the same reason as the test above, plus this test's own need for
+      # a comfortable gap between two deadlines - see the comments below.
+      Application.put_env(:armchair_metropolist, :engine_linger_ms, @wide_linger_ms)
+
+      {:ok, pid} = CityRegistry.ensure_started(city_id)
+      first = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, first)
+      ref = Process.monitor(pid)
+
+      # T1: armed here, deadline now + @wide_linger_ms.
+      Process.exit(first, :kill)
+
+      second = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, second)
+
+      # Well under @wide_linger_ms (400ms), so T1 is still pending - and viewers is
+      # non-empty throughout, so even if it fired now it would be a no-op - when
+      # `second` is killed below. This is the sequence the two-step "cancels the
+      # stop" test above cannot exercise: leave, arrive, leave again - so a second,
+      # later timer (T2) gets armed while T1 (uncancelled, under the mutation this
+      # guards against) is still alive in the background. 200ms is also what sets
+      # the gap between T1's and T2's deadlines below, since T2 is armed fresh from
+      # here: the longer this wait, the more margin the window below has on both
+      # sides, so it is chosen for that margin, not because the race needs it this
+      # long.
+      Process.sleep(200)
+
+      # T2: armed here, deadline now + @wide_linger_ms (400ms from this point) - which
+      # lands 200ms after T1's original deadline, since T1 was armed 200ms earlier.
+      Process.exit(second, :kill)
+
+      # T1's deadline was 200ms before this point. Without the cancel, T1 fires here
+      # with an empty viewer set and stops the engine early - 200ms before T2, the
+      # correct timer, is due. 300ms below sits at the midpoint: 100ms of margin
+      # past where T1 would fire (so its DOWN, if any, is reliably observed inside
+      # the window) and 100ms of margin before T2 is due (so T2 firing early under
+      # scheduler jitter cannot be mistaken for T1).
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 300
+
+      assert CityRegistry.whereis(city_id) == pid,
+             "an orphaned, uncancelled timer must not stop the engine at its own " <>
+               "(now-stale) deadline once a later viewer has come and gone"
+
+      # And it does still stop, on T2, so the assertion above is not vacuously true
+      # of an engine that simply never stops. 300ms already elapsed above, plus
+      # 300ms more here comfortably clears T2's 400ms deadline.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 300
     end
 
     test "a frozen city reloads its state when next addressed", %{city_id: city_id} do
