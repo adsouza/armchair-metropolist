@@ -207,9 +207,13 @@ broken: `FileSnapshotStore.load/1` reads both its files and takes the higher tic
 guarantee whatever the write order — the Postgres adapter had to be made to.
 
 **The existing city is preserved, not dropped.** The migration copies the highest-tick existing row
-into a well-known city id (`"legacy"`), so whatever has been built on the deployed instance stays
-reachable at `/c/legacy` rather than being silently discarded by a schema change. The old rows are
-then dropped.
+into a well-known city id (`"legacy0000000000000000"` — `"legacy"` padded to the 22-character shape
+`CityCode.valid?/1` requires; the plain word is 6 characters and would 404 rather than reach
+`put_session/3`), so whatever has been built on the deployed instance stays reachable at
+`/c/legacy0000000000000000` rather than being silently discarded by a schema change. The old rows are
+then dropped. The copied row's `updated_at` is set to the migration's own run time, not copied from
+the old row — the reaper sweeps on `updated_at`, and copying a stale timestamp would hand the
+preserved city a retention clock that could already be expired on arrival.
 
 ## 8. Retention
 
@@ -228,8 +232,12 @@ The desktop application has one user and one city, and nothing here should chang
 ignores the id, continuing to write its primary and backup files. The port's shape changes; the
 desktop semantics do not.
 
-`SimulatorLive.mount/3`'s session clause therefore needs the fallback noted in §4 — on desktop there
-is no browser session, so it takes the configured id.
+`SimulatorLive.mount/3` checks `:desktop_city_id` **before** looking at the session, not as a
+fallback when the session is absent — the desktop window's page load goes through the same
+`:browser` pipeline as a server request, so `EnsureCityId` still populates a real session there too,
+and a session-first clause order would never reach the desktop's configured id at all. The desktop UI
+also hides the browser target's re-entry code in this case: a recovery code the desktop cannot act
+on, and that changes every launch, is worse than none.
 
 ## 10. Known limitations, accepted
 
@@ -244,8 +252,19 @@ is no browser session, so it takes the configured id.
 * **Two browsers are two cities.** By design. Accounts are the only real fix and are out of scope.
 * **A frozen city does not advance.** Someone returning after a week finds their city exactly as they
   left it. This is the §3 decision working as intended, but it is the most likely thing for a user to
-  find surprising.
+  find surprising. Not quite true during the linger itself: the engine stays subscribed to the clock
+  and keeps ticking until it actually stops, so a city can advance for up to the linger window after
+  its last viewer leaves. The save the linger's own expiry makes is therefore a second, real write of
+  a map that moved since the `:DOWN` handler's save, not a repeat of it.
 * **All live cities tick simultaneously.** See §6.
+* **A cookieless request still costs a short-lived engine.** `SimulatorLive`'s dead render calls
+  `CityEngine.snapshot/1` before `connected?(socket)` is true, so a plain HTTP `GET` — with no
+  LiveView ever attaching — starts an engine under its own fresh id (`EnsureCityId` mints one per
+  session-less request) and holds it for a short pre-attach linger before it saves and stops. Bounded
+  deliberately short (`:engine_unattached_linger_ms`, distinct from the post-viewer
+  `:engine_linger_ms`) so a crawler or a scanner cannot sustain many-second-long engines at scale; it
+  is not zero, because the ordinary live mount that follows a real visitor's dead render needs enough
+  time to attach and cancel it.
 * **An engine that cannot start crashes the caller rather than returning an error.**
   `CityEngine.call/3` hard-matches `{:ok, _pid} = CityRegistry.ensure_started(city_id)`, so any
   `DynamicSupervisor.start_child/2` failure other than `{:already_started, pid}` raises a `MatchError`
@@ -262,6 +281,12 @@ is no browser session, so it takes the configured id.
   abandoned has its clock reset by the freeze-time save, so 90 days is measured from the last save
   rather than the last human interaction. The difference is at most the linger window and does not
   matter at this granularity.
+* **A sweep can race a fresh hydration.** The reaper deletes by `updated_at` with no lock coordinating
+  it against a `CityEngine` that just hydrated the same row and has not checkpointed yet: if the sweep
+  runs inside that window, it can delete a row an active engine believes it holds. The loss is
+  bounded, not permanent — the engine's own next checkpoint (or its terminate-on-freeze save) writes
+  the row back — so the exposure is an abnormal exit landing inside the first checkpoint interval
+  after a sweep, not silent unrecoverable data loss.
 
 ## 11. Scope and sequencing
 
@@ -299,7 +324,9 @@ adapters and the wiring.
   passing it. `FileSnapshotStore`'s existing primary/backup recovery cases must still pass unchanged —
   that is the regression test for §9's claim that desktop behaviour is untouched.
 * **Migration:** apply it against a database holding the current shape with several rows and assert the
-  highest-tick city survives as `"legacy"` and is loadable. Roll back and reapply.
+  highest-tick city survives as `"legacy0000000000000000"` and is loadable, and that `/c/<that id>`
+  actually redirects and sets the session — the id has to be valid input to `CityCode.valid?/1`, not
+  just present in the table. Roll back and reapply.
 * **Reaper:** a row with a backdated `updated_at` is deleted and a fresh one is not. Run it with the
   age configured to zero and confirm it does not delete a row it just saw — the off-by-one that would
   quietly empty the table.

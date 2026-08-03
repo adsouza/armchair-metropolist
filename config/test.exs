@@ -6,8 +6,10 @@ import Config
 # so the application must not start them itself.
 config :armchair_metropolist, start_simulation: false
 
-# The reaper is driven directly in tests via sweep/0; an interval this long keeps its
-# timer from firing during a run.
+# The reaper is driven directly in tests via sweep/0, so the application must not
+# start its own GenServer (and therefore its own scheduled timer) at all - a second
+# instance sweeping on its own schedule would race the assertions tests make about
+# exactly what sweep/0 deleted.
 config :armchair_metropolist, start_reaper: false
 
 # Configure your database

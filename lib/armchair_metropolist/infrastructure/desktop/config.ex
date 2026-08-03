@@ -63,10 +63,14 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.Config do
     Application.put_env(:armchair_metropolist, :start_shutdown_manager, true)
     Application.put_env(:armchair_metropolist, :start_reaper, false)
 
-    # The desktop application has one city. Pinning the id here rather than relying
-    # on the LiveView's fallback keeps the two targets' behaviour explicit, and means
-    # a desktop build that somehow acquires a browser session still opens the same
-    # city it always did.
+    # The desktop application has one city. SimulatorLive.mount/3 checks this key
+    # before it ever looks at the session, so a desktop launch always opens this
+    # city regardless of whatever city_id its (unused, but still present) browser
+    # session happens to carry — the window's own webview still goes through the
+    # same :browser pipeline as a server request, so EnsureCityId still populates
+    # one. It also suppresses the browser target's re-entry code in the UI, which
+    # would otherwise show a value that changes every launch and addresses nothing
+    # on a single-user app.
     Application.put_env(:armchair_metropolist, :desktop_city_id, "desktop")
 
     Application.put_env(

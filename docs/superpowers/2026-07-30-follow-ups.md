@@ -303,8 +303,8 @@ a standing record that still says "todo" for finished work misleads exactly the 
 * **Add a formatting gate** — `mix.exs:601`, `"format --check-formatted"` heads the `check:` alias.
 * **`dev_routes` and the empty `seeds.exs`** — both removed.
 
-The coverage figure in this document's header is also stale: the suite is now 198 tests (5 properties,
-193 tests) at 94.50%.
+The coverage figure in this document's header is also stale: the suite is now 225 tests (5 properties,
+220 tests) at 94.33%.
 
 ## Known limitations, accepted
 
@@ -321,10 +321,11 @@ atom chunk — they live in the compressed `LitT` literals chunk of `node.ex`'s 
 A `:beam_lib` atom-chunk audit therefore reports a *false* coverage gap. Module load interns
 literals, which is why `Code.ensure_loaded!` is the right mechanism.
 
-**`snapshot_store.ex` has no tiebreaker.** `order_by: [desc: s.tick]` with no secondary key. An
-engine that crashes and replays can write two rows at the same tick with different content, and
-which one wins is unspecified. Also, nothing prunes `city_snapshots` — roughly 1,700 rows/day at
-one tick per second.
+**Resolved by the per-visitor-simulations branch (2026-08-03).** `snapshot_store.ex` no longer orders
+by anything — the 2026-08-03 migration made `city_id` the primary key, one row per city, so `load/1`
+is a plain `Repo.get/2` and there is no tie to break. The "nothing prunes `city_snapshots`" half is
+also resolved: `SnapshotReaper` now deletes any city untouched for `:snapshot_retention_days` (90 by
+default).
 
 **`:snapshot_dir` has no default.** Set only in the desktop branch of `runtime.exs`. Configuring
 `FileSnapshotStore` anywhere else yields `Path.join(nil, …)` → `FunctionClauseError` rather than a
@@ -334,11 +335,12 @@ clear configuration error.
 `config/test.exs`'s `4002`. Inert while `server: false`, but every `MIX_TEST_PARTITION` would share
 port 4000 if the server were ever enabled in test. Generator-inherited.
 
-**Two test titles promise more than their bodies check.** `simulator_live_test.exs`'s "updates
-*only* the affected node" asserts only that the changed node appears; and
-`simulation_calculator_test.exs`'s "includes a node whose status flips at unchanged rounded health"
-never calls `advance_tick/1` — it duplicates a `node_test.exs` case, leaving that delta row covered
-only by the property test.
+**Resolved by the per-visitor-simulations branch (2026-08-03).** Both halves of the item this
+replaces are now false. `simulator_live_test.exs`'s "updates *only* the affected node" was rewritten
+on this branch to place two nodes and compare the untouched one, so "only" is now an actual claim the
+test can fail. `simulation_calculator_test.exs`'s "includes a node whose status flips at unchanged
+rounded health" does call `Calc.advance_tick/1` and asserts on its result — also no longer the gap
+this entry described, though unrelated to this branch's own changes.
 
 ## A note on test design, learned the hard way
 

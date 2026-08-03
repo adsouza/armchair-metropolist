@@ -30,19 +30,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   @cell_size 24
 
   @impl true
-  # Plug stores session keys as strings, so this matches "city_id" rather than the
-  # atom the plug wrote. The second clause is the desktop target, which has no
-  # browser session and one city.
-  def mount(_params, %{"city_id" => city_id}, socket) when is_binary(city_id) do
-    do_mount(city_id, socket)
+  # Checked before the session, deliberately. The desktop target's window still
+  # loads its page through the same :browser pipeline as the server target — so
+  # EnsureCityId (ensure_city_id.ex) still runs and still puts a real, random
+  # city_id into the desktop's session on every launch. A clause ordered
+  # session-first therefore always matched there too, and :desktop_city_id was
+  # never read: harmless functionally, since FileSnapshotStore ignores whatever id
+  # it is given, but it meant the desktop rendered a re-entry code (below) that
+  # changed every launch and addressed nothing a single-user app could use. Checking
+  # the application env first is what makes Desktop.Config's pin take effect at all.
+  def mount(_params, session, socket) do
+    case Application.get_env(:armchair_metropolist, :desktop_city_id) do
+      nil -> mount_from_session(session, socket)
+      city_id -> do_mount(city_id, socket, show_reentry?: false)
+    end
   end
 
-  def mount(_params, _session, socket) do
-    # Two different situations reach this clause and they want different answers.
-    #
-    # The desktop target has no browser session and exactly one city, so it takes the
-    # id Desktop.Config pins.
-    #
+  # Plug stores session keys as strings, so this matches "city_id" rather than the
+  # atom the plug wrote.
+  defp mount_from_session(%{"city_id" => city_id}, socket) when is_binary(city_id) do
+    do_mount(city_id, socket, show_reentry?: true)
+  end
+
+  defp mount_from_session(_session, socket) do
     # A server-target client that presented no session — a socket opened directly at
     # /live/websocket, where the :browser pipeline and therefore EnsureCityId never
     # ran — gets a fresh id rather than a shared constant. A LiveView cannot write the
@@ -50,14 +60,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     # trade against the alternative, which is every such client silently landing in one
     # shared city and editing each other's work. That was the bug this whole change
     # exists to remove, and a constant here would have preserved it in a corner.
-    city_id =
-      Application.get_env(:armchair_metropolist, :desktop_city_id) ||
-        ArmchairMetropolistWeb.CityCode.generate()
-
-    do_mount(city_id, socket)
+    do_mount(ArmchairMetropolistWeb.CityCode.generate(), socket, show_reentry?: true)
   end
 
-  defp do_mount(city_id, socket) do
+  defp do_mount(city_id, socket, opts) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
 
@@ -83,6 +89,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:selected_type, List.first(Node.types()))
       |> assign(:legend_detail, true)
       |> assign(:cell_size, @cell_size)
+      # False only on the desktop target (see mount/3): a recovery code the desktop
+      # cannot use — there is no "elsewhere" to return to it from, and it would
+      # change on every launch — is worse than none.
+      |> assign(:show_reentry?, Keyword.fetch!(opts, :show_reentry?))
       |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
     {:ok, socket}
@@ -291,7 +301,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <.metrics metrics={@metrics} />
           </div>
 
-          <div class="text-xs opacity-70 mt-2">
+          <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
             <span>This city lives in this browser.</span>
             <span>Return to it elsewhere with code</span>
             <code class="font-mono select-all">{@city_id}</code>

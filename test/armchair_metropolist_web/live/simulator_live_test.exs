@@ -7,8 +7,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   start the engine itself (`start_simulation: false` in `config/test.exs`, so it
   does not collide with `start_supervised!`/the Ecto sandbox), so each test starts
   its own `CityEngine` pointed at the in-memory `StubSnapshotRepository`, addressed
-  at `CityEngine.default_city_id/0` — the same constant `SimulatorLive.mount/3`
-  uses, so the view and the test agree on which city they are looking at.
+  at `CityEngine.default_city_id/0` — a stable constant with no production reader,
+  kept only so a test can pin one value in one place. `mount/3` itself reads the
+  session, so this same value is written into `conn`'s session below; the view and
+  the test agree on which city they are looking at because both were told to, not
+  because `mount/3` derives it from this constant itself.
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
@@ -22,7 +25,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.StubSnapshotRepository
 
-  # The same topic SimulatorLive.mount/3 subscribes to for CityEngine.default_city_id/0 —
+  # The topic for the city id this test's session (below) pins the view to —
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
   @topic CityEngine.topic(CityEngine.default_city_id())
 
@@ -131,6 +134,45 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # The positive case first, so the refute below cannot be vacuous.
     assert render(view_a) =~ ~s{id="3:4"}
     refute render(view_b) =~ ~s{id="3:4"}
+  end
+
+  test "the desktop target uses its configured city id and hides the re-entry code",
+       %{conn: conn} do
+    # Regression for Important finding 6: :desktop_city_id used to be read only from
+    # mount/3's session-less fallback clause, which the desktop's own requests never
+    # reached - the desktop window's page load goes through the same :browser
+    # pipeline as a server request, so EnsureCityId always populates a session, and
+    # the session-first clause always matched instead. Checked *before* the session
+    # is what makes the pin real.
+    desktop_city_id = "desktopdesktopdesktopd"
+    previous = Application.get_env(:armchair_metropolist, :desktop_city_id)
+    on_exit(fn -> Application.put_env(:armchair_metropolist, :desktop_city_id, previous) end)
+    Application.put_env(:armchair_metropolist, :desktop_city_id, desktop_city_id)
+
+    # A session carrying a *different* city id, as any ordinary browser request
+    # would present - proving the desktop id wins over it, not merely that it works
+    # when there is nothing to conflict with.
+    session_city_id = "aaaaaaaaaaaaaaaaaaaaaa"
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => session_city_id})
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_click(view, "place", %{"x" => "3", "y" => "4"})
+
+    # The city actually mounted is the desktop one, not the session's - checked via
+    # CityEngine directly rather than the rendered HTML, because @city_id is not
+    # itself shown anywhere once the re-entry block (asserted absent below) is
+    # hidden.
+    assert {:ok, %{city_map: desktop_map}} = CityEngine.snapshot(desktop_city_id)
+    assert CityMap.occupied?(desktop_map, 3, 4)
+
+    assert {:ok, %{city_map: session_map}} = CityEngine.snapshot(session_city_id)
+    refute CityMap.occupied?(session_map, 3, 4)
+
+    # The desktop UI has no "elsewhere" to return to a code from, and the id is a
+    # fixed constant rather than something worth revealing - so this block must not
+    # render at all, not merely render a value nobody asked for.
+    refute render(view) =~ "Return to it elsewhere with code"
   end
 
   test "clicking a cell places infrastructure", %{conn: conn} do

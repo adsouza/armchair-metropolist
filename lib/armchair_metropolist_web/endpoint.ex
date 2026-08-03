@@ -8,7 +8,21 @@ defmodule ArmchairMetropolistWeb.Endpoint do
     store: :cookie,
     key: "_armchair_metropolist_key",
     signing_salt: "ccKXd5/j",
-    same_site: "Lax"
+    same_site: "Lax",
+    # 90 days — matches :snapshot_retention_days (config.exs). Without a max_age,
+    # Plug.Session emits no expires/max-age attribute at all and the cookie is
+    # browser-session scoped: it dies the moment the browser closes, not merely
+    # when explicitly cleared. That is a far more common way to lose a city than
+    # the "cleared cookie" spec §10 accepts, and it silently breaks the promise the
+    # retention window and the UI copy ("this city lives in this browser") both
+    # make. Keep this in step with :snapshot_retention_days by hand; nothing
+    # currently derives one from the other.
+    max_age: 90 * 24 * 60 * 60,
+    # Belt-and-braces alongside config/prod.exs's `force_ssl`: that already
+    # upgrades every request to HTTPS in production, so this flag is inert there
+    # today, but the session cookie should not depend on a setting that lives in a
+    # different file to stay off cleartext.
+    secure: true
   ]
 
   socket "/live", Phoenix.LiveView.Socket,

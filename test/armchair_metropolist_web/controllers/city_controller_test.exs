@@ -15,6 +15,25 @@ defmodule ArmchairMetropolistWeb.CityControllerTest do
 
   @valid "aaaaaaaaaaaaaaaaaaaaaa"
 
+  # Must match `@legacy_city_id` in
+  # priv/repo/migrations/20260803120000_city_scoped_snapshots.exs exactly: that
+  # migration copies the deployed instance's one pre-existing city under this id so
+  # it stays reachable at /c/<this>, and the whole point is that this route actually
+  # adopts it. A drift between the two literals would make the preserved city
+  # unreachable again with a green suite, which is exactly the failure Critical
+  # finding 1 covers.
+  @legacy_city_id "legacy0000000000000000"
+
+  test "the migration's preserved legacy city is reachable and well-formed", %{conn: conn} do
+    assert String.length(@legacy_city_id) == 22
+    assert ArmchairMetropolistWeb.CityCode.valid?(@legacy_city_id)
+
+    conn = get(conn, ~p"/c/#{@legacy_city_id}")
+
+    assert redirected_to(conn) == ~p"/"
+    assert get_session(conn, :city_id) == @legacy_city_id
+  end
+
   test "a valid code is adopted and redirects to the simulator", %{conn: conn} do
     conn = get(conn, ~p"/c/#{@valid}")
 

@@ -70,7 +70,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     # this file stops itself. Without restoring it, the "freezing" describe's
     # override leaked into every test that ran afterward in seed order, which
     # intermittently killed unrelated engines mid-test.
-    :engine_linger_ms
+    :engine_linger_ms,
+    # The pre-attach counterpart of the key above - handle_continue(:hydrate, ...)
+    # arms this one, not :engine_linger_ms, before any viewer has ever attached.
+    # This list has already drifted three times in this branch; adding a key here
+    # whenever a new one governs when an engine in this suite stops itself is what
+    # stops a fourth.
+    :engine_unattached_linger_ms
   ]
 
   setup do
@@ -823,8 +829,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # SimulatorLive's dead render starts an engine (via CityEngine.snapshot/1)
       # before connected?(socket) is true, i.e. before attach/2 is ever called - this
       # test is that case with nothing attaching afterward either, so nothing but
-      # handle_continue/2's own arm_linger/0 can ever stop it.
-      Application.put_env(:armchair_metropolist, :engine_linger_ms, @wide_linger_ms)
+      # handle_continue/2's own pre-attach linger can ever stop it. That linger is
+      # armed from :engine_unattached_linger_ms, not :engine_linger_ms - a separate,
+      # deliberately much shorter key (see the moduledoc's finding on cookieless
+      # requests), so this test overrides that key rather than the post-viewer one.
+      Application.put_env(:armchair_metropolist, :engine_unattached_linger_ms, @wide_linger_ms)
 
       {:ok, pid} = CityRegistry.ensure_started(city_id)
       ref = Process.monitor(pid)
@@ -835,6 +844,82 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # Same registry-cleanup race as the other stop assertions in this describe
       # block - see wait_until/1's own comment.
       assert wait_until(fn -> CityRegistry.whereis(city_id) == nil end)
+    end
+  end
+
+  describe "crash recovery" do
+    # `restart: :transient` (city_engine.ex's `use GenServer` declaration) exists
+    # specifically so a genuine crash still gets today's recovery behaviour, even
+    # though a deliberate `:normal` stop (the freeze linger, above) must not be
+    # resurrected. Nothing else in this file distinguishes the two: every other
+    # test that stops an engine does so via `:linger_expired` (`:normal`) or
+    # `DynamicSupervisor.terminate_child/2` (which discards the child spec first,
+    # so it never restarts regardless of `:restart`). Without a test here, a future
+    # edit to `:temporary` - which would also stop resurrecting a frozen engine,
+    # so it might look like a plausible simplification - silently deletes crash
+    # recovery with every other test still green.
+    test "an abnormal exit restarts the engine under the same city id", %{city_id: city_id} do
+      {:ok, pid} = CityRegistry.ensure_started(city_id)
+      ref = Process.monitor(pid)
+
+      # :kill is untrappable regardless of CityEngine's Process.flag(:trap_exit,
+      # true), so this is a genuine abnormal termination and not a message the
+      # engine's own handle_info/2 catch-all quietly absorbs.
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000
+
+      new_pid =
+        wait_until(fn ->
+          case CityRegistry.whereis(city_id) do
+            nil -> false
+            ^pid -> false
+            other -> other
+          end
+        end)
+
+      assert is_pid(new_pid),
+             "the supervisor must restart a :transient child after an abnormal exit"
+
+      on_exit(fn ->
+        capture_log(fn -> DynamicSupervisor.terminate_child(CityRegistry.Supervisor, new_pid) end)
+      end)
+    end
+
+    # The mutation this guards against: if `:transient` above were silently doing
+    # nothing - if every child restarted regardless of its declared `:restart`, or
+    # `wait_until/1`'s window were simply generous enough to catch a coincidence -
+    # the test above would pass for the wrong reason. Starting the same start_link/1
+    # under an explicit :temporary override and confirming a :kill then does NOT
+    # come back is that check: it is the state in which the assertion above must
+    # fail, and does.
+    test "a :temporary child, unlike this engine, does not come back", %{city_id: city_id} do
+      spec = %{
+        id: CityEngine,
+        start: {CityEngine, :start_link, [[city_id: city_id]]},
+        restart: :temporary,
+        shutdown: 10_000
+      }
+
+      {:ok, pid} = DynamicSupervisor.start_child(CityRegistry.Supervisor, spec)
+      ref = Process.monitor(pid)
+
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000
+
+      # Same registry-cleanup race as the "freezing" describe block above: our
+      # monitor and the registry's own are independent, so the dead pid can still
+      # be the answer for a moment after our :DOWN arrives - that lag is not a
+      # restart and `wait_until/1` is what tells the two apart.
+      assert wait_until(fn -> CityRegistry.whereis(city_id) == nil end),
+             "the registry must eventually clear the dead pid"
+
+      # ...and it must *stay* clear. A :temporary child restarting at all would
+      # contradict the assertion above, but only a further pause with nothing
+      # reappearing actually distinguishes "does not come back" from "hasn't yet".
+      Process.sleep(100)
+
+      refute CityRegistry.whereis(city_id),
+             "a :temporary child must not be restarted after an abnormal exit"
     end
   end
 
