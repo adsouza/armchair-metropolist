@@ -6,6 +6,10 @@ import Config
 # so the application must not start them itself.
 config :armchair_metropolist, start_simulation: false
 
+# The reaper is driven directly in tests via sweep/0; an interval this long keeps its
+# timer from firing during a run.
+config :armchair_metropolist, start_reaper: false
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used

@@ -17,6 +17,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
   @app_keys [
     :start_repo,
     :start_shutdown_manager,
+    :start_reaper,
     :desktop_city_id,
     :snapshot_repository,
     :notifier,
@@ -98,6 +99,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
 
       assert Application.get_env(:armchair_metropolist, :start_repo) == false
       assert Application.get_env(:armchair_metropolist, :start_shutdown_manager) == true
+      assert Application.get_env(:armchair_metropolist, :start_reaper) == false
       assert Application.get_env(:armchair_metropolist, :snapshot_repository) == FileSnapshotStore
       assert Application.get_env(:armchair_metropolist, :notifier) == TauriNotifier
       assert is_binary(Application.get_env(:armchair_metropolist, :snapshot_dir))

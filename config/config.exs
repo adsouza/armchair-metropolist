@@ -53,7 +53,12 @@ config :armchair_metropolist,
   # disconnects and reconnects within a second, so stopping immediately would make
   # every refresh pay a save, a process death, a restart and a hydrate.
   engine_linger_ms: 30_000,
-  checkpoint_every_ticks: 50
+  checkpoint_every_ticks: 50,
+  # Cities nobody has opened in this long are deleted. Generous on purpose: someone
+  # returning after months should still find their city, and one row per city means
+  # storage is not the pressure here — unbounded retention of data keyed to a cookie is.
+  snapshot_retention_days: 90,
+  snapshot_sweep_interval_ms: 24 * 60 * 60 * 1000
 
 # Configure the endpoint
 config :armchair_metropolist, ArmchairMetropolistWeb.Endpoint,

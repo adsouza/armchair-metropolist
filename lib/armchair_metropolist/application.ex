@@ -31,6 +31,7 @@ defmodule ArmchairMetropolist.Application do
     children =
       desktop_children() ++
         repo_children() ++
+        reaper_children() ++
         [
           {DNSCluster,
            query: Application.get_env(:armchair_metropolist, :dns_cluster_query) || :ignore},
@@ -72,6 +73,16 @@ defmodule ArmchairMetropolist.Application do
   defp repo_children do
     if Application.get_env(:armchair_metropolist, :start_repo, true) do
       [ArmchairMetropolist.Infrastructure.Persistence.Repo]
+    else
+      []
+    end
+  end
+
+  # Server target only, and after the Repo — it queries on boot. The desktop target
+  # has one city that must never be reaped.
+  defp reaper_children do
+    if Application.get_env(:armchair_metropolist, :start_reaper, true) do
+      [ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaper]
     else
       []
     end

@@ -61,6 +61,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.Config do
   defp do_apply do
     Application.put_env(:armchair_metropolist, :start_repo, false)
     Application.put_env(:armchair_metropolist, :start_shutdown_manager, true)
+    Application.put_env(:armchair_metropolist, :start_reaper, false)
 
     # The desktop application has one city. Pinning the id here rather than relying
     # on the LiveView's fallback keeps the two targets' behaviour explicit, and means
