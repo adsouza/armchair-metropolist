@@ -38,11 +38,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   def mount(_params, _session, socket) do
-    do_mount(
+    # Two different situations reach this clause and they want different answers.
+    #
+    # The desktop target has no browser session and exactly one city, so it takes the
+    # id Desktop.Config pins.
+    #
+    # A server-target client that presented no session — a socket opened directly at
+    # /live/websocket, where the :browser pipeline and therefore EnsureCityId never
+    # ran — gets a fresh id rather than a shared constant. A LiveView cannot write the
+    # session, so this city lasts only as long as the connection; that is the right
+    # trade against the alternative, which is every such client silently landing in one
+    # shared city and editing each other's work. That was the bug this whole change
+    # exists to remove, and a constant here would have preserved it in a corner.
+    city_id =
       Application.get_env(:armchair_metropolist, :desktop_city_id) ||
-        CityEngine.default_city_id(),
-      socket
-    )
+        ArmchairMetropolistWeb.CityCode.generate()
+
+    do_mount(city_id, socket)
   end
 
   defp do_mount(city_id, socket) do

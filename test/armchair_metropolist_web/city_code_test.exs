@@ -23,6 +23,11 @@ defmodule ArmchairMetropolistWeb.CityCodeTest do
     refute CityCode.valid?("../../etc/passwd------")
     refute CityCode.valid?("aaaaaaaaaaaaaaaaaaaa/=")
     refute CityCode.valid?("aaaaaaaaaaaaaaaaaaaa\na")
+
+    # 22 valid characters plus a trailing newline. This is the case that justifies
+    # \A and \z: ^ and $ treat a final newline as end-of-string and would accept it.
+    refute CityCode.valid?(String.duplicate("a", 22) <> "\n")
+
     refute CityCode.valid?(nil)
     refute CityCode.valid?(:atom)
   end
