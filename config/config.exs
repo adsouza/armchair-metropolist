@@ -49,6 +49,10 @@ config :armchair_metropolist,
   grid_width: 40,
   grid_height: 30,
   tick_interval_ms: 1000,
+  # How long an engine stays alive after its last viewer disconnects. A page reload
+  # disconnects and reconnects within a second, so stopping immediately would make
+  # every refresh pay a save, a process death, a restart and a hydrate.
+  engine_linger_ms: 30_000,
   checkpoint_every_ticks: 50
 
 # Configure the endpoint

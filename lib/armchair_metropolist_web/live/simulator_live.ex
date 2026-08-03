@@ -35,6 +35,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
     if connected?(socket) do
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+
+      # Ties the city's lifetime to this connection. The engine monitors us, so a
+      # closed tab, a crash and a navigation all look the same to it.
+      :ok = CityEngine.attach(city_id, self())
     end
 
     {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)

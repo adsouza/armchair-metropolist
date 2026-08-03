@@ -57,7 +57,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   it.
   """
 
-  use GenServer, shutdown: 10_000
+  # `restart: :transient`, not the default `:permanent`: `handle_info(:linger_expired,
+  # ...)` stops this process on purpose with reason `:normal` once every viewer has
+  # gone, and a `:permanent` child is restarted by CityRegistry's DynamicSupervisor
+  # no matter how it exits - including `:normal` - which would resurrect the engine
+  # the instant it froze and defeat the whole task. `:transient` still restarts on an
+  # abnormal exit, so a genuine crash keeps today's recovery behaviour.
+  use GenServer, shutdown: 10_000, restart: :transient
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
@@ -110,6 +116,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @spec demolish(String.t(), integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
 
+  @doc """
+  Register `pid` as a viewer of `city_id`.
+
+  The engine monitors it, and stops once every viewer has gone — see the moduledoc
+  on freezing. Idempotent per pid: attaching twice monitors twice and both
+  references are removed independently, which is harmless.
+  """
+  def attach(city_id, pid) when is_binary(city_id) and is_pid(pid) do
+    call(city_id, {:attach, pid})
+  end
+
   # Start-on-demand, then call. The retry exists because an engine can stop between
   # `ensure_started/1` and the call — Task 3 makes idle engines stop on purpose, so
   # this is a normal race rather than an exotic one. One retry is enough: the second
@@ -140,8 +157,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     # land and be tested before this process became addressable.
     city_id = Keyword.get(opts, :city_id, @default_city_id)
 
-    {:ok, %{city_id: city_id, city_map: nil, metrics: nil, critical?: false},
-     {:continue, :hydrate}}
+    {:ok,
+     %{
+       city_id: city_id,
+       city_map: nil,
+       metrics: nil,
+       critical?: false,
+       viewers: %{},
+       linger: nil
+     }, {:continue, :hydrate}}
   end
 
   @impl true
@@ -185,6 +209,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
+  def handle_call({:attach, pid}, _from, state) do
+    ref = Process.monitor(pid)
+
+    {:reply, :ok,
+     %{state | viewers: Map.put(state.viewers, ref, pid), linger: cancel_linger(state.linger)}}
+  end
+
   # The clock's pulse number is deliberately discarded: city_map.tick is the
   # authority.
   @impl true
@@ -198,6 +229,32 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     critical? = notify_deficits(metrics, state.critical?)
 
     {:noreply, %{state | city_map: city_map, metrics: metrics, critical?: critical?}}
+  end
+
+  # A viewer's LiveView process has gone. When the last one goes, save immediately —
+  # the city is frozen from this instant and the save must not wait for the linger,
+  # which might be cut short by an application shutdown.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    viewers = Map.delete(state.viewers, ref)
+
+    if map_size(viewers) == 0 do
+      save(state.city_id, state.city_map)
+
+      {:noreply, %{state | viewers: viewers, linger: arm_linger()}}
+    else
+      {:noreply, %{state | viewers: viewers}}
+    end
+  end
+
+  def handle_info(:linger_expired, state) do
+    # A viewer that arrived during the linger cancelled the timer, so reaching here
+    # with viewers present means a cancel raced a fired message. Checking rather than
+    # trusting the timer is what stops that race from killing a watched city.
+    if map_size(state.viewers) == 0 do
+      {:stop, :normal, state}
+    else
+      {:noreply, %{state | linger: nil}}
+    end
   end
 
   # Anyone may broadcast on the subscribed topic, so unrecognised messages are
@@ -350,6 +407,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   defp broadcast(city_id, message) do
     Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, topic(city_id), message)
+  end
+
+  defp arm_linger do
+    Process.send_after(self(), :linger_expired, config(:engine_linger_ms, 30_000))
+  end
+
+  defp cancel_linger(nil), do: nil
+
+  defp cancel_linger(timer) do
+    Process.cancel_timer(timer)
+    nil
   end
 
   # Both adapters are resolved per call so tests can inject stubs and the

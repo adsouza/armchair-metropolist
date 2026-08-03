@@ -29,8 +29,18 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
     Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_tick))
   end
 
+  @doc "Make load/1 return the most recent save/3, as a real adapter would."
+  def echo_saves, do: Agent.update(__MODULE__, &Map.put(&1, :echo, true))
+
   @impl true
-  def load(_city_id), do: Agent.get(__MODULE__, & &1.initial)
+  def load(city_id) do
+    Agent.get(__MODULE__, fn state ->
+      case state do
+        %{echo: true, saves: [{^city_id, tick, city_map} | _]} -> {:ok, {tick, city_map}}
+        _ -> state.initial
+      end
+    end)
+  end
 
   @impl true
   def save(city_id, tick, city_map) do

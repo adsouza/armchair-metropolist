@@ -645,12 +645,127 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "freezing when the last viewer leaves" do
+    setup %{city_id: city_id} do
+      Application.put_env(:armchair_metropolist, :engine_linger_ms, 50)
+
+      # These tests reach the engine through CityRegistry.ensure_started/1, the same
+      # start-on-demand path production uses, rather than start_supervised!/1 - so
+      # nothing tears it down automatically the way every other test in this file
+      # gets for free. An engine still alive when the test ends stays subscribed to
+      # "city_tick" and keeps answering CityEngine calls, so a later test's tick
+      # broadcast or config override could make it checkpoint into that later test's
+      # StubSnapshotRepository. Unconditional here (`whereis` is nil for the tests
+      # whose engine already stopped itself) rather than only for the ones that leak
+      # by design.
+      #
+      # DynamicSupervisor.terminate_child/2, not Process.exit/2: the engine's child
+      # spec is `restart: :transient`, so an exit this test merely *causes* (rather
+      # than asks the supervisor for) reads as abnormal and gets restarted right
+      # back - and the restart, hydrating after this test's on_exit has already torn
+      # down its stub config, is what took the whole registry supervisor down under
+      # repeated failures during this fix's development. terminate_child/2 discards
+      # the child spec first, so no restart follows no matter how termination looks.
+      #
+      # capture_log: this on_exit runs after `start_supervised!(StubSnapshotRepository)`
+      # has already been torn down (ExUnit stops supervised processes before running
+      # on_exit callbacks, regardless of registration order), so terminate/2's own save
+      # always fails here with :noproc. That failure is exactly what save/2 already
+      # exists to absorb - see the "repository that cannot save" tests below - so this
+      # only silences an expected, harmless log line rather than hiding a real one.
+      on_exit(fn ->
+        case CityRegistry.whereis(city_id) do
+          nil ->
+            :ok
+
+          pid ->
+            capture_log(fn -> DynamicSupervisor.terminate_child(CityRegistry.Supervisor, pid) end)
+        end
+      end)
+
+      :ok
+    end
+
+    test "saves and stops after the linger once the last viewer goes", %{city_id: city_id} do
+      {:ok, pid} = CityRegistry.ensure_started(city_id)
+      viewer = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, viewer)
+      ref = Process.monitor(pid)
+
+      Process.exit(viewer, :kill)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+
+      # Our monitor and CityRegistry's own are independent, so receiving our :DOWN
+      # is no guarantee the registry has processed its own yet - the same race
+      # CityEngine.call/3's retry absorbs in production. Polling rather than
+      # asserting immediately is what makes this check the behaviour instead of
+      # this scheduler's luck; confirmed flaky (~1 in 5) without it.
+      assert wait_until(fn -> CityRegistry.whereis(city_id) == nil end)
+    end
+
+    test "a viewer arriving during the linger cancels the stop", %{city_id: city_id} do
+      {:ok, pid} = CityRegistry.ensure_started(city_id)
+      first = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, first)
+      ref = Process.monitor(pid)
+
+      Process.exit(first, :kill)
+      # Inside the 50ms linger.
+      second = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, second)
+
+      # handle_info(:linger_expired, ...) re-checks the viewer set before stopping,
+      # so the engine surviving 300ms below is true regardless of whether the timer
+      # was actually cancelled - a present second viewer makes it survive either
+      # way, which is exactly the case a naive "just check it's still alive"
+      # assertion gets wrong (confirmed by mutation: deleting the cancel_linger/1
+      # call left every assertion below still green). What the cancel actually
+      # changes is the `linger` field itself: cancel_linger/1 always resets it to
+      # nil, so if the second attach left the *original* timer running instead,
+      # this reads it back non-nil.
+      assert :sys.get_state(pid).linger == nil
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 300
+      assert CityRegistry.whereis(city_id) == pid
+    end
+
+    test "a frozen city reloads its state when next addressed", %{city_id: city_id} do
+      StubSnapshotRepository.echo_saves()
+      {:ok, _pid} = CityRegistry.ensure_started(city_id)
+      viewer = spawn(fn -> Process.sleep(:infinity) end)
+      :ok = CityEngine.attach(city_id, viewer)
+      {:ok, _node} = CityEngine.place(city_id, 3, 4, :power_plant)
+
+      Process.exit(viewer, :kill)
+      assert wait_until(fn -> CityRegistry.whereis(city_id) == nil end)
+
+      # The stub returns whatever `set_initial/1` holds, so this asserts the save
+      # happened by asserting the engine wrote before it stopped.
+      assert {:ok, %{city_map: reloaded}} = CityEngine.snapshot(city_id)
+      assert map_size(reloaded.nodes) == 1
+    end
+  end
+
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
   # demand, so every resource sits below full satisfaction.
   defp starved_city do
     Enum.reduce(0..9, CityMap.new(40, 30), fn x, acc ->
       CityMap.put_node(acc, Node.new(x, 0, :commercial))
     end)
+  end
+
+  # Polls `fun` until it returns truthy or 500ms have passed, returning the last
+  # result. For asserting an engine has stopped: whereis/1 depends on
+  # CityRegistry's own monitor of the engine, a race against any other monitor
+  # (including a test's) on the same process, so nothing guarantees it has already
+  # caught up the instant another observer sees the engine gone.
+  defp wait_until(fun, attempts \\ 50) do
+    case {fun.(), attempts} do
+      {result, _} when result != false and result != nil -> result
+      {result, 0} -> result
+      {_, attempts} -> Process.sleep(10) && wait_until(fun, attempts - 1)
+    end
   end
 
   defp broadcast_tick(n) do
