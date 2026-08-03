@@ -22,6 +22,7 @@ defmodule ArmchairMetropolistWeb.Router do
   scope "/", ArmchairMetropolistWeb do
     pipe_through :browser
 
+    get "/c/:code", CityController, :enter
     live "/", SimulatorLive
   end
 

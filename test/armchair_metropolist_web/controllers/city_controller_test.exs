@@ -1,0 +1,72 @@
+defmodule ArmchairMetropolistWeb.CityControllerTest do
+  @moduledoc """
+  `async: false`, not the module's obvious default: the last test mounts
+  SimulatorLive, whose `do_mount/2` calls `CityEngine.snapshot/1` unconditionally
+  — even for a code nothing has visited before — so it needs the same
+  `:snapshot_repository` override as `simulator_live_test.exs` and
+  `content_security_policy_test.exs`, and that override is process-global.
+  """
+  use ArmchairMetropolistWeb.ConnCase, async: false
+
+  import Phoenix.LiveViewTest
+
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.StubSnapshotRepository
+
+  @valid "aaaaaaaaaaaaaaaaaaaaaa"
+
+  test "a valid code is adopted and redirects to the simulator", %{conn: conn} do
+    conn = get(conn, ~p"/c/#{@valid}")
+
+    assert redirected_to(conn) == ~p"/"
+    assert get_session(conn, :city_id) == @valid
+  end
+
+  test "a valid code replaces whatever the browser had", %{conn: conn} do
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{"city_id" => "bbbbbbbbbbbbbbbbbbbbbb"})
+      |> get(~p"/c/#{@valid}")
+
+    assert get_session(conn, :city_id) == @valid
+  end
+
+  test "a malformed code is a 404 and does not touch the session", %{conn: conn} do
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{"city_id" => "bbbbbbbbbbbbbbbbbbbbbb"})
+      |> get(~p"/c/not-a-valid-code")
+
+    assert conn.status == 404
+    assert get_session(conn, :city_id) == "bbbbbbbbbbbbbbbbbbbbbb"
+  end
+
+  test "entering an unknown but well-formed code yields an empty city", %{conn: conn} do
+    # Same scaffolding as simulator_live_test.exs's setup, inlined here because
+    # only this test drives a LiveView: the real Ecto-backed adapter would hit
+    # the database from the CityEngine process, which owns no sandbox
+    # connection, and `start_supervised!/1` (rather than leaving `ensure_started/1`
+    # to spin one up on demand) is what makes ExUnit tear this engine down when
+    # the test ends instead of it lingering as an orphan for `engine_linger_ms`.
+    previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
+
+    on_exit(fn ->
+      case previous_repo do
+        nil -> Application.delete_env(:armchair_metropolist, :snapshot_repository)
+        value -> Application.put_env(:armchair_metropolist, :snapshot_repository, value)
+      end
+    end)
+
+    Application.put_env(:armchair_metropolist, :snapshot_repository, StubSnapshotRepository)
+
+    start_supervised!(StubSnapshotRepository)
+    StubSnapshotRepository.set_initial({:error, :not_found})
+    start_supervised!({CityEngine, city_id: @valid})
+
+    conn = get(conn, ~p"/c/#{@valid}")
+
+    {:ok, _view, html} = conn |> recycle() |> live(~p"/")
+
+    refute html =~ ~s{id="3:4"}
+  end
+end

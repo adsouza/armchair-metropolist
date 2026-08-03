@@ -290,6 +290,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   the toggle hid them. --%>
             <.metrics metrics={@metrics} />
           </div>
+
+          <div class="text-xs opacity-70 mt-2">
+            <span>This city lives in this browser.</span>
+            <span>Return to it elsewhere with code</span>
+            <code class="font-mono select-all">{@city_id}</code>
+          </div>
         </aside>
       </div>
     </Layouts.app>
