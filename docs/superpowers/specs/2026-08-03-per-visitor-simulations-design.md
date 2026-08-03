@@ -246,6 +246,15 @@ is no browser session, so it takes the configured id.
   left it. This is the §3 decision working as intended, but it is the most likely thing for a user to
   find surprising.
 * **All live cities tick simultaneously.** See §6.
+* **An engine that cannot start crashes the caller rather than returning an error.**
+  `CityEngine.call/3` hard-matches `{:ok, _pid} = CityRegistry.ensure_started(city_id)`, so any
+  `DynamicSupervisor.start_child/2` failure other than `{:already_started, pid}` raises a `MatchError`
+  in the calling LiveView. Unreachable today — `init/1` only subscribes to PubSub and returns
+  `{:continue, :hydrate}`, with no failure path. Deliberately not "fixed": `SimulatorLive` hard-matches
+  `{:ok, %{city_map: …}} = snapshot(city_id)` too, so converting this to a clean `{:error, reason}`
+  would move the crash rather than remove it, and adding a real error path means designing what the
+  page shows when no engine can start — work this plan does not carry. Revisit if `init/1` ever gains
+  a way to fail.
 * **One row per city means a corrupt row is an unrecoverable city** on the server target. Unchanged
   from today in practice, since `load_latest/0` never fell back either — but the *option* of adding
   fallback disappears with the history.
