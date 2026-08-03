@@ -45,7 +45,10 @@ done
 #    unless tauri.conf.json supplies one (debian.rs:204), and a .deb declaring nothing
 #    installs onto a machine with no WebKit and then dies at the dynamic linker. This is
 #    the standing regression test for that.
-DEPENDS=$(dpkg-deb --field "$DEB" Depends)
+# A bare VAR=$(cmd) propagates cmd's exit status under set -e, which would abort here
+# without the ::error:: annotation if dpkg-deb itself errored (as opposed to succeeding
+# with an empty field, which the next line already handles).
+DEPENDS=$(dpkg-deb --field "$DEB" Depends) || fail "dpkg-deb --field failed reading $DEB"
 [ -n "$DEPENDS" ] || fail "the .deb declares no Depends"
 printf 'Depends: %s\n' "$DEPENDS"
 
