@@ -63,7 +63,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     :notifier,
     :notifier_test_pid,
     :checkpoint_every_ticks,
-    :failing_repository_mode
+    :failing_repository_mode,
+    # Every engine now arms a linger on hydrate (handle_continue/2), not only ones a
+    # viewer later leaves, so a short value here is no longer inert for tests that
+    # never call attach/2 - unlike before, it now determines when *any* engine in
+    # this file stops itself. Without restoring it, the "freezing" describe's
+    # override leaked into every test that ran afterward in seed order, which
+    # intermittently killed unrelated engines mid-test.
+    :engine_linger_ms
   ]
 
   setup do
@@ -810,6 +817,24 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # happened by asserting the engine wrote before it stopped.
       assert {:ok, %{city_map: reloaded}} = CityEngine.snapshot(city_id)
       assert map_size(reloaded.nodes) == 1
+    end
+
+    test "an engine that never gets a viewer stops on its own", %{city_id: city_id} do
+      # SimulatorLive's dead render starts an engine (via CityEngine.snapshot/1)
+      # before connected?(socket) is true, i.e. before attach/2 is ever called - this
+      # test is that case with nothing attaching afterward either, so nothing but
+      # handle_continue/2's own arm_linger/0 can ever stop it.
+      Application.put_env(:armchair_metropolist, :engine_linger_ms, @wide_linger_ms)
+
+      {:ok, pid} = CityRegistry.ensure_started(city_id)
+      ref = Process.monitor(pid)
+
+      # No attach/2 call at all.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @wide_linger_ms + 500
+
+      # Same registry-cleanup race as the other stop assertions in this describe
+      # block - see wait_until/1's own comment.
+      assert wait_until(fn -> CityRegistry.whereis(city_id) == nil end)
     end
   end
 

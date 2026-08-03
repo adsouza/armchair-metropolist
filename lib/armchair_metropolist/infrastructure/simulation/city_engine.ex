@@ -172,7 +172,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def handle_continue(:hydrate, state) do
     city_map = load_city_map(state.city_id)
 
-    {:noreply, %{state | city_map: city_map, metrics: summarize(city_map)}}
+    # Freezing is otherwise triggered only by a viewer *leaving* (see
+    # handle_info({:DOWN, ...}) below), so an engine that never had one has nothing
+    # to stop it. That is reachable: SimulatorLive's dead render starts an engine
+    # via CityEngine.snapshot/1 before connected?(socket) is true, so before
+    # attach/2 is ever called on it. On the ordinary path the live mount that
+    # follows shares the dead render's city id and attaches to this same process,
+    # cancelling this timer - but a client that never completes that live mount
+    # (or one routed to a different city id for it) would otherwise run forever.
+    # Arming here makes whether this engine ever stops a property of the engine,
+    # not of routing ensuring every dead render is eventually attached to.
+    # handle_info(:linger_expired, ...) already re-checks the viewer set, so a
+    # viewer that attaches in time is all this needs to be cancelled safely.
+    {:noreply, %{state | city_map: city_map, metrics: summarize(city_map), linger: arm_linger()}}
   end
 
   @impl true
