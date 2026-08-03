@@ -47,14 +47,37 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaper do
 
   @impl true
   def handle_continue(:sweep, state) do
-    sweep()
+    safe_sweep()
     {:noreply, schedule(state)}
   end
 
   @impl true
   def handle_info(:sweep, state) do
-    sweep()
+    safe_sweep()
     {:noreply, schedule(state)}
+  end
+
+  # A dead connection, a checkout timeout or a missing table *raise*
+  # (DBConnection.ConnectionError, Postgrex.Error) and an exhausted pool *exit*s -
+  # see SnapshotStore.save/3's moduledoc for the same error class. Left alone here,
+  # any of those would crash this GenServer on the boot continue or a scheduled
+  # tick; init/1 re-runs {:continue, :sweep} on restart, so a persistent condition
+  # would exceed the supervisor's max_restarts and take down the whole
+  # application - not just the reaper - over a transient database hiccup.
+  #
+  # sweep/0 itself stays unguarded: it is called directly by tests, and a broken
+  # query should still raise there rather than be swallowed. It is specifically
+  # the *scheduled* invocations that must survive a bad moment and try again next
+  # interval - a reaper that gives up after one transient error is a silent
+  # retention failure, the exact failure mode this module exists to prevent.
+  defp safe_sweep do
+    sweep()
+  rescue
+    exception ->
+      Logger.warning("[reaper] sweep failed, will retry next interval: #{inspect(exception)}")
+  catch
+    kind, value ->
+      Logger.warning("[reaper] sweep failed, will retry next interval: #{inspect({kind, value})}")
   end
 
   defp schedule(state) do
