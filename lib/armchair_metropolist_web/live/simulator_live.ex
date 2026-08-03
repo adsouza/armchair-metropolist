@@ -30,9 +30,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   @cell_size 24
 
   @impl true
-  def mount(_params, _session, socket) do
-    city_id = ArmchairMetropolist.Infrastructure.Simulation.CityEngine.default_city_id()
+  # Plug stores session keys as strings, so this matches "city_id" rather than the
+  # atom the plug wrote. The second clause is the desktop target, which has no
+  # browser session and one city.
+  def mount(_params, %{"city_id" => city_id}, socket) when is_binary(city_id) do
+    do_mount(city_id, socket)
+  end
 
+  def mount(_params, _session, socket) do
+    do_mount(
+      Application.get_env(:armchair_metropolist, :desktop_city_id) ||
+        CityEngine.default_city_id(),
+      socket
+    )
+  end
+
+  defp do_mount(city_id, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
 

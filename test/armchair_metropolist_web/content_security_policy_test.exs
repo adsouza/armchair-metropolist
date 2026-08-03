@@ -18,7 +18,7 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.StubSnapshotRepository
 
-  setup do
+  setup %{conn: conn} do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -34,7 +34,16 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
     StubSnapshotRepository.set_initial({:error, :not_found})
     start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
-    :ok
+    # Every request here is a dead render (`get/2`, never `live/2`), so `connected?`
+    # is always false and `do_mount/2` never reaches the `CityEngine.attach/2` call —
+    # the engine it starts via `CityEngine.snapshot/1` gets no viewer to monitor, so the
+    # freeze-after-linger machinery in city_engine.ex never arms and it would run
+    # forever. Pinning the session to the same id `start_supervised!` above already
+    # owns, rather than leaving EnsureCityId (router.ex) to hand this conn a fresh
+    # random one, means this test's engine is the one ExUnit tears down for us.
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => CityEngine.default_city_id()})
+
+    {:ok, conn: conn}
   end
 
   defp policy(conn) do

@@ -4,6 +4,7 @@ defmodule ArmchairMetropolistWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug ArmchairMetropolistWeb.Plugs.EnsureCityId
     plug :fetch_live_flash
     plug :put_root_layout, html: {ArmchairMetropolistWeb.Layouts, :root}
     plug :protect_from_forgery

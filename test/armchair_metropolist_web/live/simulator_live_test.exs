@@ -12,19 +12,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.StubSnapshotRepository
 
   # The same topic SimulatorLive.mount/3 subscribes to for CityEngine.default_city_id/0 —
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
   @topic CityEngine.topic(CityEngine.default_city_id())
 
-  setup do
+  setup %{conn: conn} do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -40,7 +42,30 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     StubSnapshotRepository.set_initial({:error, :not_found})
     start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
-    :ok
+    # Every test but the two-visitor one below shares this session's city id with
+    # `start_supervised!`'s engine above, exactly as a single shared deployment did
+    # before Task 4. Without this, EnsureCityId (router.ex) would hand each `conn` its
+    # own random id, mount/3 would open an engine the DynamicSupervisor owns instead of
+    # this test's `start_supervised!`, and it would outlive the test that opened it.
+    conn = Plug.Test.init_test_session(conn, %{"city_id" => CityEngine.default_city_id()})
+
+    # The two-visitor test below still mounts two more cities through the production
+    # ensure_started/1 path rather than start_supervised!/1, so nothing but this stops
+    # them. ExUnit tears down `start_supervised!`'s "default" engine above before
+    # on_exit callbacks run, so anything this sweep finds is one of those two leaks —
+    # left running, each would sit subscribed to the global "city_tick" topic for
+    # engine_linger_ms (30s in prod, unset here) and could checkpoint into whatever
+    # :snapshot_repository a later test configures. Same problem and same fix as
+    # city_engine_test.exs's "freezing when the last viewer leaves" describe block.
+    on_exit(fn ->
+      CityRegistry.Registry
+      |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+      |> Enum.each(fn {_city_id, pid} ->
+        capture_log(fn -> DynamicSupervisor.terminate_child(CityRegistry.Supervisor, pid) end)
+      end)
+    end)
+
+    {:ok, conn: conn}
   end
 
   test "renders the grid and the legend", %{conn: conn} do
@@ -92,6 +117,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   defp rendered_node(html, dom_id) do
     [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
     String.slice(tail, 0, 160)
+  end
+
+  test "two visitors with different sessions get different cities", %{conn: conn} do
+    a = Plug.Test.init_test_session(conn, %{"city_id" => "aaaaaaaaaaaaaaaaaaaaaa"})
+    b = Plug.Test.init_test_session(conn, %{"city_id" => "bbbbbbbbbbbbbbbbbbbbbb"})
+
+    {:ok, view_a, _html} = live(a, ~p"/")
+    {:ok, view_b, _html} = live(b, ~p"/")
+
+    render_click(view_a, "place", %{"x" => "3", "y" => "4"})
+
+    # The positive case first, so the refute below cannot be vacuous.
+    assert render(view_a) =~ ~s{id="3:4"}
+    refute render(view_b) =~ ~s{id="3:4"}
   end
 
   test "clicking a cell places infrastructure", %{conn: conn} do
