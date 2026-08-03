@@ -17,6 +17,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
   @app_keys [
     :start_repo,
     :start_shutdown_manager,
+    :desktop_city_id,
     :snapshot_repository,
     :notifier,
     :snapshot_dir
