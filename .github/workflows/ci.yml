@@ -126,13 +126,7 @@ jobs:
       # triple, so bundling there would additionally need a multi-minute cargo install.
       #
       # Nothing waits on this: `deploy` needs only `check`, which finishes in ~50s.
-      # !!! TEMPORARY — REVERT BEFORE MERGE !!!
-      # The bundle steps normally gate on a push to main, which means a fix to the bundle
-      # path cannot be exercised by its own pull request. This clause lets THIS branch run
-      # them once to prove f41f1f6, and is reverted in the following commit. Note the branch
-      # test uses github.head_ref, not github.ref: on a pull_request event github.ref is the
-      # merge ref (refs/pull/N/merge), so a refs/heads/<branch> comparison never matches.
-      BUNDLE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'fix-appindicator-bundle-dep') && matrix.target == 'x86_64-unknown-linux-gnu' }}
+      BUNDLE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.target == 'x86_64-unknown-linux-gnu' }}
 
     strategy:
       fail-fast: false
