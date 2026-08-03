@@ -56,7 +56,12 @@ printf 'Depends: %s\n' "$DEPENDS"
 #    the target triple from externalBin entries — on macOS the file lands as
 #    Contents/MacOS/desktop — so the *name* is asserted and the directory is not, because
 #    the Linux path is not yet known.
-if ! dpkg-deb --contents "$DEB" | awk '{print $NF}' | grep -qE '(^|/)desktop$'; then
+# Fields 6..NF, not $NF: `dpkg-deb --contents` puts the path last but paths here contain
+# spaces — this package really ships `usr/share/applications/Armchair Metropolist.desktop`,
+# which $NF truncates to `Metropolist.desktop`. That truncation cannot produce a false
+# negative, but `.../Armchair desktop` would truncate to exactly `desktop` and pass
+# vacuously, which is the failure this assertion exists to prevent.
+if ! dpkg-deb --contents "$DEB" | awk '{ out=$6; for (i=7;i<=NF;i++) out = out " " $i; print out }' | grep -qE '(^|/)desktop$'; then
   dpkg-deb --contents "$DEB"
   fail "the Burrito sidecar (a file named 'desktop') is not inside the .deb"
 fi

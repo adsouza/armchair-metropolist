@@ -149,6 +149,31 @@ the built binaries' symbol requirements would allow a lower, truer bound.
 All three package names were verified present in Ubuntu 24.04 (noble), Debian 12 (bookworm),
 Debian 13 (trixie) and Debian 14 (forky).
 
+**Measured against the built package, Tauri appends its own dependencies to ours** — and that
+changes what our declarations are worth. The shipped control file reads:
+
+```
+Depends: libwebkit2gtk-4.1-0, libc6 (>= 2.39), libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0
+Recommends: libayatana-appindicator3-1
+```
+
+The last three entries are the CLI's, hardcoded at `crates/tauri-cli/src/interface/rust.rs:1426`,
+`:1443` and `:1444`. Three consequences:
+
+* **Our `libwebkit2gtk-4.1-0` is redundant** — hence the duplicate. Harmless to `apt`, but it is
+  belt-and-braces rather than the load-bearing entry this section presented it as.
+* **The `recommends` reasoning above is moot.** Tauri hard-`Depends` on
+  `libayatana-appindicator3-1` regardless, so the careful `recommends`-not-`depends` argument
+  changes nothing about the installed result. It is left in place because it costs nothing and
+  documents our intent, but Tauri decides.
+* **`libc6 (>= 2.39)` is the only entry that is genuinely ours,** which makes §10's glibc-floor
+  bullet the real payload of this whole section.
+
+And a caution above turns out to be unnecessary: Tauri names `libgtk-3-0` directly, the very thing
+this section avoided over Ubuntu's `t64` rename. It resolves anyway — `libgtk-3-0t64` in noble
+declares `Provides: libgtk-3-0 (= 3.24.41-4ubuntu1)`, verified against the archive's own
+`Packages` index, and it is the only provider. The t64 transition kept the compatibility name.
+
 ### Version
 
 This project stores its version in four places, and they already disagree:
@@ -224,11 +249,23 @@ x86_64-unknown-linux-gnu` and then reading every `[package.metadata.system-deps]
 | `gtk+-3.0`, `gdk-3.0`, `gdk-x11-3.0`, `atk`, `cairo`, `cairo-gobject`, `pango`, `gdk-pixbuf-2.0`, `gio-2.0`, `glib-2.0`, `gobject-2.0` | gtk-sys 0.18.2 and the gtk-rs 0.18 family | `libgtk-3-dev` |
 | `webkit2gtk-4.1`, `javascriptcoregtk-4.1`, `libsoup-3.0` | webkit2gtk-sys 2.0.2, javascriptcore-rs-sys 1.1.1, soup3-sys 0.5.0 | `libwebkit2gtk-4.1-dev` |
 | `dbus-1` | libdbus-sys 0.2.7 ← tao 0.35.3 ← tauri-runtime-wry | `libdbus-1-dev` |
+| `ayatana-appindicator3-0.1` | **the `cargo-tauri` CLI itself**, not any crate — `pkgconfig_utils::get_appindicator_library_path`, `crates/tauri-cli/src/interface/rust.rs:1711-1722` | `libayatana-appindicator3-dev` |
 
-Four differences from Tauri's published apt line, all of them measured:
+Differences from Tauri's published apt line, all of them measured — including one where
+that page was right and this derivation was wrong:
 
 * **`libxdo-dev` is not needed.** There is no `xdo` crate anywhere in `Cargo.lock`.
-* **`libayatana-appindicator3-dev` is not needed at build time**, for the `dlopen` reason in §5.
+* **`libayatana-appindicator3-dev` IS needed — and a dependency-graph derivation cannot discover
+  that.** This was originally recorded here as unnecessary, on the correct but irrelevant grounds
+  that `libappindicator-sys` 0.9.0 has no `build.rs` and `dlopen`s the library (§5). That is a fact
+  about *compiling*. The consumer is the **Tauri CLI**, which is a prebuilt binary downloaded
+  separately and therefore absent from `Cargo.lock`: it shells out to `pkg-config` for
+  `ayatana-appindicator3-0.1`, falls back to `appindicator3-0.1`, and **panics** when neither `.pc`
+  file exists. Run `30805473925` on main is the evidence — the Rust compile finished cleanly in
+  4m03s and `cargo-tauri` then aborted with exit 134 and `Can't detect any appindicator library`.
+  The lesson generalises: enumerate build inputs by **process** — every executable the build runs —
+  not by dependency graph, and treat a docs/derivation disagreement as a signal that the docs may
+  describe a consumer the graph cannot see.
 * **`libdbus-1-dev` *is* needed and Tauri's list omits it.** This is the dangerous direction: the
   omission surfaces as a `system-deps` probe failure hundreds of crates into a release build.
 * **`libssl-dev` is not needed.** There is no `openssl-sys` anywhere in the tree.
@@ -282,14 +319,14 @@ is unproven; keeping the proven step standing on its own is worth 69 s.
 |---|---|---|
 | any pull request, either arch | 57 s / 95 s | **unchanged** |
 | push to main, aarch64 | 57 s | **unchanged** |
-| push to main, x86_64 | 95 s | **~9–15 min (estimated)** |
+| push to main, x86_64 | 95 s | **374 s / 6 m 14 s (measured)** |
 | `deploy` starts / finishes on main | T+54 s / T+107 s | **unchanged** |
 
-The estimate is the one number here that is not measured, and it cannot be measured from this
-machine. Its basis: 338 crates compiled in release mode on a 4-vCPU runner, plus ~60 s of apt, plus
-the 69 s of duplicated Burrito work from §8, plus bundling. `src-tauri/target/release` is 2.3 GB
-locally after a comparable macOS build, which is a second reason to expect minutes rather than
-seconds.
+Measured on run `30806469213`, the first green bundle: job total **374 s**, of which
+`mix ex_tauri.build` was **240 s** (the Rust release compile itself reported `Finished in 4m 03s`
+inside it), apt **66 s**, the prebuilt Tauri CLI download **under 1 s**, and the duplicated Burrito
+work **35 s**. That lands at the low end of the 9–15 minute estimate this section originally
+carried. The resulting `.deb` is **23 MB**.
 
 The row that matters is the last one. `deploy` needs only `check`, whose slower leg finishes at
 ~T+50 s, so
@@ -324,9 +361,9 @@ complete — from ~2 minutes to ~15.
 * **The CLI tarball is not checksum-verified.** Tauri publishes no per-asset digest alongside it.
   The download is HTTPS from the vendor's own release tag; that is the same trust already extended
   to `taiki-e/install-action` in the `rust-advisory` job.
-* **The sidecar's install path inside the .deb is unverified.** On macOS Tauri strips the target
-  triple and installs it as `Contents/MacOS/desktop`, so the *name* is known to be `desktop`; the
-  Linux directory is not. §12's check asserts the filename rather than the path for that reason.
+* **The sidecar installs to `usr/bin/desktop`** — measured, no longer an open question. The Tauri
+  host sits beside it at `usr/bin/armchair_metropolist`. §12's check still asserts the filename
+  rather than the full path, which costs nothing and keeps it robust to Tauri moving the directory.
 * **`version` in `mix.exs` becomes load-bearing the moment anyone installs this.** A production
   Burrito binary unpacks its payload exactly once, keyed on nothing but
   `<name>_erts-<erts>_<app version>`, and `evict_burrito_payload_cache/1` clears only the *build*
@@ -407,13 +444,18 @@ being broken outright.
 
 Two things this cannot verify, stated rather than papered over:
 
-* **Whether `mix ex_tauri.build` completes on Linux at all is unproven until the first push to
-  main.** No container runtime is installed on the development machine — no `docker`, no `podman`;
-  `colima` is present but not running — so there is no local Linux path to pre-flight it. The
-  historically fragile part is already covered: the Linux *sidecar* is green on both arches, and the
-  four `ex_tauri`/Burrito behaviours that had to be fixed to make the macOS build work
-  (`docs/superpowers/2026-07-30-follow-ups.md`) are all in `mix.exs` and apply to every platform.
-  What is genuinely new is the Rust link step and the bundler.
+* **`mix ex_tauri.build` does complete on Linux — proven, but it took two runs.** The first push to
+  main (`30805473925`) went red: the Rust compile succeeded in 4m03s and `cargo-tauri` then panicked
+  with `Can't detect any appindicator library`, because §7's dependency-graph derivation could not
+  see a requirement belonging to the CLI binary. With `libayatana-appindicator3-dev` added, run
+  `30806469213` produced, verified and uploaded a 23 MB `.deb`.
+* **All four remaining assertions in `scripts/verify-deb.sh` are now mutation-verified** against
+  that artifact, on a laptop with `dpkg-deb` installed: each of the four mutations turned it red and
+  the unmutated script still passed. Inspecting the real package also exposed a latent defect the
+  mutations could not — the sidecar check parsed paths with `awk '{print $NF}'`, which truncates
+  `usr/share/applications/Armchair Metropolist.desktop` to `Metropolist.desktop`; a path like
+  `.../Armchair desktop` would have truncated to exactly `desktop` and passed vacuously. Fixed to
+  reassemble fields 6..NF.
 * **Whether the installed application runs.** Nothing here launches the .deb. `Depends` being
   present proves the metadata exists, not that it is sufficient, and the tray code path in §5 is
   reasoned about rather than exercised. A headless smoke test — install, launch under xvfb, assert
