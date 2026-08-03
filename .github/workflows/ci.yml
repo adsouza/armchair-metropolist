@@ -212,22 +212,30 @@ jobs:
       # the Linux wrapper build is unproven.
       # ---------------------------------------------------------------------------
 
-      # Derived from src-tauri/Cargo.lock, not copied from Tauri's prerequisites page,
-      # which is a union across all Tauri projects. Reading every
+      # Derived from src-tauri/Cargo.lock *and* from what the Tauri CLI itself runs —
+      # enumerated by process, not by dependency graph. Reading every
       # [package.metadata.system-deps] table and pkg_config probe in the 338-crate Linux
-      # tree gives exactly these three, and differs from that page four ways:
-      # libxdo-dev is unnecessary (no xdo crate anywhere), libayatana-appindicator3-dev
-      # is unnecessary at build time (libappindicator-sys 0.9 has no build.rs — it
-      # dlopens the library), libssl-dev is unnecessary (no openssl-sys), and
-      # libdbus-1-dev is REQUIRED but absent from that page: tao pulls libdbus-sys, which
-      # probes dbus-1 with plain pkg_config. That omission is the dangerous direction —
-      # it surfaces hundreds of crates into a release build.
+      # tree gives the first three; it differs from Tauri's prerequisites page two ways:
+      # libxdo-dev is unnecessary (no xdo crate anywhere), libssl-dev is unnecessary (no
+      # openssl-sys), and libdbus-1-dev is REQUIRED but absent from that page — tao pulls
+      # libdbus-sys, which probes dbus-1 with plain pkg_config.
+      #
+      # libayatana-appindicator3-dev is the one a dependency-graph derivation CANNOT find,
+      # and leaving it out is what reddened the first run on main (run 30805473925): the
+      # Rust compile finished cleanly in 4m03s and then `cargo-tauri` aborted with exit 134,
+      # `Can't detect any appindicator library`. The consumer is the CLI, which is a
+      # prebuilt binary and therefore not in the lockfile at all —
+      # pkgconfig_utils::get_appindicator_library_path (tauri-cli
+      # crates/tauri-cli/src/interface/rust.rs:1711-1722) shells out to pkg-config for
+      # ayatana-appindicator3-0.1, falls back to appindicator3-0.1, and panics when neither
+      # .pc file exists. `libappindicator-sys` 0.9 having no build.rs is true and
+      # irrelevant: it says nothing about what the bundler needs.
       - name: Install the GTK and WebKit development headers
         if: env.BUNDLE == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev
+            libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libayatana-appindicator3-dev
 
       # NOT `mix ex_tauri.install`. That is the supported way to get this binary and the
       # wrong one here: it is Igniter-driven and regenerates src-tauri/src/main.rs from a

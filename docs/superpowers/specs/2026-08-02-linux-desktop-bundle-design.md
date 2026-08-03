@@ -224,11 +224,23 @@ x86_64-unknown-linux-gnu` and then reading every `[package.metadata.system-deps]
 | `gtk+-3.0`, `gdk-3.0`, `gdk-x11-3.0`, `atk`, `cairo`, `cairo-gobject`, `pango`, `gdk-pixbuf-2.0`, `gio-2.0`, `glib-2.0`, `gobject-2.0` | gtk-sys 0.18.2 and the gtk-rs 0.18 family | `libgtk-3-dev` |
 | `webkit2gtk-4.1`, `javascriptcoregtk-4.1`, `libsoup-3.0` | webkit2gtk-sys 2.0.2, javascriptcore-rs-sys 1.1.1, soup3-sys 0.5.0 | `libwebkit2gtk-4.1-dev` |
 | `dbus-1` | libdbus-sys 0.2.7 ← tao 0.35.3 ← tauri-runtime-wry | `libdbus-1-dev` |
+| `ayatana-appindicator3-0.1` | **the `cargo-tauri` CLI itself**, not any crate — `pkgconfig_utils::get_appindicator_library_path`, `crates/tauri-cli/src/interface/rust.rs:1711-1722` | `libayatana-appindicator3-dev` |
 
-Four differences from Tauri's published apt line, all of them measured:
+Differences from Tauri's published apt line, all of them measured — including one where
+that page was right and this derivation was wrong:
 
 * **`libxdo-dev` is not needed.** There is no `xdo` crate anywhere in `Cargo.lock`.
-* **`libayatana-appindicator3-dev` is not needed at build time**, for the `dlopen` reason in §5.
+* **`libayatana-appindicator3-dev` IS needed — and a dependency-graph derivation cannot discover
+  that.** This was originally recorded here as unnecessary, on the correct but irrelevant grounds
+  that `libappindicator-sys` 0.9.0 has no `build.rs` and `dlopen`s the library (§5). That is a fact
+  about *compiling*. The consumer is the **Tauri CLI**, which is a prebuilt binary downloaded
+  separately and therefore absent from `Cargo.lock`: it shells out to `pkg-config` for
+  `ayatana-appindicator3-0.1`, falls back to `appindicator3-0.1`, and **panics** when neither `.pc`
+  file exists. Run `30805473925` on main is the evidence — the Rust compile finished cleanly in
+  4m03s and `cargo-tauri` then aborted with exit 134 and `Can't detect any appindicator library`.
+  The lesson generalises: enumerate build inputs by **process** — every executable the build runs —
+  not by dependency graph, and treat a docs/derivation disagreement as a signal that the docs may
+  describe a consumer the graph cannot see.
 * **`libdbus-1-dev` *is* needed and Tauri's list omits it.** This is the dangerous direction: the
   omission surfaces as a `system-deps` probe failure hundreds of crates into a release build.
 * **`libssl-dev` is not needed.** There is no `openssl-sys` anywhere in the tree.
