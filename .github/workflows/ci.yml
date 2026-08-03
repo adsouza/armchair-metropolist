@@ -115,6 +115,18 @@ jobs:
     # never downloaded (phoenix_live_reload). That includes `mix assets.setup`.
     env:
       MIX_ENV: prod
+      # Whether this leg also builds the *bundle* — a runnable application — on top of
+      # the sidecar. Stated once because five steps below share it.
+      #
+      # A Tauri release build compiles 338 crates against a target directory too large
+      # to cache (2.3 GB against a 10 GB repository budget already holding four mix
+      # caches), taking this job from ~1 minute to an estimated 9-15. So it is confined
+      # to one arch on pushes to main: pull requests keep the fast sidecar-only job, and
+      # aarch64 keeps it always — Tauri publishes no prebuilt cargo-tauri for that
+      # triple, so bundling there would additionally need a multi-minute cargo install.
+      #
+      # Nothing waits on this: `deploy` needs only `check`, which finishes in ~50s.
+      BUNDLE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.target == 'x86_64-unknown-linux-gnu' }}
 
     strategy:
       fail-fast: false
@@ -185,6 +197,85 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}
           path: burrito_out/desktop_${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # ---------------------------------------------------------------------------
+      # The bundle. Everything below produces a runnable Linux application; everything
+      # above produces the sidecar it wraps.
+      #
+      # The sidecar steps stay unconditional and first on purpose. `mix ex_tauri.build`
+      # re-runs `mix release desktop` internally (ExTauri.wrap/0, deps/ex_tauri/lib/
+      # ex_tauri.ex:245), so this duplicates ~69s of Burrito work on this one path. That
+      # is the price of a wrapper failure never being able to take the sidecar's arch
+      # check and artifact down with it — the sidecar is green on both arches today and
+      # the Linux wrapper build is unproven.
+      # ---------------------------------------------------------------------------
+
+      # Derived from src-tauri/Cargo.lock, not copied from Tauri's prerequisites page,
+      # which is a union across all Tauri projects. Reading every
+      # [package.metadata.system-deps] table and pkg_config probe in the 338-crate Linux
+      # tree gives exactly these three, and differs from that page four ways:
+      # libxdo-dev is unnecessary (no xdo crate anywhere), libayatana-appindicator3-dev
+      # is unnecessary at build time (libappindicator-sys 0.9 has no build.rs — it
+      # dlopens the library), libssl-dev is unnecessary (no openssl-sys), and
+      # libdbus-1-dev is REQUIRED but absent from that page: tao pulls libdbus-sys, which
+      # probes dbus-1 with plain pkg_config. That omission is the dangerous direction —
+      # it surfaces hundreds of crates into a release build.
+      - name: Install the GTK and WebKit development headers
+        if: env.BUNDLE == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev
+
+      # NOT `mix ex_tauri.install`. That is the supported way to get this binary and the
+      # wrong one here: it is Igniter-driven and regenerates src-tauri/src/main.rs from a
+      # template, discarding the hand-injected ARMCHAIR_DESKTOP=1 that every desktop
+      # config override keys off (docs/superpowers/2026-07-30-follow-ups.md, "Desktop
+      # release env staleness"). This does the one thing that installer does which CI
+      # needs: put a binary where ExTauri's `tauri_cli_path!()` looks for it.
+      #
+      # A prebuilt binary rather than `cargo install tauri-cli`, which compiles for
+      # minutes. Pinned rather than following config/config.exs's floating `^2.5.1`: a
+      # runner should be reproducible where a laptop may float. Bump this when that pin
+      # moves. Note the asset only exists for x86_64 and riscv64gc — there is no
+      # aarch64-unknown-linux-gnu build, which is half the reason for the arch gate above.
+      #
+      # Deliberately not guarded with `test -x`: _build is cached, and a guard would let
+      # a CLI left by an older pin survive this bump silently.
+      - name: Install the Tauri CLI
+        if: env.BUNDLE == 'true'
+        env:
+          TAURI_CLI_VERSION: "2.11.4"
+        run: |
+          mkdir -p _build/_tauri/bin
+          curl -fsSL -o /tmp/cargo-tauri.tgz \
+            "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-x86_64-unknown-linux-gnu.tgz"
+          tar -xzf /tmp/cargo-tauri.tgz -C _build/_tauri/bin cargo-tauri
+          _build/_tauri/bin/cargo-tauri --version
+
+      # `--bundles deb` narrows tauri.conf.json's `"targets": "all"`, which on Linux would
+      # also build rpm and AppImage. AppImage's bundler downloads five artefacts during
+      # the build (appimage/linuxdeploy.rs), two of them from an unpinned `master` branch,
+      # so it can break with no change to this repository and no advisory to explain it.
+      # The config keeps "all" so a local macOS build still produces .app and .dmg.
+      - name: Build the Linux bundle
+        if: env.BUNDLE == 'true'
+        run: mix ex_tauri.build --ci --bundles deb
+
+      # The same script a laptop runs against a downloaded artifact — see its header for
+      # why the assertions live there rather than inline here.
+      - name: Verify the .deb
+        if: env.BUNDLE == 'true'
+        run: ./scripts/verify-deb.sh src-tauri/target/release/bundle
+
+      - name: Upload the Linux bundle
+        if: env.BUNDLE == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-bundle-${{ matrix.target }}
+          path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 14
   # The Rust half of what `mix check` does for Elixir. `deps.audit` reads mix.lock
