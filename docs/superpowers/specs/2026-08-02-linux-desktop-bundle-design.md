@@ -94,7 +94,12 @@ later is a one-word change to `--bundles`.
 Flatpak are the formats that reach other distributions. That gap is real and accepted for now; see
 §10.
 
-## 5. The .deb declares no dependencies unless we say so
+## 5. What the .deb declares about itself
+
+Two fields, neither of which is derived from the build. One is absent by default; the other is read
+from whichever of three disagreeing declarations happens to win.
+
+### Dependencies
 
 `debian.rs:204` reads `settings.deb().depends` and writes a `Depends:` field only if it is
 non-empty. With `bundle.linux` unset — which is the state today — **the generated .deb has no
@@ -125,6 +130,28 @@ failure fires only when the tray API is first called. `src-tauri/src/main.rs` bu
 in response to a `set_tray` command from Elixir, and no Elixir code sends one, so the path is
 unreachable today. A hard dependency would refuse to install over a reachable-in-principle,
 never-reached code path.
+
+### Version
+
+This project declares its version three times, and the three already disagree:
+
+| declaration | value | what it drives |
+|---|---|---|
+| `mix.exs:7` | `0.1.0` | the Mix release version → Burrito's payload cache key, `desktop_erts-17.0.4_0.1.0` |
+| `src-tauri/tauri.conf.json:41` | `0.1.0` | the .deb filename and its control `Version:` field; the .dmg name; `CFBundleShortVersionString` |
+| `src-tauri/Cargo.toml:3` | **`0.2.0`** | the Rust crate version — currently read by nothing that ships |
+
+The Cargo value is inert but armed. `rust.rs:1093` resolves the bundle version as
+`config.version.clone().unwrap_or_else(|| <cargo package.version>)`, so removing or blanking
+`"version"` in `tauri.conf.json` promotes the already-wrong `0.2.0` to naming every artifact,
+silently.
+
+**This change aligns `Cargo.toml` to `0.1.0`** and regenerates `Cargo.lock`, which carries the crate
+version too. Down rather than up: `0.1.0` is what the two declarations that actually ship agree on,
+and `0.2.0` was never a deliberate release of anything.
+
+Aligning is not the same as keeping aligned. The mechanism that would prevent the next drift —
+asserting a release tag against all three — belongs to the release-tagging work in §9, not here.
 
 ## 6. System packages, derived from the lockfile
 
@@ -241,6 +268,14 @@ complete — from ~2 minutes to ~15.
   Ship two different 0.1.0 debs and the second one installs new code that never runs. This is not
   introduced by this change, but this change is what makes it reachable by someone other than us.
 
+  **The intended fix is tag-driven GitHub Releases, spec'd separately once the .deb is proven.**
+  That is what turns the version from an afterthought into the trigger, and its first step should be
+  asserting that the tag, `mix.exs`, `tauri.conf.json` and `Cargo.toml` all agree — the check that
+  would have caught the §5 drift on the day it happened. It also resolves the first two limitations
+  in this list: at release cadence the ~5-minute `cargo install tauri-cli` needed for arm64 is
+  affordable, and a Release is permanent and public where these artifacts expire in 14 days and need
+  repository access to download.
+
 ## 10. Flatpak, deferred
 
 Considered and deliberately not built now. Recording why, because the reasons are not obvious and
@@ -294,6 +329,7 @@ Each of these is asserted by the "Verify the .deb" step, and each must be shown 
 | `bundle/appimage/` and `bundle/rpm/` do **not** exist | drop `--bundles deb`; both must appear, proving the flag was doing something |
 | `dpkg-deb --field <deb> Depends` is non-empty | remove `bundle.linux.deb.depends` from `tauri.conf.json`; this is the standing regression test for §5 |
 | `dpkg-deb --contents <deb>` lists a file named `desktop` | assert a name that is not there, and confirm the failure prints the full contents listing so the real path is discoverable |
+| `dpkg-deb --field <deb> Version` is `0.1.0` | this one is not mutated but observed: it proves at runtime that `tauri.conf.json` is the authority and `Cargo.toml` is the unused fallback, which §5 establishes only by reading `rust.rs:1093` |
 
 Two things this cannot verify, stated rather than papered over:
 
