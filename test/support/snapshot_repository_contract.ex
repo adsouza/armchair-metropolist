@@ -9,13 +9,21 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
 
   ## On the ordering cases
 
-  `load_latest/0` means **highest tick wins**, not *last write wins*. That
-  distinction is invisible while ticks only ever ascend, which is why the
-  ascending-only "returns the most recent snapshot" case passed against both
-  adapters for two *different* reasons: `SnapshotStore` orders by `desc: tick`,
-  while `FileSnapshotStore` merely read back whatever it happened to write last.
-  The descending case is what told them apart — `save(9, …)` then `save(1, …)`
-  returned tick 9 from Postgres and tick 1 from the file adapter.
+  A save cannot move a city backwards: both adapters refuse a tick at or below
+  what is already stored and say so with `{:stale, stored_tick}`, rather than
+  silently keeping the newer content while reporting `:ok` as if the write had
+  happened. That distinction is invisible while ticks only ever ascend, which is
+  why the ascending-only "returns the most recent snapshot" case passes against
+  both adapters without exercising the guarantee at all. The descending and
+  equal-tick cases are what actually exercise it.
+
+  ## What this contract is not
+
+  It is a shape and a staleness guarantee, not a tenancy model. `FileSnapshotStore`
+  ignores the city id and keeps exactly one pair of files, so per-city isolation is
+  real for `SnapshotStore` and does not exist for `FileSnapshotStore` — asserting it
+  here would be a false claim for one adapter, not a shared property with an
+  adapter-specific wrinkle. It lives in `snapshot_store_test.exs` instead.
 
   Keep every assertion here adapter-agnostic. If one adapter needs a case the
   other cannot satisfy, that is a divergence worth naming, not special-casing.
@@ -60,33 +68,25 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
         assert :ok === @adapter.save(@city_id, 3, sample_city())
       end
 
-      test "load/1 returns the highest tick, not the last written" do
+      test "save/3 refuses an older tick and says so" do
         assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
-        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+
+        assert {:stale, 9} = @adapter.save(@city_id, 1, CityMap.new(11, 11))
 
         assert {:ok, {9, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
       end
 
-      test "an older tick never demotes a newer stored snapshot" do
-        # Two stale saves in a row must not walk a newer snapshot out of storage,
-        # however many times they happen. On a last-write-wins file adapter the
-        # second one also overwrote the backup, losing the tick-9 city for good.
-        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
-        assert :ok = @adapter.save(@city_id, 0, CityMap.new(40, 30))
-        assert :ok = @adapter.save(@city_id, 0, CityMap.new(40, 30))
+      test "save/3 refuses an equal tick, so a replay cannot rewrite a stored tick" do
+        assert :ok = @adapter.save(@city_id, 5, CityMap.new(19, 19))
 
-        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
+        assert {:stale, 5} = @adapter.save(@city_id, 5, CityMap.new(11, 11))
+
+        assert {:ok, {5, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
       end
 
-      test "load/1 does not see another city's snapshot" do
-        assert :ok = @adapter.save("city-a", 5, CityMap.new(12, 12))
-
-        assert {:error, :not_found} = @adapter.load("city-b")
-      end
-
-      test "save/3 overwrites the same city rather than accumulating" do
+      test "save/3 advances the same city rather than accumulating rows" do
         assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
         assert :ok = @adapter.save(@city_id, 2, CityMap.new(12, 12))
 

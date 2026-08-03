@@ -259,8 +259,21 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # trips `max_restarts` — it just quietly discards work forever.
   defp save(city_id, city_map) do
     case snapshot_repository().save(city_id, city_map.tick, city_map) do
-      :ok -> :ok
-      {:error, reason} -> log_failed_save(city_map.tick, reason)
+      :ok ->
+        :ok
+
+      # Not a failure — the adapter refused to move the city backwards. Worth a warning
+      # rather than silence, because reaching here means this engine hydrated from an
+      # older snapshot than the one stored: a crash-and-replay, which is the exact case
+      # the guarantee exists for and the only signal that it happened.
+      {:stale, stored_tick} ->
+        Logger.warning(
+          "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
+            "a newer snapshot at tick #{stored_tick} is already stored"
+        )
+
+      {:error, reason} ->
+        log_failed_save(city_map.tick, reason)
     end
   rescue
     # Both shipped adapters honour the port's `{:error, term()}`. These two clauses

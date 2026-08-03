@@ -2,7 +2,15 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   @moduledoc """
   Ecto/Postgres adapter implementing the SnapshotRepository port.
 
-  One row per city, keyed by `city_id`, upserted on every save.
+  One row per city, keyed by `city_id`.
+
+  ## A save cannot move a city backwards
+
+  `save/3` refuses and returns `{:stale, stored_tick}` when the stored row is already
+  at `tick` or later, rather than overwriting it. See the port's moduledoc for why:
+  a crashed-and-replayed engine can otherwise write an older city over a newer one.
+  The read, the comparison and the write happen inside one `FOR UPDATE`-locked
+  transaction so nothing else can slip a save in between the check and the write.
 
   ## Failures are returned, never raised
 
@@ -17,6 +25,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   """
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
+
+  import Ecto.Query
 
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo, SnapshotVocabulary}
 
@@ -40,25 +50,46 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   def save(city_id, tick, city_map) do
     payload = :erlang.term_to_binary(city_map, [:compressed])
     checksum = :crypto.hash(:md5, payload) |> Base.encode16()
-    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
-    # An explicit `set:` rather than `on_conflict: :replace_all`, for two reasons:
-    # :replace_all would also overwrite inserted_at, losing when the city was first
-    # created; and updated_at must move on every save because the reaper sweeps on it.
-    %CitySnapshot{}
-    |> CitySnapshot.changeset(%{
-      city_id: city_id,
-      tick: tick,
-      payload: payload,
-      checksum: checksum
-    })
-    |> Repo.insert(
-      on_conflict: [set: [tick: tick, payload: payload, checksum: checksum, updated_at: now]],
-      conflict_target: :city_id
-    )
+    # Read-then-write in a transaction, rather than a query-based `on_conflict` with a
+    # `where: s.tick < ^tick`. The SQL form is terser and refuses the stale write just
+    # as well, but it gives no way to tell a refused update from an applied one — and
+    # the port requires the refusal be *reportable*, not merely effective.
+    #
+    # `FOR UPDATE` is belt-and-braces: the Registry guarantees one engine per city, so
+    # nothing else writes this row. It costs one lock on a once-per-checkpoint write and
+    # removes the need to reason about that guarantee holding forever.
+    Repo.transaction(fn ->
+      existing =
+        Repo.one(from(s in CitySnapshot, where: s.city_id == ^city_id, lock: "FOR UPDATE"))
+
+      case existing do
+        %CitySnapshot{tick: stored} when stored >= tick ->
+          {:stale, stored}
+
+        _ ->
+          changeset =
+            CitySnapshot.changeset(existing || %CitySnapshot{}, %{
+              city_id: city_id,
+              tick: tick,
+              payload: payload,
+              checksum: checksum
+            })
+
+          # Ecto's timestamps() move updated_at on the update path, which is what the
+          # reaper sweeps on. inserted_at is left alone, so a city keeps its creation
+          # time across every later save.
+          result = if existing, do: Repo.update(changeset), else: Repo.insert(changeset)
+
+          case result do
+            {:ok, _snapshot} -> :ok
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+      end
+    end)
     |> case do
-      {:ok, _snapshot} -> :ok
-      {:error, changeset} -> {:error, changeset}
+      {:ok, outcome} -> outcome
+      {:error, reason} -> {:error, reason}
     end
   rescue
     # Postgrex.Error, DBConnection.ConnectionError, and anything else the driver

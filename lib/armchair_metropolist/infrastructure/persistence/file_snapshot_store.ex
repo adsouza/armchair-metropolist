@@ -11,12 +11,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   tick**, not whichever was written most recently. This matches the port's
   intent: `save/3` takes the tick precisely so storage can order by it.
 
-  Correspondingly, `save_current/2` **refuses to demote**. A save whose tick is *older*
-  than the tick already stored in the primary is accepted and reported `:ok`, but
-  it neither replaces the primary nor rotates the backup. `:ok` rather than an
-  error is deliberate: the caller asked for its state to be persisted and a
-  strictly newer state already is, so nothing has gone wrong and nothing needs
-  logging.
+  `save/3` honours the port's staleness guarantee at that level: it consults
+  `load_current/0` first and returns `{:stale, stored}` without touching disk when
+  a tick at least as high is already stored, rather than writing and letting a
+  stale snapshot sit unread. `save_current/2` — the renamed original body, called
+  only once `save/3` has decided the write is not stale — keeps its own,
+  narrower guard: a tick *older* than the primary's is accepted and reported `:ok`
+  without replacing the primary or rotating the backup. The two guards cannot
+  disagree, because the backup can never hold a tick higher than a readable
+  primary — `save_current/2` only ever rotates a primary out once a strictly
+  newer or equal tick has been accepted, so `load_current/0`'s max is always the
+  primary's.
 
   Equal ticks *do* overwrite, so re-saving the current tick behaves as a plain
   update rather than being silently dropped.
@@ -49,8 +54,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   @impl true
   def load(_city_id), do: load_current()
 
+  # Honours the port's staleness guarantee by declining the write, where before a stale
+  # save landed on the primary and `load_current/0`'s max_by(tick) simply ignored it.
+  # Observably identical through `load/1`, and strictly better on disk: refusing the
+  # write also leaves the backup in place instead of rotating a newer snapshot out of it.
   @impl true
-  def save(_city_id, tick, city_map), do: save_current(tick, city_map)
+  def save(_city_id, tick, city_map) do
+    case load_current() do
+      {:ok, {stored, _city_map}} when stored >= tick -> {:stale, stored}
+      _ -> save_current(tick, city_map)
+    end
+  end
 
   def load_current do
     # Mandatory before any `:safe` decode below, and the reason is not obvious —

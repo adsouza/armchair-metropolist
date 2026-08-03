@@ -19,12 +19,28 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   @doc "Every {city_id, tick, city_map} passed to save/3, newest first."
   def saves, do: Agent.get(__MODULE__, & &1.saves)
 
+  @doc """
+  Make the next `save/3` refuse with `{:stale, tick}`.
+
+  Only the engine's handling of a refusal needs this; the real adapters' own refusal
+  logic is covered by the shared contract.
+  """
+  def refuse_saves_as_stale(stored_tick) do
+    Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_tick))
+  end
+
   @impl true
   def load(_city_id), do: Agent.get(__MODULE__, & &1.initial)
 
   @impl true
   def save(city_id, tick, city_map) do
-    Agent.update(__MODULE__, &%{&1 | saves: [{city_id, tick, city_map} | &1.saves]})
-    :ok
+    case Agent.get(__MODULE__, &Map.get(&1, :stale_at)) do
+      nil ->
+        Agent.update(__MODULE__, &%{&1 | saves: [{city_id, tick, city_map} | &1.saves]})
+        :ok
+
+      stored_tick ->
+        {:stale, stored_tick}
+    end
   end
 end

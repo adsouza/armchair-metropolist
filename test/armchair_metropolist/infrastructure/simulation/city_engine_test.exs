@@ -419,6 +419,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert [{"default", 1, saved} | _] = StubSnapshotRepository.saves()
       assert saved.tick == 1
     end
+
+    test "warns rather than failing when the adapter refuses a stale save" do
+      # Without this override tick 1 is not a checkpoint (the default interval is
+      # 50), and the save the assertions below depend on would never happen.
+      Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 1)
+      StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
+      start_supervised!(CityEngine)
+      StubSnapshotRepository.refuse_saves_as_stale(99)
+
+      log =
+        capture_log(fn ->
+          {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+          Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
+          # Let the engine handle the tick, whose checkpoint attempts the save.
+          {:ok, _} = CityEngine.snapshot()
+        end)
+
+      assert log =~ "declined to persist"
+      assert log =~ "tick 99"
+      refute log =~ "failed to persist"
+    end
   end
 
   describe "a repository that cannot save" do
