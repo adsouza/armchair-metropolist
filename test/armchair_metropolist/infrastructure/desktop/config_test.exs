@@ -108,7 +108,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.ConfigTest do
       endpoint = Application.get_env(:armchair_metropolist, @endpoint_key)
 
       assert Keyword.fetch!(endpoint, :check_origin) == false,
-             "an ephemeral per-launch port cannot be whitelisted, so this must be off"
+             "an ephemeral per-launch port cannot be allowlisted, so this must be off"
 
       assert endpoint |> Keyword.fetch!(:http) |> Keyword.fetch!(:ip) == {127, 0, 0, 1},
              "loopback only is what makes check_origin: false a safe trade"

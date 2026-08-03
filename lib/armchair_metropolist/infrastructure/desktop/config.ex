@@ -102,7 +102,7 @@ defmodule ArmchairMetropolist.Infrastructure.Desktop.Config do
       |> Keyword.put(:http, http)
       |> Keyword.put(:url, host: "127.0.0.1", port: port(), scheme: "http")
       # Origin checking cannot be pinned when the Tauri host picks a fresh
-      # ephemeral port per launch: there is no host:port pair to whitelist. Left
+      # ephemeral port per launch: there is no host:port pair to allowlist. Left
       # on, it rejected the LiveView socket on every launch and the UI rendered
       # and then sat on "attempting to reconnect".
       |> Keyword.put(:check_origin, false)

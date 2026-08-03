@@ -105,7 +105,7 @@ to `/`. The route goes in the `:browser` pipeline before the `live "/"` entry.
 Two things that must be explicit, because leaving them to the implementer's judgement would produce
 either a crash or a security hole:
 
-* **Shape validation is a whitelist, not a length check.** Accept exactly
+* **Shape validation is an allowlist, not a length check.** Accept exactly
   `~r/\A[A-Za-z0-9_-]{22}\z/` and reject everything else with a 404. The code reaches a database
   query and a `Registry` key, so an unbounded or unfiltered string is the wrong thing to forward.
   Ecto parameterises the query and a `Registry` key is just a term, so neither is an injection risk —
