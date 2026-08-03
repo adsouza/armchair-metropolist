@@ -67,6 +67,12 @@ defmodule ArmchairMetropolistWeb.CityControllerTest do
 
     {:ok, _view, html} = conn |> recycle() |> live(~p"/")
 
+    # The positive case, which the refute below needs in order to mean anything: the
+    # code from the URL is what the mounted city is actually keyed by. Without this the
+    # refute passes even if enter/2 discarded the code and mounted an unrelated city,
+    # because the stub returns the same empty city for every id.
+    assert html =~ @valid
+
     refute html =~ ~s{id="3:4"}
   end
 end
