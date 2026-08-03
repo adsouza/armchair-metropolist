@@ -28,10 +28,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## Broadcasts
 
-  On `"city_simulation"`: `{:city_delta, delta}` on every tick; `{:city_metrics,
+  On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
-  Rejected commands broadcast nothing.
+  Rejected commands broadcast nothing. Each city's events land on their own topic —
+  a shared one would deliver every visitor's deltas to every other visitor.
 
   ## Critical deficit notifications
 
@@ -48,7 +49,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   ## `metrics.resources` at hydration
 
-  `snapshot/0` reports full resource statistics from the moment the engine hydrates,
+  `snapshot/1` reports full resource statistics from the moment the engine hydrates,
   before any tick has run. `Infrastructure` cannot reach `SimulationCalculator`
   directly — the boundary graph forbids it — so the figures come via
   `UseCases.SummarizeCity`. This used to be an empty map, and a LiveView mounting in
@@ -60,6 +61,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
   alias ArmchairMetropolist.UseCases.SummarizeCity
@@ -67,7 +69,6 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   require Logger
 
   @tick_topic "city_tick"
-  @simulation_topic "city_simulation"
 
   @default_grid_width 40
   @default_grid_height 30
@@ -77,32 +78,53 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # Satisfaction below this counts as a critical deficit. See the moduledoc.
   @critical_satisfaction 1.0
 
-  @doc "The topic every simulation event is broadcast on."
-  def topic, do: @simulation_topic
+  @doc "The topic this city's simulation events are broadcast on."
+  def topic(city_id) when is_binary(city_id), do: "city:" <> city_id
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc "The city id the desktop target addresses. Task 4 replaces this in the web target."
+  def default_city_id, do: @default_city_id
+
+  def start_link(opts) do
+    city_id = Keyword.fetch!(opts, :city_id)
+
+    GenServer.start_link(__MODULE__, opts, name: CityRegistry.via(city_id))
   end
 
   @doc """
   The current city map and the metrics of the most recent tick.
   """
-  @spec snapshot() :: {:ok, %{city_map: CityMap.t(), metrics: SimulationMetrics.t()}}
-  def snapshot, do: GenServer.call(__MODULE__, :snapshot)
+  @spec snapshot(String.t()) :: {:ok, %{city_map: CityMap.t(), metrics: SimulationMetrics.t()}}
+  def snapshot(city_id), do: call(city_id, :snapshot)
 
   @doc """
   Place a node of `type` at `(x, y)`.
   """
-  @spec place(integer(), integer(), atom()) ::
+  @spec place(String.t(), integer(), integer(), atom()) ::
           {:ok, ArmchairMetropolist.Domain.Entities.Node.t()}
           | {:error, :out_of_bounds | :occupied | :unknown_type}
-  def place(x, y, type), do: GenServer.call(__MODULE__, {:place, x, y, type})
+  def place(city_id, x, y, type), do: call(city_id, {:place, x, y, type})
 
   @doc """
   Remove the node at `(x, y)`.
   """
-  @spec demolish(integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
-  def demolish(x, y), do: GenServer.call(__MODULE__, {:demolish, x, y})
+  @spec demolish(String.t(), integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
+  def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
+
+  # Start-on-demand, then call. The retry exists because an engine can stop between
+  # `ensure_started/1` and the call — Task 3 makes idle engines stop on purpose, so
+  # this is a normal race rather than an exotic one. One retry is enough: the second
+  # `ensure_started/1` cannot find a stopping process, because a stopped process is
+  # unregistered before the next lookup.
+  defp call(city_id, message, retries \\ 1) do
+    {:ok, _pid} = CityRegistry.ensure_started(city_id)
+
+    try do
+      GenServer.call(CityRegistry.via(city_id), message)
+    catch
+      :exit, {reason, _} when retries > 0 and reason in [:noproc, :normal, :shutdown] ->
+        call(city_id, message, retries - 1)
+    end
+  end
 
   @impl true
   def init(opts) do
@@ -112,9 +134,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
     :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @tick_topic)
 
-    # Task 2 makes this process addressable by this id. For now it is a singleton that
-    # simply knows which row it owns, which is what lets the port change land on its
-    # own and be tested on its own.
+    # start_link/1 already requires :city_id and names this process by it via
+    # CityRegistry.via/1, so Keyword.fetch! there guarantees it is present here too.
+    # get/3 with the default is kept anyway: it is what let the port change in Task 1
+    # land and be tested before this process became addressable.
     city_id = Keyword.get(opts, :city_id, @default_city_id)
 
     {:ok, %{city_id: city_id, city_map: nil, metrics: nil, critical?: false},
@@ -137,11 +160,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
         metrics = summarize(city_map)
-        broadcast({:city_node_placed, node})
+        broadcast(state.city_id, {:city_node_placed, node})
         # Commands change the city, so subscribers need the new figures now. Without
         # this the legend's counts would not move until the next tick — and in tests,
         # where no clock runs, never.
-        broadcast({:city_metrics, metrics})
+        broadcast(state.city_id, {:city_metrics, metrics})
         {:reply, {:ok, node}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
@@ -153,8 +176,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.demolish(state.city_map, x, y) do
       {:ok, {city_map, node_id}} ->
         metrics = summarize(city_map)
-        broadcast({:city_node_removed, node_id})
-        broadcast({:city_metrics, metrics})
+        broadcast(state.city_id, {:city_node_removed, node_id})
+        broadcast(state.city_id, {:city_metrics, metrics})
         {:reply, {:ok, node_id}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
@@ -169,8 +192,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     {:ok, %{city_map: city_map, delta: delta, metrics: metrics}} =
       AdvanceCityTick.execute(state.city_map)
 
-    broadcast({:city_delta, delta})
-    broadcast({:city_metrics, metrics})
+    broadcast(state.city_id, {:city_delta, delta})
+    broadcast(state.city_id, {:city_metrics, metrics})
     maybe_checkpoint(state.city_id, city_map)
     critical? = notify_deficits(metrics, state.critical?)
 
@@ -325,8 +348,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
-  defp broadcast(message) do
-    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @simulation_topic, message)
+  defp broadcast(city_id, message) do
+    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, topic(city_id), message)
   end
 
   # Both adapters are resolved per call so tests can inject stubs and the

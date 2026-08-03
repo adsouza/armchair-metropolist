@@ -2,12 +2,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   @moduledoc """
   LiveView tests for the city dashboard.
 
-  `async: false`: the engine is a singleton registered under its module name
-  and these tests inject application-env stub adapters, same as
-  `city_engine_test.exs`. The test environment does not start the engine
-  itself (`start_simulation: false` in `config/test.exs`, so it does not
-  collide with `start_supervised!`/the Ecto sandbox), so each test starts its
-  own `CityEngine` pointed at the in-memory `StubSnapshotRepository`.
+  `async: false`: these tests inject application-env stub adapters, same as
+  `city_engine_test.exs`, which is process-global. The test environment does not
+  start the engine itself (`start_simulation: false` in `config/test.exs`, so it
+  does not collide with `start_supervised!`/the Ecto sandbox), so each test starts
+  its own `CityEngine` pointed at the in-memory `StubSnapshotRepository`, addressed
+  at `CityEngine.default_city_id/0` — the same constant `SimulatorLive.mount/3`
+  uses, so the view and the test agree on which city they are looking at.
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
@@ -18,6 +19,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.StubSnapshotRepository
+
+  # The same topic SimulatorLive.mount/3 subscribes to for CityEngine.default_city_id/0 —
+  # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
+  @topic CityEngine.topic(CityEngine.default_city_id())
 
   setup do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
@@ -33,7 +38,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     start_supervised!(StubSnapshotRepository)
     StubSnapshotRepository.set_initial({:error, :not_found})
-    start_supervised!(CityEngine)
+    start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
     :ok
   end
@@ -58,7 +63,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     for {x, y} <- [{4, 5}, {6, 7}] do
       Phoenix.PubSub.broadcast(
         ArmchairMetropolist.PubSub,
-        "city_simulation",
+        @topic,
         {:city_node_placed, Node.new(x, y, :power_plant)}
       )
     end
@@ -70,7 +75,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_delta, %{"4:5" => degraded}}
     )
 
@@ -130,7 +135,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_node_placed, node}
     )
 
@@ -141,7 +146,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     Phoenix.PubSub.broadcast(
       ArmchairMetropolist.PubSub,
-      "city_simulation",
+      @topic,
       {:city_node_removed, "6:6"}
     )
 

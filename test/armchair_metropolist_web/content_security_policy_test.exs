@@ -9,9 +9,9 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
   per-request policy, which is why it sits in `.sobelow-conf`'s `ignore`.
 
   `async: false` for the same reason as `simulator_live_test.exs`: rendering `/`
-  mounts the LiveView, which reads from `CityEngine` — a singleton the test
-  environment does not start (`start_simulation: false`), so each test starts its own
-  pointed at the in-memory stub.
+  mounts the LiveView, which reads from `CityEngine` at `CityEngine.default_city_id/0`
+  — a process the test environment does not start (`start_simulation: false`), so
+  each test starts its own pointed at the in-memory stub.
   """
   use ArmchairMetropolistWeb.ConnCase, async: false
 
@@ -32,7 +32,7 @@ defmodule ArmchairMetropolistWeb.ContentSecurityPolicyTest do
 
     start_supervised!(StubSnapshotRepository)
     StubSnapshotRepository.set_initial({:error, :not_found})
-    start_supervised!(CityEngine)
+    start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
     :ok
   end

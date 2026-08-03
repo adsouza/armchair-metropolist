@@ -9,6 +9,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServerTest do
   use ExUnit.Case, async: false
 
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.Infrastructure.Simulation.TickServer
 
   @topic "city_tick"
@@ -28,7 +29,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.TickServerTest do
   end
 
   test "keeps ticking with no CityEngine running" do
-    refute Process.whereis(CityEngine),
+    # CityEngine is now registered per city id via CityRegistry rather than under
+    # its own module name, so Process.whereis(CityEngine) could no longer see one -
+    # count/0 is what actually observes whether any engine is running.
+    assert CityRegistry.count() == 0,
            "this test is only meaningful when no engine is running"
 
     start_supervised!({TickServer, interval_ms: 20})

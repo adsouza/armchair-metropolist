@@ -27,10 +27,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   Engine lifecycle tests.
 
   `async: false` throughout: these mutate application env (to inject the stub
-  adapters) and the engine registers under its module name.
+  adapters), which is process-global. The engine itself no longer needs it — each
+  test gets a unique city id and therefore its own registered process — but the
+  application-env overrides in `setup` still are.
 
   Ticks are injected by broadcasting on `"city_tick"` rather than by waiting on
-  the real clock, so nothing here depends on timers. `CityEngine.snapshot/0` is
+  the real clock, so nothing here depends on timers. `CityEngine.snapshot/1` is
   used as a synchronisation barrier — it is a `GenServer.call`, so when it
   returns, every tick broadcast before it has already been handled.
   """
@@ -42,12 +44,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.FailingSnapshotRepository
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.SlowSnapshotRepository
   alias ArmchairMetropolist.StubNotifier
   alias ArmchairMetropolist.StubSnapshotRepository
 
   @tick_topic "city_tick"
-  @simulation_topic "city_simulation"
 
   @overridden_keys [
     :snapshot_repository,
@@ -76,33 +78,34 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
     start_supervised!(StubSnapshotRepository)
 
-    :ok
+    city_id = "test-#{System.unique_integer([:positive])}"
+    {:ok, city_id: city_id}
   end
 
   describe "hydration" do
-    test "hydrates from the latest stored snapshot" do
+    test "hydrates from the latest stored snapshot", %{city_id: city_id} do
       city = CityMap.put_node(CityMap.new(40, 30), Node.new(1, 1, :power_plant))
       stored = %{city | tick: 7}
 
       StubSnapshotRepository.set_initial({:ok, {7, stored}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
-      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert city_map == stored
       assert city_map.tick == 7
       assert metrics.tick == 7
       assert metrics.node_count == 1
     end
 
-    test "reports resource figures before the first tick has run" do
+    test "reports resource figures before the first tick has run", %{city_id: city_id} do
       # Regression: the engine used to hydrate with SimulationMetrics.build(map, %{}),
       # so `resources` was empty until a tick landed and a LiveView mounting in that
       # window had no supply/demand to render. Infrastructure cannot compute these
       # itself (boundary bars Domain.Services), hence UseCases.SummarizeCity.
       StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
-      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
 
       assert Enum.sort(Map.keys(metrics.resources)) == [
                :labour,
@@ -117,11 +120,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.resources.power.satisfaction == 1.0
     end
 
-    test "falls back to an empty configured grid when nothing is stored" do
+    test "falls back to an empty configured grid when nothing is stored", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :not_found})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
-      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert city_map.width == 40
       assert city_map.height == 30
       assert city_map.tick == 0
@@ -130,11 +133,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     @tag :capture_log
-    test "falls back to an empty grid when the repository errors" do
+    test "falls back to an empty grid when the repository errors", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :checksum_mismatch})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       assert CityMap.nodes(city_map) == []
     end
 
@@ -160,7 +163,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert map_size(loaded.nodes) == 1
     end
 
-    test "start_link/1 returns before a slow repository has answered" do
+    test "start_link/1 returns before a slow repository has answered", %{city_id: city_id} do
       # Hydration must happen in handle_continue/2, not init/1: a snapshot read
       # inside init/1 blocks the caller, which at boot is the whole supervision
       # tree. This adapter stalls for 400ms, so start_link/1 taking that long
@@ -168,7 +171,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       Application.put_env(:armchair_metropolist, :snapshot_repository, SlowSnapshotRepository)
       StubSnapshotRepository.set_initial({:error, :not_found})
 
-      {micros, _pid} = :timer.tc(fn -> start_supervised!(CityEngine) end)
+      {micros, _pid} = :timer.tc(fn -> start_supervised!({CityEngine, city_id: city_id}) end)
       elapsed_ms = div(micros, 1000)
 
       assert elapsed_ms < 200,
@@ -177,17 +180,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
                "#{SlowSnapshotRepository.delay_ms()}ms)"
 
       # ...and the hydration it deferred still completes.
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       assert city_map.width == 40
       assert city_map.height == 30
     end
   end
 
   describe "ticks" do
-    test "broadcasts a delta and metrics for every tick on \"city_tick\"" do
+    test "broadcasts a delta and metrics for every tick on \"city_tick\"", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
-      start_supervised!(CityEngine)
-      subscribe_simulation()
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
 
       broadcast_tick(1)
 
@@ -205,61 +208,61 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.resources.power.satisfaction < 1.0
     end
 
-    test "advances city_map.tick and ignores the clock's counter" do
+    test "advances city_map.tick and ignores the clock's counter", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       # Clock pulse numbers are diagnostic only: an out-of-order or restarted
       # clock must not move the authoritative simulation tick.
       broadcast_tick(99)
       broadcast_tick(1)
 
-      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert city_map.tick == 2
       assert metrics.tick == 2
     end
   end
 
   describe "infrastructure commands" do
-    setup do
+    setup %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :not_found})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
 
-    test "place/3 adds the node and broadcasts it" do
-      subscribe_simulation()
+    test "place/3 adds the node and broadcasts it", %{city_id: city_id} do
+      subscribe_simulation(city_id)
 
-      assert {:ok, %Node{} = node} = CityEngine.place(3, 4, :power_plant)
+      assert {:ok, %Node{} = node} = CityEngine.place(city_id, 3, 4, :power_plant)
       assert node.id == Node.id(3, 4)
       assert node.type == :power_plant
       assert_receive {:city_node_placed, ^node}, 1_000
 
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       assert CityMap.get_node(city_map, 3, 4) == node
     end
 
-    test "demolish/2 removes the node and broadcasts its id" do
-      {:ok, node} = CityEngine.place(3, 4, :power_plant)
-      subscribe_simulation()
+    test "demolish/2 removes the node and broadcasts its id", %{city_id: city_id} do
+      {:ok, node} = CityEngine.place(city_id, 3, 4, :power_plant)
+      subscribe_simulation(city_id)
 
-      assert {:ok, id} = CityEngine.demolish(3, 4)
+      assert {:ok, id} = CityEngine.demolish(city_id, 3, 4)
       assert id == node.id
       assert_receive {:city_node_removed, ^id}, 1_000
 
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       refute CityMap.occupied?(city_map, 3, 4)
     end
 
-    test "metrics track a command immediately rather than lagging a tick" do
+    test "metrics track a command immediately rather than lagging a tick", %{city_id: city_id} do
       # Regression: metrics were only refreshed on tick, so between a place and the
-      # next tick `snapshot/0` reported a node_count that disagreed with city_map.
-      assert {:ok, %{metrics: before}} = CityEngine.snapshot()
+      # next tick `snapshot/1` reported a node_count that disagreed with city_map.
+      assert {:ok, %{metrics: before}} = CityEngine.snapshot(city_id)
       assert before.node_count == 0
 
-      {:ok, _node} = CityEngine.place(3, 4, :residential)
+      {:ok, _node} = CityEngine.place(city_id, 3, 4, :residential)
 
-      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
 
       assert metrics.node_count == map_size(city_map.nodes),
              "metrics must agree with city_map without waiting for a tick"
@@ -267,51 +270,55 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.node_count == 1
       assert metrics.resources.power.demanded > 0.0
 
-      {:ok, _id} = CityEngine.demolish(3, 4)
+      {:ok, _id} = CityEngine.demolish(city_id, 3, 4)
 
-      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert metrics.node_count == map_size(city_map.nodes)
       assert metrics.node_count == 0
     end
 
-    test "place/3 on an occupied cell returns an error and broadcasts nothing" do
-      {:ok, _node} = CityEngine.place(3, 4, :power_plant)
-      subscribe_simulation()
+    test "place/3 on an occupied cell returns an error and broadcasts nothing", %{
+      city_id: city_id
+    } do
+      {:ok, _node} = CityEngine.place(city_id, 3, 4, :power_plant)
+      subscribe_simulation(city_id)
 
-      assert {:error, :occupied} = CityEngine.place(3, 4, :commercial)
+      assert {:error, :occupied} = CityEngine.place(city_id, 3, 4, :commercial)
       refute_receive {:city_node_placed, _}, 200
 
-      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       assert CityMap.get_node(city_map, 3, 4).type == :power_plant
     end
 
-    test "rejects out-of-bounds coordinates and unknown types" do
-      subscribe_simulation()
+    test "rejects out-of-bounds coordinates and unknown types", %{city_id: city_id} do
+      subscribe_simulation(city_id)
 
-      assert {:error, :out_of_bounds} = CityEngine.place(40, 0, :park)
-      assert {:error, :unknown_type} = CityEngine.place(1, 1, :space_elevator)
+      assert {:error, :out_of_bounds} = CityEngine.place(city_id, 40, 0, :park)
+      assert {:error, :unknown_type} = CityEngine.place(city_id, 1, 1, :space_elevator)
       refute_receive {:city_node_placed, _}, 200
     end
 
-    test "demolish/2 on an empty cell returns an error and broadcasts nothing" do
-      subscribe_simulation()
+    test "demolish/2 on an empty cell returns an error and broadcasts nothing", %{
+      city_id: city_id
+    } do
+      subscribe_simulation(city_id)
 
-      assert {:error, :empty} = CityEngine.demolish(5, 5)
+      assert {:error, :empty} = CityEngine.demolish(city_id, 5, 5)
       refute_receive {:city_node_removed, _}, 200
     end
   end
 
   describe "metrics broadcasts on commands" do
-    setup do
+    setup %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :not_found})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
 
-    test "placing broadcasts fresh metrics, not just the node" do
-      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
+    test "placing broadcasts fresh metrics, not just the node", %{city_id: city_id} do
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
 
-      assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
+      assert {:ok, _node} = CityEngine.place(city_id, 0, 0, :power_plant)
 
       assert_receive {:city_node_placed, _node}
 
@@ -323,11 +330,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
                "not only after the next tick"
     end
 
-    test "demolishing broadcasts fresh metrics, not just the id" do
-      assert {:ok, _node} = CityEngine.place(0, 0, :power_plant)
+    test "demolishing broadcasts fresh metrics, not just the id", %{city_id: city_id} do
+      assert {:ok, _node} = CityEngine.place(city_id, 0, 0, :power_plant)
 
-      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, "city_simulation")
-      assert {:ok, "0:0"} = CityEngine.demolish(0, 0)
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+      assert {:ok, "0:0"} = CityEngine.demolish(city_id, 0, 0)
 
       assert_receive {:city_node_removed, "0:0"}
 
@@ -346,18 +353,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert CityEngine.child_spec([])[:shutdown] == 10_000
     end
 
-    test "checkpoints the post-tick map at the configured tick interval" do
+    test "checkpoints the post-tick map at the configured tick interval", %{city_id: city_id} do
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 2)
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
-      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot(city_id)
       assert StubSnapshotRepository.saves() == [], "tick 1 is not a checkpoint"
 
       broadcast_tick(2)
-      assert {:ok, %{city_map: at_tick_2}} = CityEngine.snapshot()
-      assert [{"default", 2, saved}] = StubSnapshotRepository.saves()
+      assert {:ok, %{city_map: at_tick_2}} = CityEngine.snapshot(city_id)
+      assert [{^city_id, 2, saved}] = StubSnapshotRepository.saves()
 
       # Pin *which* version of the map was written. Saving the pre-tick map
       # instead would store the tick-1 state, which is a different map with
@@ -369,31 +376,38 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert CityMap.get_node(saved, 0, 0).health < 100.0
 
       broadcast_tick(3)
-      assert {:ok, %{city_map: %{tick: 3}}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: %{tick: 3}}} = CityEngine.snapshot(city_id)
 
-      assert [{"default", 2, ^saved}] = StubSnapshotRepository.saves(),
+      assert [{^city_id, 2, ^saved}] = StubSnapshotRepository.saves(),
              "tick 3 is not a checkpoint"
     end
 
-    test "treats a non-positive checkpoint interval as checkpointing disabled" do
+    test "treats a non-positive checkpoint interval as checkpointing disabled", %{
+      city_id: city_id
+    } do
       # rem(tick, 0) raises inside handle_info/2, which would put the engine in
       # a restart loop on every tick rather than failing at boot.
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 0)
       StubSnapshotRepository.set_initial({:error, :not_found})
-      pid = start_supervised!(CityEngine)
+      pid = start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
       broadcast_tick(2)
 
-      assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot()
-      assert Process.whereis(CityEngine) == pid, "the engine must not have crashed and restarted"
+      assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot(city_id)
+
+      assert CityRegistry.whereis(city_id) == pid,
+             "the engine must not have crashed and restarted"
+
       assert StubSnapshotRepository.saves() == []
     end
 
-    test "terminate/2 persists the city map on a graceful supervisor shutdown" do
+    test "terminate/2 persists the city map on a graceful supervisor shutdown", %{
+      city_id: city_id
+    } do
       StubSnapshotRepository.set_initial({:error, :not_found})
-      pid = start_supervised!(CityEngine)
-      {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+      pid = start_supervised!({CityEngine, city_id: city_id})
+      {:ok, _node} = CityEngine.place(city_id, 1, 1, :power_plant)
 
       assert StubSnapshotRepository.saves() == []
 
@@ -401,39 +415,39 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{"default", 0, saved} | _] = StubSnapshotRepository.saves()
+      assert [{^city_id, 0, saved} | _] = StubSnapshotRepository.saves()
       assert CityMap.occupied?(saved, 1, 1)
     end
 
-    test "terminate/2 persists the post-tick state" do
+    test "terminate/2 persists the post-tick state", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
-      pid = start_supervised!(CityEngine)
+      pid = start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
-      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot(city_id)
 
       ref = Process.monitor(pid)
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{"default", 1, saved} | _] = StubSnapshotRepository.saves()
+      assert [{^city_id, 1, saved} | _] = StubSnapshotRepository.saves()
       assert saved.tick == 1
     end
 
-    test "warns rather than failing when the adapter refuses a stale save" do
+    test "warns rather than failing when the adapter refuses a stale save", %{city_id: city_id} do
       # Without this override tick 1 is not a checkpoint (the default interval is
       # 50), and the save the assertions below depend on would never happen.
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 1)
       StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
       StubSnapshotRepository.refuse_saves_as_stale(99)
 
       log =
         capture_log(fn ->
-          {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+          {:ok, _node} = CityEngine.place(city_id, 1, 1, :power_plant)
           Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
           # Let the engine handle the tick, whose checkpoint attempts the save.
-          {:ok, _} = CityEngine.snapshot()
+          {:ok, _} = CityEngine.snapshot(city_id)
         end)
 
       assert log =~ "declined to persist"
@@ -460,27 +474,28 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
           raise: "raises",
           exit: "exits"
         ] do
-      test "a checkpoint against a repository that #{description} keeps the engine and its state" do
+      test "a checkpoint against a repository that #{description} keeps the engine and its state",
+           %{city_id: city_id} do
         Application.put_env(:armchair_metropolist, :failing_repository_mode, unquote(mode))
 
-        pid = start_supervised!(CityEngine)
-        {:ok, node} = CityEngine.place(1, 1, :power_plant)
+        pid = start_supervised!({CityEngine, city_id: city_id})
+        {:ok, node} = CityEngine.place(city_id, 1, 1, :power_plant)
 
         # The shutdown is inside the capture too: terminate/2 saves as well, and
         # its failure would otherwise leak past the test into `mix check`'s output.
         log =
           capture_log(fn ->
             broadcast_tick(1)
-            assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot()
+            assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot(city_id)
             broadcast_tick(2)
-            assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot()
+            assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot(city_id)
 
-            assert Process.whereis(CityEngine) == pid,
+            assert CityRegistry.whereis(city_id) == pid,
                    "the engine must not have crashed and restarted"
 
             # A restart would have rehydrated an empty city at tick 0, so this is
             # the assertion that the ticks since the last checkpoint survived.
-            assert {:ok, %{city_map: city_map}} = CityEngine.snapshot()
+            assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
             assert city_map.tick == 2
             assert CityMap.get_node(city_map, 1, 1).id == node.id
 
@@ -492,25 +507,25 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       end
     end
 
-    test "the error reason reaches the log" do
+    test "the error reason reaches the log", %{city_id: city_id} do
       Application.put_env(:armchair_metropolist, :failing_repository_mode, :error_tuple)
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       log =
         capture_log(fn ->
           broadcast_tick(1)
-          assert {:ok, _snapshot} = CityEngine.snapshot()
+          assert {:ok, _snapshot} = CityEngine.snapshot(city_id)
           stop_supervised!(CityEngine)
         end)
 
       assert log =~ ":disk_full"
     end
 
-    test "terminate/2 still completes shutdown when the repository raises" do
+    test "terminate/2 still completes shutdown when the repository raises", %{city_id: city_id} do
       Application.put_env(:armchair_metropolist, :failing_repository_mode, :raise)
 
-      pid = start_supervised!(CityEngine)
-      {:ok, _node} = CityEngine.place(1, 1, :power_plant)
+      pid = start_supervised!({CityEngine, city_id: city_id})
+      {:ok, _node} = CityEngine.place(city_id, 1, 1, :power_plant)
       ref = Process.monitor(pid)
 
       log =
@@ -525,7 +540,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   describe "critical deficit notifications" do
-    test "notifies once when the city first enters a critical deficit" do
+    test "notifies once when the city first enters a critical deficit", %{city_id: city_id} do
       # Seed a city that cannot meet demand: many consumers, no producers.
       city =
         Enum.reduce(0..9, CityMap.new(40, 30), fn x, acc ->
@@ -533,7 +548,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         end)
 
       StubSnapshotRepository.set_initial({:ok, {0, city}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, "city_tick", {:tick, 1})
       assert_receive {:notified, _title, _body}, 1_000
@@ -543,9 +558,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       refute_receive {:notified, _, _}, 300
     end
 
-    test "names the resources in deficit, worst first" do
+    test "names the resources in deficit, worst first", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
 
@@ -565,34 +580,68 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert named == ["labour", "power", "waste", "traffic", "water"]
     end
 
-    test "does not notify a city that is meeting demand" do
+    test "does not notify a city that is meeting demand", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
-      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot()
+      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
       assert Enum.all?(metrics.resources, fn {_r, stats} -> stats.satisfaction == 1.0 end)
 
       refute_receive {:notified, _, _}, 300
     end
 
-    test "re-arms once satisfaction recovers" do
+    test "re-arms once satisfaction recovers", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
-      start_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
       assert_receive {:notified, _, _}, 1_000
 
       # Demolishing every consumer removes all demand, so satisfaction returns
       # to 1.0 and the notification must re-arm.
-      Enum.each(0..9, fn x -> {:ok, _id} = CityEngine.demolish(x, 0) end)
+      Enum.each(0..9, fn x -> {:ok, _id} = CityEngine.demolish(city_id, x, 0) end)
       broadcast_tick(2)
-      assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot()
+      assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot(city_id)
       refute_receive {:notified, _, _}, 200
 
-      Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(x, 0, :commercial) end)
+      Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :commercial) end)
       broadcast_tick(3)
       assert_receive {:notified, _, _}, 1_000
+    end
+  end
+
+  describe "isolation between cities" do
+    test "one city's snapshot does not see another's nodes" do
+      a = "iso-a-#{System.unique_integer([:positive])}"
+      b = "iso-b-#{System.unique_integer([:positive])}"
+      start_supervised!({CityEngine, city_id: a}, id: :engine_a)
+      start_supervised!({CityEngine, city_id: b}, id: :engine_b)
+
+      {:ok, _node} = CityEngine.place(a, 3, 4, :power_plant)
+
+      assert {:ok, %{city_map: map_a}} = CityEngine.snapshot(a)
+      assert {:ok, %{city_map: map_b}} = CityEngine.snapshot(b)
+      assert map_size(map_a.nodes) == 1
+      assert map_size(map_b.nodes) == 0
+    end
+
+    test "a delta is broadcast to its own city's topic and not another's" do
+      a = "iso-a-#{System.unique_integer([:positive])}"
+      b = "iso-b-#{System.unique_integer([:positive])}"
+      start_supervised!({CityEngine, city_id: a}, id: :engine_a)
+      start_supervised!({CityEngine, city_id: b}, id: :engine_b)
+
+      :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(a))
+      :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(b))
+
+      {:ok, _node} = CityEngine.place(a, 3, 4, :power_plant)
+
+      # Positive first: without this the refute below is vacuous.
+      assert_receive {:city_node_placed, %Node{x: 3, y: 4}}
+      # And nothing further, which is what proves the topics are distinct rather
+      # than one shared topic delivering to both subscriptions.
+      refute_receive {:city_node_placed, _}, 200
     end
   end
 
@@ -610,7 +659,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   # No matching unsubscribe: the subscription is owned by the test process and
   # PubSub drops it when that process exits at the end of the test.
-  defp subscribe_simulation do
-    :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @simulation_topic)
+  defp subscribe_simulation(city_id) do
+    :ok = Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
   end
 end

@@ -15,7 +15,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   ## Where the figures come from
 
-  `CityEngine.snapshot/0` returns full resource statistics at mount, before any tick —
+  `CityEngine.snapshot/1` returns full resource statistics at mount, before any tick —
   it computes them through `UseCases.SummarizeCity`, since `Infrastructure` may not
   reach `Domain.Services`. The engine also broadcasts `{:city_metrics, …}` after every
   successful place and demolish, so the legend's counts move on the click rather than
@@ -27,16 +27,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
-  @topic "city_simulation"
   @cell_size 24
 
   @impl true
   def mount(_params, _session, socket) do
+    city_id = ArmchairMetropolist.Infrastructure.Simulation.CityEngine.default_city_id()
+
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, @topic)
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
     end
 
-    {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot()
+    {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+
+    socket = assign(socket, city_id: city_id)
 
     grid_cells =
       for y <- 0..(city_map.height - 1), x <- 0..(city_map.width - 1), do: {x, y}
@@ -65,7 +68,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     x = String.to_integer(x)
     y = String.to_integer(y)
 
-    case CityEngine.place(x, y, socket.assigns.selected_type) do
+    case CityEngine.place(socket.assigns.city_id, x, y, socket.assigns.selected_type) do
       {:ok, node} -> {:noreply, stream_insert(socket, :nodes, node)}
       {:error, _reason} -> {:noreply, socket}
     end
@@ -75,7 +78,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     x = String.to_integer(x)
     y = String.to_integer(y)
 
-    case CityEngine.demolish(x, y) do
+    case CityEngine.demolish(socket.assigns.city_id, x, y) do
       {:ok, id} -> {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
       {:error, _reason} -> {:noreply, socket}
     end
