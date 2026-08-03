@@ -1,7 +1,7 @@
 # A Linux desktop bundle in CI — design
 
 **Date:** 2026-08-02
-**Status:** approved, not yet implemented
+**Status:** implemented 2026-08-02; CI verification pending (§12)
 
 ## 1. Problem
 
@@ -39,8 +39,8 @@ Facts established by reading the tools rather than their documentation:
 
 | question | answer |
 |---|---|
-| What does `bundle.targets` declare? | **`"all"`** (`src-tauri/tauri.conf.json:37`). Not macOS-only and not unset — on Linux `"all"` means deb + rpm + AppImage. |
-| Does `mix ex_tauri.build` rebuild the release? | **Yes.** `ExTauri.run/1` calls `wrap()`, which shells out to `mix release desktop --overwrite` and then copies `burrito_out/desktop_<triple>` to `desktop-<triple>` (`deps/ex_tauri/lib/ex_tauri.ex:241`). |
+| What does `bundle.targets` declare? | **`"all"`** (`src-tauri/tauri.conf.json:43`). Not macOS-only and not unset — on Linux `"all"` means deb + rpm + AppImage. |
+| Does `mix ex_tauri.build` rebuild the release? | **Yes.** `ExTauri.run/1` calls `wrap()`, which shells out to `mix release desktop --overwrite` and then copies `burrito_out/desktop_<triple>` to `desktop-<triple>` (`ExTauri.wrap/0, deps/ex_tauri/lib/ex_tauri.ex:245`). |
 | Is the Tauri CLI available in CI? | **No.** `tauri_cli_path!()` raises unless `_build/_tauri/bin/cargo-tauri` exists, and only `mix ex_tauri.install` puts it there. |
 | Which system packages does *this* lockfile need? | Derived below (§7), not copied from Tauri's prerequisites page. |
 | Does the .deb declare its runtime dependencies? | **No, not by default.** See §5. |
@@ -156,7 +156,7 @@ This project stores its version in four places, and they already disagree:
 | declaration | value | what it drives |
 |---|---|---|
 | `mix.exs:7` | `0.1.0` | the Mix release version → Burrito's payload cache key, `desktop_erts-17.0.4_0.1.0` |
-| `src-tauri/tauri.conf.json:41` | `0.1.0` | the .deb filename and its control `Version:` field; the .dmg name; `CFBundleShortVersionString` |
+| `src-tauri/tauri.conf.json:47` | `0.1.0` | the .deb filename and its control `Version:` field; the .dmg name; `CFBundleShortVersionString` |
 | `src-tauri/Cargo.toml:3` | **`0.2.0`** | the Rust crate version — currently read by nothing that ships |
 | `src-tauri/Cargo.lock:69` | **`0.2.0`** | derived from `Cargo.toml` by cargo, but tracked, and read by the `rust advisory` job |
 

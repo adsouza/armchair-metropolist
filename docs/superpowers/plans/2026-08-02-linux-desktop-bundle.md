@@ -562,8 +562,8 @@ After the existing `upload-artifact` step (the one ending `retention-days: 14`) 
       # above produces the sidecar it wraps.
       #
       # The sidecar steps stay unconditional and first on purpose. `mix ex_tauri.build`
-      # re-runs `mix release desktop` internally (ExTauri.wrap/1, deps/ex_tauri/lib/
-      # ex_tauri.ex:241), so this duplicates ~69s of Burrito work on this one path. That
+      # re-runs `mix release desktop` internally (ExTauri.wrap/0, deps/ex_tauri/lib/
+      # ex_tauri.ex:245), so this duplicates ~69s of Burrito work on this one path. That
       # is the price of a wrapper failure never being able to take the sidecar's arch
       # check and artifact down with it — the sidecar is green on both arches today and
       # the Linux wrapper build is unproven.
@@ -775,6 +775,14 @@ set -e
 cp scripts/verify-deb.sh /tmp/verify-deb.sh.bak
 
 check() { # $1 = label
+  # A mutation that corrupts the script's syntax exits non-zero for the same reason a
+  # mutation that the assertion correctly caught does — both look like "failed". Without
+  # this, a mutant that merely fails to parse (sh -n would reject it) is indistinguishable
+  # from one that was actually exercised, and the sweep can report success while testing
+  # nothing.
+  if ! sh -n scripts/verify-deb.sh 2>/dev/null; then
+    echo "MUTANT IS CORRUPT, not a valid test: $1"; cp /tmp/verify-deb.sh.bak scripts/verify-deb.sh; exit 1
+  fi
   if ./scripts/verify-deb.sh /tmp/fake-bundle >/dev/null 2>&1; then
     echo "MUTATION SURVIVED: $1"; cp /tmp/verify-deb.sh.bak scripts/verify-deb.sh; exit 1
   else
@@ -787,13 +795,20 @@ check() { # $1 = label
 perl -0pi -e "s/-name '\*\.deb'/-name '*.NOPE'/" scripts/verify-deb.sh
 check "a .deb exists"
 
-# 2. the sidecar-inside gate
-perl -0pi -e "s/desktop\\\$'/nosuchbinary\$'/" scripts/verify-deb.sh
+# 2. the sidecar-inside gate. The replacement must avoid a bare `$'` — after the shell
+#    unescapes it, Perl reads that as its POSTMATCH variable and splices the rest of the
+#    file into the replacement, leaving an unterminated quote. The mutant then fails to
+#    parse at all, which `check()`'s exit-status test alone cannot distinguish from the
+#    assertion firing correctly. `{...}` delimiters (rather than `/`) sidestep the need to
+#    escape anything else in the token.
+perl -0pi -e "s{\\)desktop\\\$'}{)nosuchbinary\\\$'}" scripts/verify-deb.sh
 check "the sidecar is inside"
 
-# 3. the Depends gate — mutate the input, not the script, since an empty Depends is
-#    what the real regression looks like
-perl -0pi -e 's/\[ -n "\$DEPENDS" \]/[ -z "$DEPENDS" ]/' scripts/verify-deb.sh
+# 3. the Depends gate — mutating the script's own test, since $DEPENDS in the replacement
+#    is a Perl variable (undefined, so it expands to empty) rather than the shell variable
+#    of the same name. Escaping it as \$DEPENDS keeps it literal so the mutated line reads
+#    `[ -z "$DEPENDS" ]` in the shell script, which the assertion at runtime finds false.
+perl -0pi -e 's/\[ -n "\$DEPENDS" \]/[ -z "\$DEPENDS" ]/' scripts/verify-deb.sh
 check "Depends is non-empty"
 
 # 4. the stray-bundle gate

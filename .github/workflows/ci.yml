@@ -205,8 +205,8 @@ jobs:
       # above produces the sidecar it wraps.
       #
       # The sidecar steps stay unconditional and first on purpose. `mix ex_tauri.build`
-      # re-runs `mix release desktop` internally (ExTauri.wrap/1, deps/ex_tauri/lib/
-      # ex_tauri.ex:241), so this duplicates ~69s of Burrito work on this one path. That
+      # re-runs `mix release desktop` internally (ExTauri.wrap/0, deps/ex_tauri/lib/
+      # ex_tauri.ex:245), so this duplicates ~69s of Burrito work on this one path. That
       # is the price of a wrapper failure never being able to take the sidecar's arch
       # check and artifact down with it — the sidecar is green on both arches today and
       # the Linux wrapper build is unproven.
