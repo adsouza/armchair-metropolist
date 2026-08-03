@@ -492,9 +492,12 @@ The migration preserves the single anonymous city the table has held until now a
 on the deployed instance stays reachable rather than being dropped by a schema
 change.
 
-on_conflict uses an explicit set: rather than :replace_all, which would overwrite
-inserted_at and lose when a city was created. updated_at moves on every save
-because the reaper will sweep on it.
+save/3 does a locked read-then-write inside a transaction rather than an on_conflict
+upsert, because the port has to report a refusal rather than just apply one: a save
+at or below the stored tick returns {:stale, stored_tick} instead of overwriting, so
+a crashed-and-replayed engine can never write an older city over a newer one.
+inserted_at is preserved across updates and updated_at still moves on every accepted
+save, because the reaper sweeps on it.
 
 CityEngine now holds a city_id and threads it into load and save, but stays a
 singleton registered as __MODULE__ - making it addressable is the next task. That
