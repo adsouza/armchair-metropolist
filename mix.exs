@@ -259,6 +259,109 @@ defmodule ArmchairMetropolist.MixProject do
     end
   end
 
+  # Every place this project stores its own version, checked as one number.
+  #
+  # They drift silently because each feeds a different consumer and no build step
+  # consults more than one: `mix.exs` names Burrito's payload cache directory,
+  # `tauri.conf.json` names the .deb and its control `Version:` field, `Cargo.toml` is
+  # the fallback Tauri takes when `tauri.conf.json` omits `version`
+  # (crates/tauri-cli/src/interface/rust.rs:1093), and `Cargo.lock` is what `cargo audit`
+  # reads. This found a real drift the day it was written: the two Cargo files said
+  # 0.2.0 while the two that actually ship said 0.1.0.
+  #
+  # A step in `mix check` rather than a git hook, deliberately. `.githooks/pre-push` is
+  # a wrapper around `mix check` and nothing else, so this is picked up by that hook AND
+  # by CI, which runs the same alias. A hook-only check would be a gate no runner sees.
+  #
+  # Only the *product's* version belongs here. The tool versions in `config/config.exs`
+  # (Tauri CLI, tailwind, daisyui) and in the workflow (Elixir, OTP, Zig) are unrelated
+  # numbers, and a check that cries wolf gets bypassed as a reflex.
+  defp check_versions(_args) do
+    sites = [
+      {"mix.exs", Mix.Project.config()[:version]},
+      {"src-tauri/tauri.conf.json", tauri_conf_version()},
+      {"src-tauri/Cargo.toml", cargo_toml_version()},
+      {"src-tauri/Cargo.lock", cargo_lock_version()}
+    ]
+
+    # Before comparing: a site that could not be read is nil, and four nils compare
+    # equal. Without this clause a renamed file or an extractor whose pattern stopped
+    # matching would make this check pass while reading nothing at all.
+    case Enum.filter(sites, fn {_file, version} -> is_nil(version) end) do
+      [] ->
+        :ok
+
+      unreadable ->
+        Mix.raise("""
+        Could not read a version from #{Enum.map_join(unreadable, ", ", &elem(&1, 0))}.
+
+        Either the file is missing, or its format changed and the extractor in mix.exs
+        needs updating. This is deliberately fatal: a version check that silently reads
+        nothing passes forever.
+        """)
+    end
+
+    case sites |> Enum.map(&elem(&1, 1)) |> Enum.uniq() do
+      [agreed] ->
+        Mix.shell().info("[versions] #{agreed}")
+
+      _ ->
+        Mix.raise("""
+        Version declarations disagree.
+
+        #{Enum.map_join(sites, "\n", fn {f, v} -> "  #{String.pad_trailing(f, 28)} #{v}" end)}
+
+        All four must carry the same value. After editing src-tauri/Cargo.toml,
+        regenerate the lock rather than editing it:
+
+            cd src-tauri && cargo update --offline -p #{Mix.Project.config()[:app]}
+        """)
+    end
+  end
+
+  # OTP's own JSON decoder rather than Jason: this runs as the *first* step of the
+  # `check` alias, before any task has put the dependencies' beam files on the code
+  # path. `:json` is stdlib from OTP 27, which is this project's floor.
+  defp tauri_conf_version do
+    with {:ok, body} <- File.read("src-tauri/tauri.conf.json"),
+         {:ok, %{"version" => version}} <- decode_json(body) do
+      version
+    else
+      _ -> nil
+    end
+  end
+
+  defp decode_json(body) do
+    {:ok, :json.decode(body)}
+  rescue
+    _ -> :error
+  end
+
+  # A regex rather than a TOML dependency, to read one field from two cargo-generated
+  # files whose formatting is stable. Anchored to the `[package]` table and stopped at
+  # the next table header, so a dependency's own `version = ` cannot match. Returns nil
+  # rather than a wrong answer if the shape ever changes, and nil is fatal above.
+  defp cargo_toml_version do
+    with {:ok, body} <- File.read("src-tauri/Cargo.toml"),
+         [_, package_table] <- Regex.run(~r/^\[package\]\n(.*?)(?=^\[|\z)/ms, body),
+         [_, version] <- Regex.run(~r/^version\s*=\s*"([^"]+)"/m, package_table) do
+      version
+    else
+      _ -> nil
+    end
+  end
+
+  defp cargo_lock_version do
+    app = Mix.Project.config()[:app]
+
+    with {:ok, body} <- File.read("src-tauri/Cargo.lock"),
+         [_, version] <- Regex.run(~r/name = "#{app}"\nversion = "([^"]+)"/, body) do
+      version
+    else
+      _ -> nil
+    end
+  end
+
   # Reuses the `assets.build` alias rather than restating the tailwind/esbuild
   # invocations, so there is one definition to keep in step. Deliberately not
   # `assets.deploy`: that minifies (no benefit for assets served over localhost
@@ -491,6 +594,10 @@ defmodule ArmchairMetropolist.MixProject do
       # network. Offline it degrades rather than fails, ignoring git's exit status and
       # scanning against whatever clone is on disk.
       check: [
+        # First because it is milliseconds, and the same argument this alias already
+        # makes for putting the security checks ahead of the suite applies with more
+        # force to something this cheap.
+        &check_versions/1,
         "format --check-formatted",
         "compile --force --warnings-as-errors",
         "sobelow",
