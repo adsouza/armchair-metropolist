@@ -111,13 +111,13 @@ dynamic linker. Nothing in the build notices, because the build never consults t
 ```json
 "linux": {
   "deb": {
-    "depends": ["libwebkit2gtk-4.1-0"],
+    "depends": ["libwebkit2gtk-4.1-0", "libc6 (>= 2.39)"],
     "recommends": ["libayatana-appindicator3-1"]
   }
 }
 ```
 
-`libwebkit2gtk-4.1-0` is deliberately the only hard dependency. It transitively pulls gtk3, glib,
+`libwebkit2gtk-4.1-0` is deliberately the only hard *library* dependency. It transitively pulls gtk3, glib,
 gio, gobject, cairo, pango, atk, gdk-pixbuf and libsoup3 — every pkg-config name the build probes
 (§7) except dbus, which is present on any system with a desktop session. Naming gtk directly would
 be worse, not better: Ubuntu's 64-bit-time transition renamed the runtime package to
@@ -130,6 +130,24 @@ failure fires only when the tray API is first called. `src-tauri/src/main.rs` bu
 in response to a `set_tray` command from Elixir, and no Elixir code sends one, so the path is
 unreachable today. A hard dependency would refuse to install over a reachable-in-principle,
 never-reached code path.
+
+`libc6 (>= 2.39)` is the second hard dependency, and it encodes a constraint nothing else in the
+pipeline expresses. Building on `ubuntu-24.04` stamps that runner's glibc into the binaries;
+measured against the archives, Ubuntu 24.04 ships **2.39**, Debian 12 ships **2.36**, Debian 13
+**2.41** and Debian 14 **2.42**. So without a declared bound the package installs cleanly on Debian
+12 and then dies at the dynamic linker with `GLIBC_2.39 not found` — the same build-green,
+run-broken shape as the missing `Depends:` field, and equally invisible to CI. Declaring it turns a
+first-launch crash into an `apt` refusal.
+
+**The bound is the build host's version, not a measurement of the binaries.** `dpkg-shlibdeps` is
+what computes a true minimum from the symbols actually referenced, and Tauri's bundler never runs
+it. `2.39` is therefore an upper estimate of the real requirement and may refuse installs that
+would in fact have worked. That trade was made deliberately — a false refusal is a clear message,
+where the alternative failure is a crash on first launch — but it is an estimate, and an audit of
+the built binaries' symbol requirements would allow a lower, truer bound.
+
+All three package names were verified present in Ubuntu 24.04 (noble), Debian 12 (bookworm),
+Debian 13 (trixie) and Debian 14 (forky).
 
 ### Version
 
@@ -280,6 +298,12 @@ complete — from ~2 minutes to ~15.
 
 ## 10. Known limitations, accepted
 
+* **The supported floor is Ubuntu 24.04+ and Debian 13+, set by the runner rather than by us.**
+  The `.deb` inherits the build host's glibc 2.39, which excludes Debian 12 (glibc 2.36) whatever
+  the control file says. §5 declares `libc6 (>= 2.39)` so the exclusion is an `apt` refusal rather
+  than a crash, but that only reports the limit — it does not widen it. Widening would mean
+  building on an older base, which collides with the constraint that each arch builds natively on
+  its own runner.
 * **The arm64 bundle is never built.** aarch64 keeps producing a sidecar and nothing more. An arm
   Linux desktop user has no artifact, and an arch-specific break in the Tauri build will not be
   caught. Reversing this means paying a `cargo install tauri-cli` on that leg (§3).

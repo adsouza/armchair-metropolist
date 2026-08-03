@@ -335,7 +335,7 @@ In `src-tauri/tauri.conf.json`, between the `icon` array and `"targets": "all"`:
 ```json
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0"],
+        "depends": ["libwebkit2gtk-4.1-0", "libc6 (>= 2.39)"],
         "recommends": ["libayatana-appindicator3-1"]
       }
     },
@@ -454,7 +454,10 @@ done
 #    unless tauri.conf.json supplies one (debian.rs:204), and a .deb declaring nothing
 #    installs onto a machine with no WebKit and then dies at the dynamic linker. This is
 #    the standing regression test for that.
-DEPENDS=$(dpkg-deb --field "$DEB" Depends)
+# A bare VAR=$(cmd) propagates cmd's exit status under set -e, which would abort here
+# without the ::error:: annotation if dpkg-deb itself errored (as opposed to succeeding
+# with an empty field, which the next line already handles).
+DEPENDS=$(dpkg-deb --field "$DEB" Depends) || fail "dpkg-deb --field failed reading $DEB"
 [ -n "$DEPENDS" ] || fail "the .deb declares no Depends"
 printf 'Depends: %s\n' "$DEPENDS"
 
@@ -660,8 +663,9 @@ Expected: `undefined variable "nosuchcontext"` reported, then `clean again`.
 
 Do **not** push straight to main — a push there deploys to production, and the point of this step is to observe the safe half of the change first.
 
+**Amended during execution:** the `linux-desktop-bundle` branch was created at setup rather than here, because the spec and plan commits needed somewhere to live that was not `main`. Skip the `checkout -b`; the implementer commits only, and the controller handles push, PR and observation.
+
 ```bash
-git checkout -b linux-desktop-bundle
 git add .github/workflows/ci.yml
 git commit -m "ci: build a Linux .deb in the desktop job
 
