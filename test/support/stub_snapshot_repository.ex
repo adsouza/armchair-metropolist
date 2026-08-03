@@ -34,13 +34,17 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
 
   @impl true
   def save(city_id, tick, city_map) do
-    case Agent.get(__MODULE__, &Map.get(&1, :stale_at)) do
-      nil ->
-        Agent.update(__MODULE__, &%{&1 | saves: [{city_id, tick, city_map} | &1.saves]})
-        :ok
+    # get_and_update/2 rather than a separate get then update: the flag has to be
+    # both read and cleared in one step, or a second save between the two calls
+    # could see a `:stale_at` that a concurrent caller had already consumed.
+    Agent.get_and_update(__MODULE__, fn state ->
+      case Map.get(state, :stale_at) do
+        nil ->
+          {:ok, %{state | saves: [{city_id, tick, city_map} | state.saves]}}
 
-      stored_tick ->
-        {:stale, stored_tick}
-    end
+        stored_tick ->
+          {{:stale, stored_tick}, Map.delete(state, :stale_at)}
+      end
+    end)
   end
 end

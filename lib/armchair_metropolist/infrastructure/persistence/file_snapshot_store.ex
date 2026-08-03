@@ -23,13 +23,18 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   newer or equal tick has been accepted, so `load_current/0`'s max is always the
   primary's.
 
-  Equal ticks *do* overwrite, so re-saving the current tick behaves as a plain
-  update rather than being silently dropped.
+  Without the older-tick refusal above, one transient load miss was permanently
+  destructive: the engine would start a fresh city at tick 0, `terminate/2` would
+  write it, the real city would be demoted to the backup, and the next launch
+  would overwrite the backup too.
 
-  Without this rule one transient load miss was permanently destructive: the
-  engine would start a fresh city at tick 0, `terminate/2` would write it, the
-  real city would be demoted to the backup, and the next launch would overwrite
-  the backup too.
+  That older-tick refusal is `save/3`'s and, one level down, `save_current/2`'s.
+  The *equal*-tick case differs between them: `save/3` refuses an equal tick just
+  as it refuses a lower one, per the port's guarantee. `save_current/2` itself,
+  called directly rather than through the port, has the narrower rule its own
+  "re-saving the same tick overwrites in place" test exercises: equal ticks *do*
+  overwrite there, so a direct re-save at the current tick behaves as a plain
+  update rather than being silently dropped.
 
   ## Failures are returned, never raised
 

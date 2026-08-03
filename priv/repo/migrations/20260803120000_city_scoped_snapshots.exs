@@ -29,6 +29,15 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.Repo.Migrations.CitySco
     drop table(:city_snapshots)
     rename table(:city_snapshots_new), to: table(:city_snapshots)
 
+    # `rename table/2` does not rename the implicit primary-key constraint, so without
+    # this the schema carries `city_snapshots_new_pkey` forever — an artefact of how this
+    # migration was built rather than anything about the table. Single-argument `execute/1`
+    # rather than `execute/2`: this migration defines an explicit `down/0` rather than
+    # `change/0`, so Ecto never runs `up/0` in reverse and a rollback string here would
+    # never fire. `down/0` doesn't need one either — it builds `city_snapshots_old` fresh,
+    # which gets its own default constraint name.
+    execute "ALTER TABLE city_snapshots RENAME CONSTRAINT city_snapshots_new_pkey TO city_snapshots_pkey"
+
     # The reaper sweeps on this column (§8).
     create index(:city_snapshots, [:updated_at])
   end
