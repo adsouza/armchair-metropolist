@@ -367,12 +367,24 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/apt-archives-flatpak
-          key: apt-flatpak-${{ matrix.runner }}-v1
+          # v2: elfutils joined the package list. The key must move with the list,
+          # because actions/cache only *saves* on a miss — a v1 hit would restore the
+          # old set and quietly re-download elfutils on every run forever.
+          key: apt-flatpak-${{ matrix.runner }}-v2
 
-      # --no-install-recommends here as well. Note this is a *change* in what gets
-      # installed, unlike the GTK step which already had it — so if flatpak-builder
-      # turns out to need something it merely recommends, this is the first place to
-      # look. The failure would surface at "Build the Flatpak", not here.
+      # `elfutils` is listed explicitly, and that is not optional.
+      #
+      # flatpak-builder strips debug symbols from every binary by default, shelling out
+      # to `eu-strip` — which lives in elfutils, a package flatpak-builder only
+      # *recommends*. Adding --no-install-recommends here therefore broke the build
+      # with `Failed to execute child process "eu-strip" (No such file or directory)`,
+      # after the module had already been assembled. (`eu-elfcompress`, warned about a
+      # line earlier in that log, is the same package.)
+      #
+      # Naming it beats dropping the flag: the install stays minimal, and the thing the
+      # build actually needs is written down instead of arriving as a side effect of
+      # someone else's recommends list. That is the same lesson §7 of the bundle design
+      # records — enumerate build inputs by process, not by dependency graph.
       - name: Install the Flatpak toolchain
         if: env.BUNDLE == 'true'
         timeout-minutes: 12
@@ -382,7 +394,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             -o Dir::Cache::archives="$HOME/apt-archives-flatpak" \
-            flatpak flatpak-builder
+            flatpak flatpak-builder elfutils
+          command -v eu-strip >/dev/null \
+            || { echo "::error::eu-strip missing; flatpak-builder will fail after assembling the module"; exit 1; }
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives-flatpak
           du -sh ~/apt-archives-flatpak
 
