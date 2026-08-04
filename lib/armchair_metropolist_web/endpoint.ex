@@ -1,33 +1,58 @@
 defmodule ArmchairMetropolistWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :armchair_metropolist
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
-  @session_options [
-    store: :cookie,
-    key: "_armchair_metropolist_key",
-    signing_salt: "ccKXd5/j",
-    same_site: "Lax",
-    # 90 days — matches :snapshot_retention_days (config.exs). Without a max_age,
-    # Plug.Session emits no expires/max-age attribute at all and the cookie is
-    # browser-session scoped: it dies the moment the browser closes, not merely
-    # when explicitly cleared. That is a far more common way to lose a city than
-    # the "cleared cookie" spec §10 accepts, and it silently breaks the promise the
-    # retention window and the UI copy ("this city lives in this browser") both
-    # make. Keep this in step with :snapshot_retention_days by hand; nothing
-    # currently derives one from the other.
-    max_age: 90 * 24 * 60 * 60,
-    # Belt-and-braces alongside config/prod.exs's `force_ssl`: that already
-    # upgrades every request to HTTPS in production, so this flag is inert there
-    # today, but the session cookie should not depend on a setting that lives in a
-    # different file to stay off cleartext.
-    secure: true
-  ]
+  @doc """
+  The session cookie's options. The session is stored in the cookie and signed, so
+  its contents can be read but not tampered with. Set `:encryption_salt` to encrypt.
+
+  A function rather than a module attribute because `:secure` cannot be decided at
+  compile time: the two targets ship from **one** compilation and are told apart only
+  at runtime, by the `ARMCHAIR_DESKTOP` marker `Desktop.Config.desktop?/0` reads.
+
+  Public because `:connect_info` below resolves it through Phoenix's
+  `{module, function, args}` form, which is applied per connection.
+  """
+  @spec session_options() :: keyword()
+  def session_options do
+    base = [
+      store: :cookie,
+      key: "_armchair_metropolist_key",
+      signing_salt: "ccKXd5/j",
+      same_site: "Lax",
+      # 90 days — matches :snapshot_retention_days (config.exs). Without a max_age,
+      # Plug.Session emits no expires/max-age attribute at all and the cookie is
+      # browser-session scoped: it dies the moment the browser closes, not merely
+      # when explicitly cleared. That is a far more common way to lose a city than
+      # the "cleared cookie" spec §10 accepts, and it silently breaks the promise the
+      # retention window and the UI copy ("this city lives in this browser") both
+      # make. Keep this in step with :snapshot_retention_days by hand; nothing
+      # currently derives one from the other.
+      max_age: 90 * 24 * 60 * 60
+    ]
+
+    # Belt-and-braces alongside config/prod.exs's `force_ssl`, which already upgrades
+    # every request to HTTPS — so this is inert on the server today, but the cookie
+    # should not depend on a setting in a different file to stay off cleartext.
+    #
+    # Excluded on the desktop target, where it is not inert but fatal. That target
+    # serves `http://127.0.0.1` by design (loopback is what makes `check_origin: false`
+    # a safe trade — see Desktop.Config), and a webview refuses to *store* a `secure`
+    # cookie from a plain-HTTP origin. The cookie then never comes back, so the
+    # LiveView socket's `connect_info` carries no session, `Phoenix.LiveView.Channel`
+    # replies `{:error, %{reason: "stale"}}`, and the client reloads on a loop. Nothing
+    # raises and nothing warns above debug level: the window renders, its metrics even
+    # advance because each reload re-renders a live server-side city, and it is simply
+    # never interactive. Regression-tested in `endpoint_session_test.exs`.
+    if ArmchairMetropolist.Infrastructure.Desktop.Config.desktop?() do
+      base
+    else
+      Keyword.put(base, :secure, true)
+    end
+  end
 
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [connect_info: [session: {__MODULE__, :session_options, []}]],
+    longpoll: [connect_info: [session: {__MODULE__, :session_options, []}]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -60,6 +85,19 @@ defmodule ArmchairMetropolistWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
-  plug Plug.Session, @session_options
+  # A function plug, not `plug Plug.Session, session_options()`. Phoenix's
+  # `:plug_init_mode` is `:runtime` only in dev and test (config/dev.exs,
+  # config/test.exs); everywhere else it defaults to `:compile`, which would bake
+  # today's options into the pipeline — so the packaged desktop build would carry the
+  # server's `secure: true` no matter what `session_options/0` returns at runtime, and
+  # no test could see it, since tests run in the mode that happens to work.
+  plug :session
   plug ArmchairMetropolistWeb.Router
+
+  # `Plug.Session.init/1` derives no keys: `prederive/3` is a no-op without a
+  # `:secret_key_base` in the options, and the real derivation in the store's get/put
+  # is cached in the `Plug.Keys` ETS table. So this is a small map build per request.
+  defp session(conn, _opts) do
+    Plug.Session.call(conn, Plug.Session.init(session_options()))
+  end
 end
