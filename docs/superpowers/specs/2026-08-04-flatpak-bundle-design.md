@@ -264,18 +264,36 @@ Two traps recorded from the last sweep, both hit on 2026-08-03:
 * **Confirm each mutation actually applied.** A pattern that silently fails to match yields a green
   run that reads as a passing assertion.
 
-## 8. Effect on the release job
+## 8. Where it runs — a separate job, not inline in `release`
 
-Added between the existing asset check and `gh release create`: an apt install, a
-`flatpak remote-add --if-not-exists flathub`, a runtime + SDK install, `flatpak-builder`, then
-`scripts/verify-flatpak.sh`.
+An earlier draft of this section put the build inline in the `release` job. **That is not
+implementable**, and the reason is worth recording rather than quietly working around.
 
-Estimated 6–12 minutes on top of the release job, dominated by the 1.5–2 GB runtime pull. Nothing
-waits on it: releases are rare, and `deploy` is on a different trigger entirely.
+`release` runs only on a tag that has already passed the version guard. So the only way to exercise a
+Flatpak step living inside it would be to push a tag matching `mix.exs` exactly — that is, to cut a
+real, public Release at the real version. A throwaway `v0.0.1-test` tag fails the guard in `check`,
+`release` never starts, and nothing is learned. Developing a 1.5–2 GB, sandbox-dependent build with
+no loop short of "publish and see" is not a plan.
 
-A failure here fails the job **before** `gh release create` runs, so a broken Flatpak yields no
-Release rather than a Release missing an asset — the same ordering the asset check already
-establishes.
+So the build is its own job:
+
+```yaml
+flatpak:
+  needs: [desktop]
+  if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+```
+
+and `on:` gains `workflow_dispatch`, with `BUNDLE` extended to cover it so the `.deb` exists to
+consume. That buys a real loop — run the workflow by hand from any branch, get a built and verified
+`.flatpak` as an artifact, publish nothing — and it keeps paying afterwards: it is how you check the
+Flatpak still builds after a runtime or dependency bump without cutting a release.
+
+`release` then gains `needs: [flatpak]` and attaches the artifact. The ordering property the inline
+version had is preserved and slightly strengthened: a Flatpak that fails to build or verify means the
+`release` job never starts, so there is no Release at all rather than one missing an asset.
+
+Estimated 6–12 minutes, dominated by the runtime pull. Nothing waits on it — releases are rare and
+`deploy` is on a different trigger entirely.
 
 ## 9. Documentation
 
