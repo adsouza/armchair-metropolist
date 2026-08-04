@@ -37,7 +37,18 @@ defmodule ArmchairMetropolist.MixProject do
           ArmchairMetropolist.CityGenerators,
           ArmchairMetropolist.SnapshotRepositoryContract,
           ArmchairMetropolist.SnapshotRepositoryOrderingContract,
-          ArmchairMetropolist.PlayingGuide
+          ArmchairMetropolist.PlayingGuide,
+          # Developer tooling, not shipped code — a Mix task is not in either
+          # release. Same rationale as the scaffolding above: counting it measures
+          # how well the release procedure tests itself, not how well the
+          # application is tested. Its three pure transforms *are* tested
+          # (test/mix/tasks/version_set_test.exs); what is uncovered is `run/1`,
+          # which writes real files and shells out to cargo, and whose whole point
+          # is that the test suite must not do those things to its own checkout.
+          # Left unignored it read 12%, taking the total from 94.86% to 91.46% —
+          # still passing, but spending three points of headroom that belong to
+          # the application.
+          Mix.Tasks.Version.Set
         ],
         # 90%, measured 91.76%. This is the figure the design spec asked for
         # (section 9) and it became reachable only after deleting the unused
