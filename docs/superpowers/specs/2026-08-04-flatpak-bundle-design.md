@@ -94,8 +94,17 @@ Out, and stated so nobody reads this as half-done:
   who downloads it, exactly like the `.deb`.
 * **aarch64.** There is no aarch64 `.deb` to repackage — declined in the releases design for the same
   reason, that the leg needs a from-source Tauri CLI build for an audience of nobody so far.
-* **Building on pushes to `main`.** The runtime pull is 1.5–2 GB and uncacheable against a repository
-  budget already holding four mix caches. At release cadence that is affordable; per merge it is not.
+* **Building on pushes to `main`.** ~~The runtime pull is 1.5–2 GB and uncacheable against a
+  repository budget already holding four mix caches. At release cadence that is affordable; per merge
+  it is not.~~
+
+  **That reasoning was wrong, measured 2026-08-04.** On a hosted runner the runtime and SDK install
+  in **50 seconds** (`real 0m50.415s`, peaking at 32.2 MB/s over 7 refs), and the apt install of
+  `flatpak` + `flatpak-builder` takes 77 s. The whole toolchain job is ~2m15s. The cost that
+  justified excluding `main` does not exist, so the exclusion is currently unjustified rather than
+  justified-and-accepted. Left as-is pending a decision, because the argument for including `main` is
+  the same one that already keeps the `.deb` build there — packaging breakage found at merge time
+  rather than while cutting a release.
 
 ## 4. Fix the desktop entry at source, not in the manifest
 
@@ -292,8 +301,15 @@ Flatpak still builds after a runtime or dependency bump without cutting a releas
 version had is preserved and slightly strengthened: a Flatpak that fails to build or verify means the
 `release` job never starts, so there is no Release at all rather than one missing an asset.
 
-Estimated 6–12 minutes, dominated by the runtime pull. Nothing waits on it — releases are rare and
-`deploy` is on a different trigger entirely.
+**Measured 2026-08-04**, not estimated: apt install 77 s, runtime + SDK install **50 s**
+(`real 0m50.415s`, peaking at 32.2 MB/s), whole job ~2m15s before any build step exists. An earlier
+draft of this section guessed "6–12 minutes, dominated by the runtime pull" — wrong by roughly an
+order of magnitude, and wrong in the direction that made a design decision look justified. GitHub's
+network is the reason: 1.5–2 GB at 32 MB/s is well under a minute.
+
+Nothing waits on it — releases are rare and `deploy` is on a different trigger entirely. A manual run
+publishes nothing and deploys nothing: `release` requires `github.ref_type == 'tag'` and `deploy`
+requires `github.event_name == 'push'`, both verified skipped on run 30904363993.
 
 ## 9. Documentation
 
