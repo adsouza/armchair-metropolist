@@ -373,6 +373,40 @@ jobs:
             io.github.adsouza.armchair-metropolist
           ls -la armchair-metropolist.flatpak
 
+      # The same script a laptop would run, except that it cannot: it installs and
+      # executes a Flatpak, so it is Linux-only. See its header.
+      - name: Verify the Flatpak
+        if: env.BUNDLE == 'true'
+        run: ./scripts/verify-flatpak.sh armchair-metropolist.flatpak
+
+      # Every assertion above, shown to fail. The standing rule here is that a check
+      # which passes because it is doing nothing looks identical to one that passes
+      # because it is satisfied — and verify-flatpak.sh cannot be mutated on a laptop,
+      # so the sweep lives here where a Linux runner exists. One step, one run, and it
+      # re-proves itself on every merge rather than once at review time.
+      #
+      # Assertion 7's *glibc* case is not here: falsifying it means rebuilding the whole
+      # bundle against an older runtime, which is its own experiment. What is here is
+      # assertion 7's plumbing — EXPECT_SIDECAR pointing at a path that does not exist
+      # must turn it red, which is how we know it is wired to anything.
+      - name: Prove the Flatpak checks can fail
+        if: env.BUNDLE == 'true'
+        run: |
+          set -eu
+          B=armchair-metropolist.flatpak
+          for spec in \
+            "EXPECT_APP_ID=io.github.adsouza.not-the-app" \
+            "EXPECT_RUNTIME=org.gnome.Platform/x86_64/46" \
+            "EXPECT_SIDECAR=/app/bin/nosuchbinary"
+          do
+            if env "$spec" ./scripts/verify-flatpak.sh "$B" >/dev/null 2>&1; then
+              echo "::error::MUTATION SURVIVED: $spec — that assertion proves nothing"
+              exit 1
+            fi
+            echo "ok: $spec turned it red"
+          done
+          echo "all mutations died; the unmutated run above was green"
+
       - name: Upload the Flatpak
         if: env.BUNDLE == 'true' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v7
