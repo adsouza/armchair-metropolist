@@ -284,22 +284,27 @@ real, public Release at the real version. A throwaway `v0.0.1-test` tag fails th
 `release` never starts, and nothing is learned. Developing a 1.5–2 GB, sandbox-dependent build with
 no loop short of "publish and see" is not a plan.
 
-So the build is its own job:
+`on:` therefore gains **`workflow_dispatch`**, with `BUNDLE` extended to cover it. That buys a real
+loop — run the workflow by hand from any branch, get built and verified bundles as artifacts, publish
+nothing. Verified on run 30904363993: `release` requires `github.ref_type == 'tag'` and `deploy`
+requires `github.event_name == 'push'`, so a dispatch satisfies neither and both were skipped.
 
-```yaml
-flatpak:
-  needs: [desktop]
-  if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-```
+**And the build lives in the `desktop` job, not a job of its own.** A separate job was tried first and
+is wrong here for a specific reason. It would have to consume the `.deb` as an **artifact** — but
+pushes to `main` deliberately do not upload one, since that absence is what closes the route to
+installing two same-version packages from CI (releases design §7). Building on `main` would therefore
+have meant reopening a hole that was closed on purpose, purely to move a file between two jobs on the
+same commit.
 
-and `on:` gains `workflow_dispatch`, with `BUNDLE` extended to cover it so the `.deb` exists to
-consume. That buys a real loop — run the workflow by hand from any branch, get a built and verified
-`.flatpak` as an artifact, publish nothing — and it keeps paying afterwards: it is how you check the
-Flatpak still builds after a runtime or dependency bump without cutting a release.
+Building inside `desktop`, where `mix ex_tauri.build` has just written the `.deb` to disk, needs no
+artifact at all. So the Flatpak can be built and verified on **every merge** — which the 50-second
+measurement above makes affordable — without touching that property. The steps are gated on the
+existing `BUNDLE`, so they run exactly where the `.deb` does: x86_64, on `main`, tags and manual runs,
+never on a pull request and never on aarch64.
 
-`release` then gains `needs: [flatpak]` and attaches the artifact. The ordering property the inline
-version had is preserved and slightly strengthened: a Flatpak that fails to build or verify means the
-`release` job never starts, so there is no Release at all rather than one missing an asset.
+`release` keeps `needs: [check, desktop]` and gains the `.flatpak` in its asset list. The ordering
+property is unchanged: a Flatpak that fails to build or verify fails the `desktop` job, `release`
+never starts, and there is no Release at all rather than one missing an asset.
 
 **Measured 2026-08-04**, not estimated: apt install 77 s, runtime + SDK install **50 s**
 (`real 0m50.415s`, peaking at 32.2 MB/s), whole job ~2m15s before any build step exists. An earlier
