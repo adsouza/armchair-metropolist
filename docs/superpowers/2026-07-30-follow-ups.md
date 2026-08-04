@@ -309,6 +309,23 @@ a standing record that still says "todo" for finished work misleads exactly the 
 The coverage figure in this document's header is also stale: the suite is now 236 tests (5 properties,
 231 tests) at 94.86%.
 
+* **Flatpak bundle — done 2026-08-04.** Every Release now carries a `.flatpak`, built in the
+  `desktop` job by repackaging the `.deb` against `org.gnome.Platform//50`. It exists for the glibc
+  floor: the `.deb` declares `libc6 (>= 2.39)` and so will not install on Debian 13 or older, while
+  the Flatpak brings its own userspace. Verified by *running* it —
+  `scripts/verify-flatpak.sh` starts the sidecar inside the sandbox and asserts Phoenix's boot
+  banner, which no file-existence check could do, because a glibc mismatch leaves `flatpak-builder`
+  exiting 0. Not on Flathub, so side-loaded and no auto-updates. Spec:
+  `specs/2026-08-04-flatpak-bundle-design.md`.
+
+  Two traps found on the way, both worth knowing before touching this. `flatpak-builder` strips
+  binaries with `eu-strip`, from `elfutils`, which it only *recommends* — so
+  `--no-install-recommends` breaks the build after the module is already assembled. And do not
+  manage a background process across the sandbox boundary: `flatpak run` will not return while
+  anything lives inside, `kill` reaches Burrito's launcher rather than the `beam.smp` it spawned,
+  and `timeout` without `--kill-after` sends SIGTERM and then waits forever. Two CI jobs hung before
+  that was rewritten to run the sidecar in the foreground under its own `timeout`.
+
 * **Tag-driven GitHub Releases — done 2026-08-03.** A `v*` tag now cuts a Release carrying the x86_64
   `.deb` and both sidecars, with the tag checked against all four declared versions before anything
   publishes, and `mix version.set X.Y.Z` to move those four together. This closes the payload-cache

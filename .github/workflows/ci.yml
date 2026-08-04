@@ -583,10 +583,20 @@ jobs:
             mv "$SRC" "artifacts/armchair-metropolist-server_${VERSION}_linux-${T}"
           done
 
+          # The Flatpak. Built in the desktop job alongside the .deb it repackages, and
+          # already verified there by running the app inside the sandbox, so by the time
+          # it reaches here it is known to boot rather than merely to exist.
+          FLATPAK="artifacts/flatpak-bundle/armchair-metropolist.flatpak"
+          test -f "$FLATPAK" \
+            || { echo "::error::missing flatpak bundle"; find artifacts -type f; exit 1; }
+          FLATPAK_OUT="artifacts/armchair-metropolist_${VERSION}_x86_64.flatpak"
+          mv "$FLATPAK" "$FLATPAK_OUT"
+
           # The version comes from the tag, which `check` has already proven equals the
           # version every file in the repository declares — so these names cannot claim a
           # version the artifacts are not.
           echo "DEB=$DEB_OUT" >> "$GITHUB_ENV"
+          echo "FLATPAK=$FLATPAK_OUT" >> "$GITHUB_ENV"
           ls -la artifacts/armchair-metropolist*
 
       # --generate-notes composes the body from commits since the previous tag.
@@ -601,6 +611,7 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             "$DEB" \
+            "$FLATPAK" \
             "artifacts/armchair-metropolist-server_${VERSION}_linux-x86_64" \
             "artifacts/armchair-metropolist-server_${VERSION}_linux-aarch64"
 
