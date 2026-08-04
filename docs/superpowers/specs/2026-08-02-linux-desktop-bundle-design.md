@@ -396,10 +396,29 @@ complete — from ~2 minutes to ~15.
     are the only way to test an unreleased merge. The `.deb` route is closed: `main` no longer
     uploads one.
 
-## 11. Flatpak, deferred
+## 11. Flatpak — built, 2026-08-04
 
-Considered and deliberately not built now. Recording why, because the reasons are not obvious and
-the question will come back.
+**No longer deferred.** See `2026-08-04-flatpak-bundle-design.md`. Every Release now carries a
+`.flatpak`, built in the `desktop` job by repackaging the `.deb` against `org.gnome.Platform//50`
+and verified by starting the sidecar inside the sandbox.
+
+The analysis below is kept because most of it held up, but **two of its claims did not**, and both
+are corrected in place further down:
+
+* It proposes `org.gnome.Platform//46`. That was never viable — GNOME 46 is built on
+  freedesktop-sdk 23.08, whose glibc is *older* than the `libc6 (>= 2.39)` §5 declares. The app
+  would have died at the dynamic loader while `flatpak-builder` exited 0. `//50` is confirmed
+  working: Phoenix boots and binds a port inside the sandbox.
+* Its "1.5–2 GB per run and uncacheable" cost estimate implied this was expensive. Measured, the
+  runtime and SDK install in **50 seconds** and the whole Flatpak addition costs ~117s, which is why
+  it now runs on every merge rather than only at release.
+
+What *did* hold up is the channel objection, and it still stands: the bundle is side-loaded, not on
+Flathub, so it does not auto-update. Its real value turned out to be the glibc floor — the `.deb`
+cannot install on Debian 13, and the Flatpak can.
+
+Considered and deliberately not built at the time. Recording why, because the reasons are not
+obvious and the question will come back.
 
 **It is not a Tauri bundle target.** `PackageType` (`tauri-bundler/src/bundle/settings.rs:26`)
 enumerates `deb`, `ios`, `msi`, `app`, `rpm`, `appimage`, `dmg`, `updater`. There is no
@@ -507,3 +526,13 @@ Two things this cannot verify, stated rather than papered over:
   present proves the metadata exists, not that it is sufficient, and the tray code path in §5 is
   reasoned about rather than exercised. A headless smoke test — install, launch under xvfb, assert
   the sidecar's port opens — is the honest next increment and is out of scope here.
+
+  **Done for the Flatpak on 2026-08-04, and without xvfb.** `scripts/verify-flatpak.sh` starts the
+  *sidecar* rather than the Tauri window, so no display is involved: it runs
+  `/app/bin/desktop --no-halt` inside the sandbox under a `timeout` and asserts Phoenix's boot
+  banner appears. Confirmed on run 30955294962 —
+  `Running ArmchairMetropolistWeb.Endpoint with Bandit 1.12.4 at 127.0.0.1:41000`.
+
+  **Still undone for the `.deb`**, which remains checked only by inspecting its contents. And still
+  undone for the *window* in either format: `--socket=wayland`, `--device=dri` and the tray are
+  exercised by nobody, in CI or out of it.

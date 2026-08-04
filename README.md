@@ -93,6 +93,26 @@ sudo apt install ./armchair-metropolist_<version>_amd64.deb
 There is no aarch64 `.deb` yet — nobody has asked, and that leg would need a
 from-source Tauri CLI build.
 
+Or, on any distribution with Flatpak:
+
+```bash
+flatpak install --user ./armchair-metropolist_<version>_x86_64.flatpak
+flatpak run io.github.adsouza.armchair-metropolist
+```
+
+**Take this one if your distribution is older than Ubuntu 24.04.** The `.deb`
+inherits the glibc of the machine that built it — it declares `libc6 (>= 2.39)`,
+so it will not install on Debian 13 or anything older. The Flatpak brings its own
+userspace and does not care; it needs the `org.gnome.Platform` 50 runtime, which a
+current GNOME desktop already has and which Flatpak will otherwise fetch.
+
+It runs with **no network access at all**. A Flatpak without `--share=network`
+still gets loopback, which is all the app uses — the server and the window talk to
+each other over `127.0.0.1` and nothing else.
+
+It is side-loaded rather than installed from Flathub, so it will not auto-update.
+`flatpak install` the next release over the top.
+
 `armchair-metropolist-server_<version>_linux-x86_64` (and `…_linux-aarch64`) is also
 attached. That is the Burrito sidecar the desktop app runs internally: a single file
 carrying its own Erlang runtime, which serves the app in a browser instead of a native
