@@ -3,6 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+    # `v*` rather than a semver glob. GitHub's syntax page says filter patterns
+    # accept `*`, `**`, `+`, `?` and `!`, but the cheat sheet defining whether `+`
+    # means "one or more", whether `[0-9]` classes work, and whether `.` stays
+    # literal could not be confirmed — and a trigger that silently never fires is
+    # the worst failure available here. So the glob stays coarse and deliberately
+    # over-matches; the precise check is `release_tag_site/0` in mix.exs, which is
+    # unit-testable. A `v`-prefixed non-release tag therefore fails `check` loudly,
+    # which is the right outcome for a tag that looks like a release and is not.
+    #
+    # The repository's existing non-version tag, `backup-pre-squash`, does not
+    # start with `v` and is excluded.
+    tags: ['v*']
   pull_request:
 
 # A force-push or a quick follow-up commit makes the previous run's answer
@@ -26,6 +38,14 @@ jobs:
   check:
     name: check · Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
     runs-on: ubuntu-24.04
+
+    # Empty on every branch push and pull request — Actions cannot conditionally
+    # omit a variable, and mix.exs reads "" as "no tag" for exactly that reason.
+    # On a tag this makes check_versions/1 compare the tag against all four
+    # declared versions, so a tag that disagrees fails here; `release` needs this
+    # job, so nothing is published.
+    env:
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     strategy:
       # Both versions' results are wanted: "fails only on the floor" and "fails
@@ -126,7 +146,11 @@ jobs:
       # triple, so bundling there would additionally need a multi-minute cargo install.
       #
       # Nothing waits on this: `deploy` needs only `check`, which finishes in ~50s.
-      BUNDLE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.target == 'x86_64-unknown-linux-gnu' }}
+      #
+      # Tags bundle too, because a Release carries the .deb. Pushes to main still
+      # build and verify it — that is what catches packaging breakage at merge time
+      # rather than while cutting a release — but no longer upload it.
+      BUNDLE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && matrix.target == 'x86_64-unknown-linux-gnu' }}
 
     strategy:
       fail-fast: false
@@ -278,8 +302,15 @@ jobs:
         if: env.BUNDLE == 'true'
         run: ./scripts/verify-deb.sh src-tauri/target/release/bundle
 
+      # Tag-only. On main the package is built, verified, and discarded: the
+      # Release is the durable copy, and not publishing a .deb from main also
+      # closes the route by which someone could install two *packages* carrying the
+      # same version — the stale-Burrito-payload bug. (The per-merge *sidecar*
+      # artifacts above are still uploaded and are still the same Burrito binary,
+      # so that route stays open for them, deliberately: they are the only way to
+      # test an unreleased merge.)
       - name: Upload the Linux bundle
-        if: env.BUNDLE == 'true'
+        if: env.BUNDLE == 'true' && github.ref_type == 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: desktop-bundle-${{ matrix.target }}
