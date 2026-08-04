@@ -21,7 +21,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                  :power_plant,
                  :water_plant,
                  :industrial,
-                 :road_hub,
+                 :transit_hub,
                  :residential,
                  :commercial,
                  :park
@@ -58,8 +58,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                labour: 12.0
              }
 
-      assert Node.production(:road_hub) == %{traffic: 60.0}
-      assert Node.consumption(:road_hub) == %{power: 8.0, waste: 2.0, money: 4.0}
+      assert Node.production(:transit_hub) == %{traffic: 60.0}
+      assert Node.consumption(:transit_hub) == %{power: 8.0, waste: 2.0, money: 4.0}
 
       assert Node.production(:residential) == %{labour: 4.0, money: 1.0}
 

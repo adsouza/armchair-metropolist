@@ -196,7 +196,7 @@ without it a violation still ships.
 ### 4.2 Resources and node types
 
 Four resources: `:power`, `:water`, `:waste`, `:traffic`. `waste` models processing
-*capacity* against waste *produced*; `traffic` models road capacity against trips generated.
+*capacity* against waste *produced*; `traffic` models transit capacity against trips generated.
 Every resource is therefore a uniform supply/demand pair:
 `supply(r) = Σ production[r]`, `demand(r) = Σ consumption[r]`.
 

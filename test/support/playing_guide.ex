@@ -42,7 +42,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   #
   # Commercial is part of a viable support set now, not an optional extra: without it
   # a city's only income is 1 per residential, which cannot cover the water plants and
-  # road hubs that residential itself requires.
+  # transit hubs that residential itself requires.
   #
   # These are solved, not guessed. {1,1,1,1,1} has NO viable residential count —
   # industrial and commercial demand 20 labour (r >= 5) while power caps r at 4 — so
@@ -51,18 +51,18 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp capacities_block do
     rows =
-      for {pp, wp, ind, rh, com} <- @support_sets do
-        support = pp + wp + ind + rh + com
+      for {pp, wp, ind, th, com} <- @support_sets do
+        support = pp + wp + ind + th + com
 
-        case residential_range(pp, wp, ind, rh, com) do
+        case residential_range(pp, wp, ind, th, com) do
           nil ->
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road, #{com} commercial " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial " <>
               "| #{support} | none | none | none | none |"
 
           {min_r, max_r} ->
             total = support + max_r
 
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{rh} road, #{com} commercial " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial " <>
               "| #{support} | #{min_r} | **#{max_r}** | #{total} | #{Float.round(max_r / total, 2)} |"
         end
       end
@@ -90,7 +90,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # the same band in a fraction of the simulations, and it would be wrong the
   # first time the band is not contiguous -- a failure that shows up as a
   # plausible wrong number in a published document, not as a test failure.
-  defp residential_range(pp, wp, ind, rh, com) do
+  defp residential_range(pp, wp, ind, th, com) do
     sustainable =
       for r <- 1..40,
           city =
@@ -98,7 +98,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
               power_plant: pp,
               water_plant: wp,
               industrial: ind,
-              road_hub: rh,
+              transit_hub: th,
               commercial: com,
               residential: r
             ),

@@ -94,9 +94,9 @@ health:
 <!-- generated:capacities -->
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
-| 2 power, 1 water, 1 industrial, 1 road, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
-| 2 power, 2 water, 1 industrial, 1 road, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
-| 3 power, 3 water, 2 industrial, 2 road, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
+| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
 <!-- /generated:capacities -->
 
 About 0.5 residential per tile is the ceiling. Two practical consequences:
@@ -111,10 +111,10 @@ disappearing.
 
 Those capacity figures include the one-off baseline 40, so a district that works is not
 automatically tileable: the second copy has no baseline of its own. As the city grows
-the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 road hubs : 2
+the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 transit hubs : 2
 commercial per 12 residential**. Commercial belongs in that ratio now, not as an
 optional add-on: a residential block's own income (money 1) can't cover what it costs
-the water plants and road hubs it needs, so a support set without a commercial block is
+the water plants and transit hubs it needs, so a support set without a commercial block is
 insolvent — the treasury drains over the game's lifetime even while every other resource
 reads 100% satisfied.
 
@@ -129,7 +129,7 @@ staff instead of power or water — the shortfall just shows up in a different c
 residential block is dead (health 0), it produces zero labour — production is
 health-scaled, same as everything else — and `industrial` and `commercial` both need
 labour to hold their own health. Simulated against 19 dead residential blocks: adding
-5 power, 4 water, 3 industrial and 3 road hubs — a combination that reaches full
+5 power, 4 water, 3 industrial and 3 transit hubs — a combination that reaches full
 satisfaction on power, water, waste and traffic simultaneously — still fails. The fresh
 `industrial` block starves for workers from the very first tick, decays, and its
 falling waste output drags the rest of the city down before the dead residential can
@@ -189,7 +189,7 @@ Production is scaled by the node's health, so a plant at 50% health supplies hal
 | `park` | waste 8 |
 | `power_plant` | power 120 |
 | `residential` | labour 4, money 1 |
-| `road_hub` | traffic 60 |
+| `transit_hub` | traffic 60 |
 | `water_plant` | water 100 |
 
 Every type produces something.
@@ -208,12 +208,12 @@ spiral.
 | `park` | — | 18 | — | 2 | — | 3 |
 | `power_plant` | — | 20 | 12 | 3 | — | — |
 | `residential` | 15 | 12 | 10 | 6 | — | — |
-| `road_hub` | 8 | — | 2 | — | — | 4 |
+| `transit_hub` | 8 | — | 2 | — | — | 4 |
 | `water_plant` | 25 | — | 6 | 2 | — | 5 |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
-`road_hub` supplies road capacity, which residential and commercial then consume.
+`transit_hub` supplies transit capacity, which residential and commercial then consume.
 
 `park` is usually a trap — it trades a lot of water for a little waste capacity, so it
 only pays when you have spare water and are waste-limited, which is rare given how much

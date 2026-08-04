@@ -100,11 +100,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     test "a key is present only where the type touches that resource" do
       by_type = SimulationMetrics.build(CityMap.new(40, 30), stats()).by_type
 
-      # A road hub produces traffic and consumes power and waste, but never water.
-      assert Map.has_key?(by_type.road_hub.rated_production, :traffic)
-      assert Map.has_key?(by_type.road_hub.consumption, :power)
-      refute Map.has_key?(by_type.road_hub.consumption, :water)
-      refute Map.has_key?(by_type.road_hub.rated_production, :water)
+      # A transit hub produces traffic and consumes power and waste, but never water.
+      assert Map.has_key?(by_type.transit_hub.rated_production, :traffic)
+      assert Map.has_key?(by_type.transit_hub.consumption, :power)
+      refute Map.has_key?(by_type.transit_hub.consumption, :water)
+      refute Map.has_key?(by_type.transit_hub.rated_production, :water)
     end
 
     test "an empty city reports every type at zero rather than an empty map" do

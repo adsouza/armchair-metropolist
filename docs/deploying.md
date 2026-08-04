@@ -61,6 +61,80 @@ turning a brief outage into permanent data loss. "No snapshot exists yet" alread
 starts a fresh city and is not an error; "the snapshot cannot be read" must stay
 fatal. The ordering belongs in the deploy, not in a `rescue`.
 
+## The other trap: renaming a node type is a data migration
+
+**Read this before deploying a change that renames or removes a value in
+`Domain.Entities.Node`'s `node_type` or `status` vocabulary.** A stored city is made of
+atoms, and both snapshot adapters decode with `:safe`, which refuses to *create* them —
+see `Infrastructure.Persistence.SnapshotVocabulary`. The old value only decodes because
+loading `Node` interns it. Complete the rename and nothing interns it any more, so every
+row written before the deploy raises `ArgumentError` on decode.
+
+That is the *unreadable* case, not the *absent* case, so by the section above it is
+deliberately fatal: the visitor's engine dies in `handle_continue(:hydrate, …)`, the
+`DynamicSupervisor` restarts it, and it dies again. Nothing else notices — the container
+boots and health checks pass, exactly as with a missing migration.
+
+Nothing in CI or in the test suite can catch this. The compiler sees a consistent
+codebase and every fixture is written by the new code; the only disagreeing copies of the
+old vocabulary are rows on the server.
+
+Stored cities are per-visitor sandboxes that `SnapshotReaper` already deletes on a
+retention window, so the answer is to drop them rather than carry migration code for a
+term that self-deletes. Straight after the push:
+
+```bash
+gigalixir pg:psql -a armchair-metropolist -c 'DELETE FROM city_snapshots'
+```
+
+Every visitor then starts a fresh city, which is the not-an-error path. Do this as its
+own step rather than as an Ecto migration: migrations are run by hand here anyway (above),
+so a migration would add a file to maintain without removing a manual step.
+
+If a stored city ever becomes worth preserving, the alternative is to keep the retired
+atom interned — a `@legacy_atoms` list in `SnapshotVocabulary` — and rewrite it to the new
+one as `CityMap` hydrates. That is real code and wants a test that decodes a payload built
+from the old vocabulary; do not add it speculatively.
+
+### The desktop target needs purging too, and it fails silently
+
+`FileSnapshotStore` returns rather than raises (see its "Failures are returned, never
+raised"), so the desktop app does **not** crash-loop. It does something quieter and worse.
+Measured, not inferred:
+
+1. `load_current/0` rescues both files to `:malformed` and reports `{:error, :not_found}`.
+   The engine starts a fresh city at tick 0. Nothing is logged.
+2. `save/3` sees that `:not_found`, so its own staleness guard does not fire, and it calls
+   `save_current/2`.
+3. `save_current/2`'s `stale?/1` reads the tick from the **envelope**, which decodes fine:
+   the envelope's atoms are `:version`, `:tick`, `:checksum`, `:payload`, and the city stays
+   an opaque binary inside it. So it reports the *old* high tick.
+4. `old_tick > new_tick`, so it returns `:ok` **without writing**. The engine is told the
+   checkpoint succeeded.
+
+The result is an app that looks fine and persists nothing. Every launch starts over, and no
+save lands until one unbroken session's tick exceeds the stored tick — at 1 tick/second, a
+snapshot at tick 5550 means ~92 minutes of play before the first successful write.
+
+Note the irony before changing `save_current/2` to "fix" it: the older-tick refusal exists
+precisely to stop a *transient* load miss from demoting a good city into the backup and then
+overwriting that too. A retired atom makes the miss permanent, and the safeguard becomes the
+thing blocking recovery. The bug is the stale file, not the guard.
+
+So a node-type rename also has to purge each installed copy — there is no deploy step that
+can reach them:
+
+```bash
+rm ~/Library/Application\ Support/armchair_metropolist/snapshot.{bin,bak}   # macOS
+rm ~/.local/share/armchair_metropolist/snapshot.{bin,bak}                   # Linux
+```
+
+The directory is `ExTauri.Paths.data_dir()`, named from `:app_name` in `config/config.exs`
+("Armchair Metropolist" → `armchair_metropolist`). It is *not* the
+`io.github.adsouza.armchair-metropolist` directory beside it, which holds Tauri's window
+state. For a released version this is a reason to prefer the `@legacy_atoms` shim above:
+you cannot ask every install to run `rm`.
+
 ## Deploying the server
 
 ```bash

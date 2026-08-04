@@ -25,8 +25,8 @@ satisfaction among the resources a node consumes.
   the failure mode the engine already models. See §5 for why that was preferred.
 * No jobs requirement on residential. Real housing needs employment nearby; modelling the
   reverse direction as well is a separate mechanic and is not in scope.
-* No labour requirement on `power_plant`, `water_plant`, `road_hub` or `park`. Staffing every type
-  would make labour a near-universal tax and flatten the distinction being drawn.
+* No labour requirement on `power_plant`, `water_plant`, `transit_hub` or `park`. Staffing every
+  type would make labour a near-universal tax and flatten the distinction being drawn.
 
 ## 2. The vocabulary
 
@@ -226,8 +226,8 @@ outcome, not a regression: the layout is content-driven precisely so it can make
 
 ## 7. Balance
 
-At the ratio `docs/PLAYING.md` documents — roughly 3 power, 3 water, 2 industrial, 2 road hubs per
-13 residential:
+At the ratio `docs/PLAYING.md` documents — roughly 3 power, 3 water, 2 industrial, 2 transit hubs
+per 13 residential:
 
 | | supply | demand | net |
 |---|---|---|---|

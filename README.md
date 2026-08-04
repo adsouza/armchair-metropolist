@@ -2,7 +2,7 @@
 
 An urban infrastructure simulation game.
 
-A city of power plants, water plants, industrial and commercial blocks, road hubs,
+A city of power plants, water plants, industrial and commercial blocks, transit hubs,
 parks and residential blocks ticks forward in real time. Each tick recomputes six
 resources — power, water, waste, traffic, labour and money — as supply against
 demand; starved nodes lose health and eventually go offline, which removes their

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add two resources — `labour`, produced by residential and required by industrial and commercial, and `money`, a carried-over treasury produced by commercial and residential and consumed by water plants, road hubs and parks.
+**Goal:** Add two resources — `labour`, produced by residential and required by industrial and commercial, and `money`, a carried-over treasury produced by commercial and residential and consumed by water plants, transit hubs and parks.
 
 **Architecture:** Both ride the existing supply/demand/satisfaction machinery in `SimulationCalculator`, so no new failure path is introduced: a shortfall decays the consuming nodes exactly as a water shortage does. Money is the sole exception — its unspent supply survives the tick boundary, expressed as a new `carried` field in `resource_stats` and a `money` field on `CityMap`.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Resource display order is exactly `[:power, :water, :waste, :traffic, :labour, :money]`. This is the **end state**: Task 1 leaves the list at five entries and Task 3 appends `:money`. A task is not wrong for showing an intermediate list.
-- Table values, verbatim: `commercial` produces `money 30.0` and consumes `labour 8.0`; `residential` produces `money 1.0` and `labour 4.0`; `industrial` consumes `labour 12.0`; `water_plant` consumes `money 5.0`; `road_hub` consumes `money 4.0`; `park` consumes `money 3.0`.
+- Table values, verbatim: `commercial` produces `money 30.0` and consumes `labour 8.0`; `residential` produces `money 1.0` and `labour 4.0`; `industrial` consumes `labour 12.0`; `water_plant` consumes `money 5.0`; `transit_hub` consumes `money 4.0`; `park` consumes `money 3.0`.
 - Baseline capacity gains `labour: 0.0` and `money: 0.0` — explicit zeros, never omitted.
 - `CityMap.money` defaults to `500.0`.
 - The balance floors at zero. Debt is not modelled.
@@ -88,7 +88,7 @@ In `node.ex`, `@resources` becomes `[:power, :water, :waste, :traffic, :labour]`
   power_plant: %{power: 120.0},
   water_plant: %{water: 100.0},
   industrial: %{waste: 90.0},
-  road_hub: %{traffic: 60.0},
+  transit_hub: %{traffic: 60.0},
   residential: %{labour: 4.0},
   commercial: %{},
   park: %{waste: 8.0}
@@ -98,7 +98,7 @@ In `node.ex`, `@resources` becomes `[:power, :water, :waste, :traffic, :labour]`
   power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0},
   water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0},
   industrial: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0},
-  road_hub: %{power: 8.0, waste: 2.0},
+  transit_hub: %{power: 8.0, waste: 2.0},
   residential: %{power: 15.0, water: 12.0, waste: 10.0, traffic: 6.0},
   commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0, labour: 8.0},
   park: %{water: 18.0, traffic: 2.0}
@@ -141,7 +141,7 @@ Report the measured numbers either way.
   # range and report both ends.
   #
   # Returns {min, max}, or nil when no residential count is sustainable.
-  defp residential_range(pp, wp, ind, rh) do
+  defp residential_range(pp, wp, ind, th) do
     sustainable =
       for r <- 1..40,
           city =
@@ -149,7 +149,7 @@ Report the measured numbers either way.
               power_plant: pp,
               water_plant: wp,
               industrial: ind,
-              road_hub: rh,
+              transit_hub: th,
               residential: r
             ),
           final = Enum.reduce(1..120, city, fn _, c -> elem(Calc.advance_tick(c), 0) end),
@@ -443,7 +443,7 @@ end
 
 - [ ] **Step 2: Run and watch fail.**
 
-- [ ] **Step 3: Add the tables** — `commercial` produces `money: 30.0`; `residential` produces `money: 1.0` alongside its labour; `water_plant`, `road_hub` and `park` gain `money:` consumption of `5.0`, `4.0` and `3.0`.
+- [ ] **Step 3: Add the tables** — `commercial` produces `money: 30.0`; `residential` produces `money: 1.0` alongside its labour; `water_plant`, `transit_hub` and `park` gain `money:` consumption of `5.0`, `4.0` and `3.0`.
 
 `@resources`, `@type resource` and `@baseline_capacity` already carry `:money` — Task 3 added them, because `resource_stats/1` had to produce a `:money` entry before `advance_tick/1` could read one. Do not touch them here.
 
@@ -465,9 +465,9 @@ health, appending one commercial to the existing sets gives:
 
 | set | viable residential |
 |---|---|
-| 1 power, 1 water, 1 industrial, 1 road, 1 commercial | **none** |
-| 2 power, 2 water, 1 industrial, 1 road, 1 commercial | 5–7 |
-| 3 power, 3 water, 2 industrial, 2 road, 2 commercial | 10–12 |
+| 1 power, 1 water, 1 industrial, 1 transit, 1 commercial | **none** |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 5–7 |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 10–12 |
 
 The first is contradictory: one industrial and one commercial demand 20 labour, needing r ≥ 5,
 while power supply of 160 against a demand of `95 + 15r` caps r at 4. The smallest set that admits
@@ -476,7 +476,7 @@ any city is `{2, 1, 1, 1, 1}`, at exactly 5 residential. Use:
 ```elixir
   # Commercial is part of a viable support set now, not an optional extra: without it
   # a city's only income is 1 per residential, which cannot cover the water plants and
-  # road hubs that residential itself requires.
+  # transit hubs that residential itself requires.
   #
   # These are solved, not guessed. {1,1,1,1,1} has NO viable residential count —
   # industrial and commercial demand 20 labour (r >= 5) while power caps r at 4 — so

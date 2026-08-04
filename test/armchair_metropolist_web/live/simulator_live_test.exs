@@ -361,15 +361,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     test "a resource the type never touches shows an em dash, not a zero", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # Positive case first: a road hub does consume power, so that cell holds a number.
+      # Positive case first: a transit hub does consume power, so that cell holds a number.
       # The specific figure, not the incidental "0" the old count-scaled cell rendered.
-      assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "-8"
+      assert view |> element(~s{[data-cell="transit_hub-power"]}) |> render() =~ "-8"
 
       # It never touches water, and that must read differently from "nets to zero".
       # No `refute water =~ "0"` here: the assert above already carries the claim, and
       # any mutation that reaches this line has failed it. What the refute could still
       # do is false-fail the day someone adds a class or attribute containing a "0".
-      assert view |> element(~s{[data-cell="road_hub-water"]}) |> render() =~ "—"
+      assert view |> element(~s{[data-cell="transit_hub-water"]}) |> render() =~ "—"
     end
 
     test "the totals row reports supply, demand and satisfaction per resource",

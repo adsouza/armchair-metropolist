@@ -179,11 +179,11 @@ final `end`:
     test "a key is present only where the type touches that resource" do
       by_type = SimulationMetrics.build(CityMap.new(40, 30), stats()).by_type
 
-      # A road hub produces traffic and consumes power and waste, but never water.
-      assert Map.has_key?(by_type.road_hub.rated_production, :traffic)
-      assert Map.has_key?(by_type.road_hub.consumption, :power)
-      refute Map.has_key?(by_type.road_hub.consumption, :water)
-      refute Map.has_key?(by_type.road_hub.rated_production, :water)
+      # A transit hub produces traffic and consumes power and waste, but never water.
+      assert Map.has_key?(by_type.transit_hub.rated_production, :traffic)
+      assert Map.has_key?(by_type.transit_hub.consumption, :power)
+      refute Map.has_key?(by_type.transit_hub.consumption, :water)
+      refute Map.has_key?(by_type.transit_hub.rated_production, :water)
     end
 
     test "an empty city reports every type at zero rather than an empty map" do
@@ -583,11 +583,11 @@ Append inside the existing `defmodule ... do` in
     test "a resource the type never touches shows an em dash, not a zero", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # Positive case first: a road hub does consume power, so that cell holds a number.
-      assert view |> element(~s{[data-cell="road_hub-power"]}) |> render() =~ "0"
+      # Positive case first: a transit hub does consume power, so that cell holds a number.
+      assert view |> element(~s{[data-cell="transit_hub-power"]}) |> render() =~ "0"
 
       # It never touches water, and that must read differently from "nets to zero".
-      water = view |> element(~s{[data-cell="road_hub-water"]}) |> render()
+      water = view |> element(~s{[data-cell="transit_hub-water"]}) |> render()
       assert water =~ "—"
       refute water =~ "0"
     end

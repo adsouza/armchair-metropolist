@@ -273,7 +273,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       park = %Node{Node.new(0, 0, :park) | health: 80.0, status: :online}
       power_hogs = for x <- 1..10, do: Node.new(x, 1, :commercial)
       # Add water and traffic capacity so only power is short.
-      supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :road_hub)]
+      supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :transit_hub)]
       map = map_with([park | power_hogs] ++ supply)
 
       stats = Calc.resource_stats(map)
@@ -325,7 +325,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       support = [
         Node.new(0, 2, :water_plant),
         Node.new(1, 2, :industrial),
-        Node.new(2, 2, :road_hub)
+        Node.new(2, 2, :transit_hub)
       ]
 
       initial = map_with([plant | consumers] ++ support)
@@ -486,7 +486,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     # it.
     test "layout does not affect the outcome: resources are pooled city-wide" do
       composition =
-        [{:power_plant, 1}, {:water_plant, 1}, {:industrial, 1}, {:road_hub, 1}] ++
+        [{:power_plant, 1}, {:water_plant, 1}, {:industrial, 1}, {:transit_hub, 1}] ++
           List.duplicate({:residential, 1}, 5)
 
       types = Enum.map(composition, &elem(&1, 0))
