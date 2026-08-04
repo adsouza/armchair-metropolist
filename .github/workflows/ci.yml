@@ -16,6 +16,12 @@ on:
     # start with `v` and is excluded.
     tags: ['v*']
   pull_request:
+  # Manual runs exist for the `flatpak` job below, which is otherwise reachable only
+  # from a v* tag — and a tag that matches mix.exs cuts a real public Release, so
+  # "push a tag and see" is not a development loop. A dispatch run builds and
+  # verifies the bundle and publishes nothing. It stays useful afterwards: it is how
+  # you check the Flatpak still builds after a runtime bump without cutting a release.
+  workflow_dispatch:
 
 # A force-push or a quick follow-up commit makes the previous run's answer
 # irrelevant, so stop it rather than paying for both.
@@ -150,7 +156,10 @@ jobs:
       # Tags bundle too, because a Release carries the .deb. Pushes to main still
       # build and verify it — that is what catches packaging breakage at merge time
       # rather than while cutting a release — but no longer upload it.
-      BUNDLE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && matrix.target == 'x86_64-unknown-linux-gnu' }}
+      #
+      # Manual runs bundle as well, so the `flatpak` job has a .deb to repackage
+      # when it is exercised outside a release.
+      BUNDLE: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag'))) && matrix.target == 'x86_64-unknown-linux-gnu' }}
 
     strategy:
       fail-fast: false
@@ -309,8 +318,11 @@ jobs:
       # artifacts above are still uploaded and are still the same Burrito binary,
       # so that route stays open for them, deliberately: they are the only way to
       # test an unreleased merge.)
+      # Also on a manual run, because the `flatpak` job downloads this artifact.
+      # Pushes to main still do not upload it — that property is from the releases
+      # design and must not regress.
       - name: Upload the Linux bundle
-        if: env.BUNDLE == 'true' && github.ref_type == 'tag'
+        if: env.BUNDLE == 'true' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v7
         with:
           name: desktop-bundle-${{ matrix.target }}
@@ -409,6 +421,63 @@ jobs:
             "$DEB" \
             "artifacts/armchair-metropolist-server_${VERSION}_linux-x86_64" \
             "artifacts/armchair-metropolist-server_${VERSION}_linux-aarch64"
+
+  # Repackages the .deb into a Flatpak, which reaches distributions whose glibc is
+  # older than the runner's 2.39 — the .deb inherits the build machine's userspace
+  # and a Flatpak does not.
+  #
+  # Its own job rather than steps inside `release`, because `release` only runs on a
+  # tag that already passed the version guard: an inline step could therefore only
+  # ever be exercised by cutting a real public Release at the real version, which is
+  # not a development loop for a 1.5-2 GB sandbox-dependent build. See
+  # docs/superpowers/specs/2026-08-04-flatpak-bundle-design.md §8.
+  flatpak:
+    name: flatpak bundle
+    runs-on: ubuntu-24.04
+    needs: [desktop]
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-bundle-x86_64-unknown-linux-gnu
+          path: deb
+
+      # None of these ship on GitHub's ubuntu-24.04 image — checked against the
+      # runner-images readme with controls in both directions, so the absence is
+      # evidence rather than a mistyped grep. `flatpak` pulls bubblewrap and ostree
+      # in as dependencies.
+      - name: Install the Flatpak toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      # --user throughout: no privilege needed, and the runtime lands somewhere the
+      # build can read. Deliberately not cached — it is 1.5-2 GB against a repository
+      # cache budget already holding four mix caches, and this job runs rarely.
+      #
+      # //50 rather than the //46 an earlier design proposed: GNOME 46 is built on
+      # freedesktop-sdk 23.08 whose glibc (~2.37) is *older* than the `libc6 (>= 2.39)`
+      # the .deb declares, so the app would die at the dynamic loader while
+      # flatpak-builder exited 0 having merely copied files.
+      - name: Install the GNOME runtime and SDK
+        run: |
+          flatpak remote-add --user --if-not-exists \
+            flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          time flatpak install --user -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
+          flatpak list --user --runtime
+
+      # This job deliberately builds nothing yet. This run establishes that the
+      # toolchain installs, that user namespaces work on a hosted runner, and what the
+      # runtime pull costs — three things worth knowing separately, because a single
+      # red X covering all of them plus a manifest error tells you nothing.
+      - name: Report what we have to work with
+        run: |
+          flatpak --version
+          flatpak-builder --version
+          ls -la deb/
 
   # The Rust half of what `mix check` does for Elixir. `deps.audit` reads mix.lock
   # against published advisories; nothing has ever read src-tauri/Cargo.lock, which
