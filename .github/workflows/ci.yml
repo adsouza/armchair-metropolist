@@ -355,34 +355,45 @@ jobs:
       # Fail before `gh` does, with a message naming the missing file and showing
       # what actually arrived. A Release is public and permanent; a partial one is
       # worse than none.
-      - name: Verify every asset arrived, and give the .deb a sane filename
+      - name: Verify every asset arrived, and give each a sane filename
         run: |
           set -eu
+
+          # Artifact names are internal wiring — `desktop-<triple>` is what the desktop
+          # job happens to call them. Release asset names are the public interface: they
+          # appear on the releases page, in download URLs, and in whatever command someone
+          # pastes into a terminal. They are renamed here rather than at upload, because
+          # the upload names are also what *this* job looks them up by.
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # The .deb. Tauri builds its filename from `productName`, so it arrives as
+          # `Armchair Metropolist_<version>_amd64.deb` — a space that becomes %20 in every
+          # URL. Tauri offers no override (debian.rs:60 uses settings.product_name()), and
+          # changing productName would rename the macOS .app and its Dock label too, since
+          # CFBundleDisplayName reads the same field (macos/app.rs:58, :220). Renaming the
+          # asset is the whole fix: contents untouched, and the package's own `Package:`
+          # field is already `armchair-metropolist`.
           DEB=$(find artifacts/desktop-bundle-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)
           test -n "$DEB" || { echo "::error::no .deb in the bundle artifact"; find artifacts -type f; exit 1; }
-          for T in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            test -f "artifacts/desktop-$T/desktop_$T" \
+          DEB_OUT="artifacts/armchair-metropolist_${VERSION}_amd64.deb"
+          mv "$DEB" "$DEB_OUT"
+
+          # The sidecars. `desktop_x86_64-unknown-linux-gnu` is accurate and tells a
+          # visitor nothing: "desktop" is the Mix release's name, not a description, and
+          # the file is in fact the *server* — it runs Phoenix with no window, which is
+          # the reason to want it. Named to match the .deb's name_version_arch shape.
+          for T in x86_64 aarch64; do
+            SRC="artifacts/desktop-${T}-unknown-linux-gnu/desktop_${T}-unknown-linux-gnu"
+            test -f "$SRC" \
               || { echo "::error::missing sidecar for $T"; find artifacts -type f; exit 1; }
+            mv "$SRC" "artifacts/armchair-metropolist-server_${VERSION}_linux-${T}"
           done
 
-          # Tauri names the package from `productName`, which is "Armchair Metropolist" —
-          # so the file arrives as `Armchair Metropolist_<version>_amd64.deb`, spaces and
-          # all, and a Release asset with a space becomes %20 in every download URL and
-          # every copied command line. There is no Tauri setting for this: debian.rs:60
-          # builds the name from `settings.product_name()` with no override, and changing
-          # productName would rename the macOS .app and its Dock label too, since
-          # CFBundleDisplayName comes from the same field (macos/app.rs:58, :220).
-          #
-          # Renaming the asset here is the whole fix, and it costs nothing: the *contents*
-          # are untouched and the package's own `Package:` field is already
-          # `armchair-metropolist`. The version comes from the tag, which `check` has
-          # already proven equals the version every file in the repository declares.
-          VERSION="${GITHUB_REF_NAME#v}"
-          RENAMED="artifacts/armchair-metropolist_${VERSION}_amd64.deb"
-          mv "$DEB" "$RENAMED"
-
-          echo "DEB=$RENAMED" >> "$GITHUB_ENV"
-          ls -la "$RENAMED" artifacts/desktop-*/desktop_*
+          # The version comes from the tag, which `check` has already proven equals the
+          # version every file in the repository declares — so these names cannot claim a
+          # version the artifacts are not.
+          echo "DEB=$DEB_OUT" >> "$GITHUB_ENV"
+          ls -la artifacts/armchair-metropolist*
 
       # --generate-notes composes the body from commits since the previous tag.
       # This repository squash-merges, so every line is already a readable PR title
@@ -391,12 +402,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             "$DEB" \
-            artifacts/desktop-x86_64-unknown-linux-gnu/desktop_x86_64-unknown-linux-gnu \
-            artifacts/desktop-aarch64-unknown-linux-gnu/desktop_aarch64-unknown-linux-gnu
+            "artifacts/armchair-metropolist-server_${VERSION}_linux-x86_64" \
+            "artifacts/armchair-metropolist-server_${VERSION}_linux-aarch64"
 
   # The Rust half of what `mix check` does for Elixir. `deps.audit` reads mix.lock
   # against published advisories; nothing has ever read src-tauri/Cargo.lock, which

@@ -90,10 +90,37 @@ Linux, x86_64:
 sudo apt install ./armchair-metropolist_<version>_amd64.deb
 ```
 
-The single-file Burrito sidecar is attached too, for both x86_64 and aarch64. It
-runs the Phoenix server without the desktop window, which is what you want on a
-machine with no display. There is no aarch64 `.deb` yet — nobody has asked, and
-that leg needs a from-source Tauri CLI build.
+There is no aarch64 `.deb` yet — nobody has asked, and that leg would need a
+from-source Tauri CLI build.
+
+`armchair-metropolist-server_<version>_linux-x86_64` (and `…_linux-aarch64`) is also
+attached. That is the Burrito sidecar the desktop app runs internally: a single file
+carrying its own Erlang runtime, which serves the app in a browser instead of a native
+window. Useful for trying it on a machine you would rather not install a package on,
+including aarch64, which gets no `.deb`.
+
+```bash
+chmod +x armchair-metropolist-server_<version>_linux-x86_64
+ARMCHAIR_DESKTOP=1 PORT=4000 \
+  SECRET_KEY_BASE="$(head -c 48 /dev/urandom | base64)" \
+  ./armchair-metropolist-server_<version>_linux-x86_64 --no-halt
+```
+
+Then open `http://127.0.0.1:4000`. Three parts of that are load-bearing and none are
+guessable:
+
+* **`chmod +x`** — a release asset is an HTTP download and carries no permission bit, so
+  it always arrives non-executable however it was built.
+* **`--no-halt`** — Burrito launches the release as `erl -noshell -s elixir start_cli`,
+  which treats trailing arguments as scripts and then halts. Without it the sidecar boots
+  Phoenix, prints that it is running, and exits 0. (`… start` does not work either: it
+  tries to *run* a file named `start`.)
+* **`ARMCHAIR_DESKTOP=1`** — selects the file-backed single-city store. Without it this
+  binary is the server target and expects `DATABASE_URL` and a Postgres to talk to.
+
+It binds **loopback only** and disables origin checking, which is a safe pair precisely
+because it is loopback. It is not a way to host the app for other people — that is what
+the Gigalixir deploy is for.
 
 ## Cutting a release
 
