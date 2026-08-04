@@ -24,6 +24,7 @@
     "android": {
       "debugApplicationIdSuffix": ".debug"
     },
+    "category": "SimulationGame",
     "externalBin": [
       "../burrito_out/desktop"
     ],
@@ -40,6 +41,7 @@
         "recommends": ["libayatana-appindicator3-1"]
       }
     },
+    "shortDescription": "City infrastructure simulator",
     "targets": "all"
   },
   "identifier": "io.github.adsouza.armchair-metropolist",

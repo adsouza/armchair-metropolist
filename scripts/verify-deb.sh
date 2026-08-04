@@ -66,7 +66,43 @@ if ! dpkg-deb --contents "$DEB" | awk '{ out=$6; for (i=7;i<=NF;i++) out = out "
   fail "the Burrito sidecar (a file named 'desktop') is not inside the .deb"
 fi
 
-# 5. Observed rather than asserted: proves at runtime that tauri.conf.json is the version
+# 5. The desktop entry is usable. Tauri writes `Categories=` from `bundle.category` and
+#    omits `Comment=` entirely when `bundle.shortDescription` is empty
+#    (freedesktop/mod.rs:167-174), and for a long time this package shipped an empty
+#    `Categories=` and no comment at all: an entry that sorts nowhere in an application
+#    menu and describes itself to nobody. Flathub's linter rejects the former outright,
+#    so this is also a precondition for the Flatpak.
+#
+#    Extracted with `dpkg-deb -x` into a temp dir rather than piped through
+#    `tar --wildcards`, which BSD tar on macOS does not support — and this script has to
+#    run identically on a laptop and a runner.
+WORK=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf '$WORK'" EXIT INT TERM
+dpkg-deb -x "$DEB" "$WORK" || fail "dpkg-deb -x failed reading $DEB"
+
+DESKTOP=$(find "$WORK/usr/share/applications" -type f -name '*.desktop' 2>/dev/null | head -1)
+[ -n "$DESKTOP" ] || fail "no .desktop entry in the .deb"
+
+# `Categories=` with nothing after it is what an unset bundle.category produces, so the
+# emptiness *is* the bug — testing only for the key's presence would pass on the very
+# package this assertion was written against.
+CATEGORIES=$(sed -n 's/^Categories=//p' "$DESKTOP")
+[ -n "$CATEGORIES" ] \
+  || fail "the desktop entry declares no Categories (set bundle.category in tauri.conf.json)"
+case "$CATEGORIES" in
+  *Game*) ;;
+  *) fail "Categories=$CATEGORIES does not place this in Game" ;;
+esac
+
+COMMENT=$(sed -n 's/^Comment=//p' "$DESKTOP")
+[ -n "$COMMENT" ] \
+  || fail "the desktop entry has no Comment (set bundle.shortDescription in tauri.conf.json)"
+
+printf 'Desktop: %s\n' "$(basename "$DESKTOP")"
+printf '  Categories=%s\n  Comment=%s\n' "$CATEGORIES" "$COMMENT"
+
+# 6. Observed rather than asserted: proves at runtime that tauri.conf.json is the version
 #    authority and src-tauri/Cargo.toml is the fallback Tauri never takes.
 printf 'Version: %s\n' "$(dpkg-deb --field "$DEB" Version)"
 

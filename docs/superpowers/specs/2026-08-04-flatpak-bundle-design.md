@@ -110,14 +110,53 @@ Both are in the `.deb` we already ship. Patching them inside the Flatpak manifes
 Flatpak and leave the `.deb` wrong, and would put a second definition of the app's metadata in a
 second file — the drift this repository has been bitten by three times in one branch.
 
-So they are fixed in `src-tauri/tauri.conf.json` instead, which is the single place both formats read
-from. Tauri exposes `bundle.category` and `bundle.shortDescription`; **whether those map onto the
-Linux `Categories=` and `Comment=` keys must be verified by rebuilding the `.deb` and re-reading the
-entry**, not assumed from the field names. If they do not map, the fallback is
-`bundle.linux.deb.desktopTemplate`, a tracked template file — still one definition, still upstream of
-both formats.
+**Done ahead of the Flatpak work**, in `src-tauri/tauri.conf.json`, the single place both formats read
+from:
 
-The Flatpak manifest then only *renames* what the `.deb` provides. It never rewrites content.
+```json
+"category": "SimulationGame",
+"shortDescription": "City infrastructure simulator"
+```
+
+The mapping was traced through the bundler rather than assumed from the field names:
+`bundle.category` → `AppCategory` → `freedesktop_categories()`, where
+`SimulationGame => "Game;Simulation;"` (`tauri-bundler/src/bundle/category.rs:171`), landing in the
+`{{categories}}` slot of Tauri's shipped `main.desktop` template. `Comment=` is filled from
+`short_description()` and the line is **omitted entirely** when that is empty
+(`freedesktop/mod.rs:171-174`) — which is why the old entry had no `Comment=` at all rather than a
+blank one.
+
+`SimulationGame` rather than plain `Game`: it yields `Game;Simulation;`, so the app still lands in the
+Games menu while carrying an accurate subcategory, and it gives macOS
+`public.app-category.simulation-games` from the same field.
+
+`scripts/verify-deb.sh` now asserts both, so this cannot silently regress. The assertion was verified
+in both directions before landing: **red** against the real pre-fix `.deb` (`::error::the desktop
+entry declares no Categories`), **green** against the same package with the two keys patched in. Note
+what it tests — `Categories=` with nothing after it is exactly what an unset `bundle.category`
+produces, so an assertion checking only that the *key exists* would have passed on the very package
+that motivated it.
+
+The Flatpak manifest therefore only *renames* what the `.deb` provides. It never rewrites content,
+apart from the `Icon=` key, which must equal the app ID and which the `.deb` cannot know.
+
+### The `.deb`'s own filename
+
+Tauri builds it from `product_name()` with no override (`debian.rs:60`), so it arrives as
+`Armchair Metropolist_<version>_amd64.deb` — a space that becomes `%20` in every download URL. There
+is no Tauri setting for it: changing `productName` would also rename the macOS `.app` *and* its Dock
+label, because `CFBundleDisplayName` comes from the same field (`macos/app.rs:58`, `:220`), and
+`bundle.macOS.bundleName` only overrides `CFBundleName`, the menu-bar name.
+
+So the release job renames the **asset** at attach time to
+`armchair-metropolist_<version>_amd64.deb`, taking the version from the tag, which `check` has
+already proven equals every declared version. Contents untouched; the package's own `Package:` field
+was already `armchair-metropolist`.
+
+The `.desktop` filename *inside* the package keeps its space. It is spec-legal, users never see it,
+and the Flatpak renames it to the app ID regardless. It is worth knowing about only because it has
+already broken one parser: `verify-deb.sh` used `awk '{print $NF}'`, which truncated
+`usr/share/applications/Armchair Metropolist.desktop` to `Metropolist.desktop`.
 
 ## 5. What the manifest does
 

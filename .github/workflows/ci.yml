@@ -355,7 +355,7 @@ jobs:
       # Fail before `gh` does, with a message naming the missing file and showing
       # what actually arrived. A Release is public and permanent; a partial one is
       # worse than none.
-      - name: Verify every asset arrived
+      - name: Verify every asset arrived, and give the .deb a sane filename
         run: |
           set -eu
           DEB=$(find artifacts/desktop-bundle-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)
@@ -364,8 +364,25 @@ jobs:
             test -f "artifacts/desktop-$T/desktop_$T" \
               || { echo "::error::missing sidecar for $T"; find artifacts -type f; exit 1; }
           done
-          echo "DEB=$DEB" >> "$GITHUB_ENV"
-          ls -la "$DEB" artifacts/desktop-*/desktop_*
+
+          # Tauri names the package from `productName`, which is "Armchair Metropolist" —
+          # so the file arrives as `Armchair Metropolist_<version>_amd64.deb`, spaces and
+          # all, and a Release asset with a space becomes %20 in every download URL and
+          # every copied command line. There is no Tauri setting for this: debian.rs:60
+          # builds the name from `settings.product_name()` with no override, and changing
+          # productName would rename the macOS .app and its Dock label too, since
+          # CFBundleDisplayName comes from the same field (macos/app.rs:58, :220).
+          #
+          # Renaming the asset here is the whole fix, and it costs nothing: the *contents*
+          # are untouched and the package's own `Package:` field is already
+          # `armchair-metropolist`. The version comes from the tag, which `check` has
+          # already proven equals the version every file in the repository declares.
+          VERSION="${GITHUB_REF_NAME#v}"
+          RENAMED="artifacts/armchair-metropolist_${VERSION}_amd64.deb"
+          mv "$DEB" "$RENAMED"
+
+          echo "DEB=$RENAMED" >> "$GITHUB_ENV"
+          ls -la "$RENAMED" artifacts/desktop-*/desktop_*
 
       # --generate-notes composes the body from commits since the previous tag.
       # This repository squash-merges, so every line is already a readable PR title
