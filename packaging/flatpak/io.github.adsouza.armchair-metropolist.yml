@@ -1,0 +1,81 @@
+# Repackages the .deb that `mix ex_tauri.build --bundles deb` produces.
+#
+# Flatpak is not a Tauri bundle target and will not become one from our side:
+# tauri-bundler's PackageType enumerates deb, rpm, appimage, dmg, app, msi, ios and
+# updater, and nothing else. So this manifest is the whole integration, and its input
+# is the output of the step immediately before it in the desktop job.
+#
+# Why bother, when we already ship a .deb: the .deb inherits the build machine's
+# glibc — it declares `libc6 (>= 2.39)`, which is Ubuntu 24.04's — so it will not
+# install on Debian 13 or anything older. A Flatpak brings its own userspace and does
+# not care.
+app-id: io.github.adsouza.armchair-metropolist
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: armchair_metropolist
+
+# NOT `//46`, which an earlier draft of the design proposed. GNOME 46 is built on
+# freedesktop-sdk 23.08, whose glibc (~2.37) is *older* than the 2.39 this binary was
+# linked against, so the app would die at the dynamic loader — while flatpak-builder
+# exited 0, because all it did was copy files. GNOME 48+ clears the floor; 50 is
+# current stable and sits on freedesktop-sdk 25.08.
+
+# No `--share=network`, deliberately.
+#
+# Without it Flatpak gives the app a *private* network namespace — and a private
+# namespace still contains loopback, which is all this app needs: the Burrito sidecar
+# binds 127.0.0.1 and the Tauri webview connects to it. So everything works while the
+# app cannot reach the network at all, which is a strictly better posture than the
+# .deb, where it has whatever access the user has.
+#
+# scripts/verify-flatpak.sh proves this by starting the sidecar in the sandbox and
+# talking to it, rather than assuming it. If that ever fails, the fix is a line here
+# *and* the reason why — never a pre-emptive permission, because an unnecessary
+# permission is precisely what a sandbox exists to refuse.
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+
+modules:
+  - name: armchair-metropolist
+    buildsystem: simple
+    build-commands:
+      # `ar x` then the data tarball. The compression is NOT assumed to be gzip —
+      # dpkg has shipped .gz, .xz and .zst over the years — so the glob plus `tar -xf`
+      # sniffing is doing real work.
+      - ar x app.deb
+      - tar -xf data.tar.*
+
+      - install -Dm755 usr/bin/armchair_metropolist /app/bin/armchair_metropolist
+      - install -Dm755 usr/bin/desktop /app/bin/desktop
+
+      # Flatpak finds the desktop entry and icons only under the app ID. The .deb
+      # names the entry from Tauri's `productName` ("Armchair Metropolist.desktop",
+      # space and all) and the icons from `mainBinaryName`, so all three are renamed.
+      - install -Dm644 "usr/share/applications/Armchair Metropolist.desktop" /app/share/applications/io.github.adsouza.armchair-metropolist.desktop
+
+      # The one *content* edit in this manifest, and it is unavoidable: the Icon key
+      # must equal the app ID, and the .deb has no way to know what that is. Nothing
+      # else is rewritten — Categories and Comment come from tauri.conf.json so that
+      # the .deb and the Flatpak cannot disagree about them.
+      - sed -i 's/^Icon=.*/Icon=io.github.adsouza.armchair-metropolist/' /app/share/applications/io.github.adsouza.armchair-metropolist.desktop
+
+      # 32x32 and 128x128 only. The .deb also ships `256x256@2`, a scale-suffixed
+      # hicolor directory that AppStream and Flatpak tooling handle inconsistently,
+      # and these two sizes satisfy both.
+      - install -Dm644 usr/share/icons/hicolor/32x32/apps/armchair_metropolist.png /app/share/icons/hicolor/32x32/apps/io.github.adsouza.armchair-metropolist.png
+      - install -Dm644 usr/share/icons/hicolor/128x128/apps/armchair_metropolist.png /app/share/icons/hicolor/128x128/apps/io.github.adsouza.armchair-metropolist.png
+
+      - install -Dm644 io.github.adsouza.armchair-metropolist.metainfo.xml /app/share/metainfo/io.github.adsouza.armchair-metropolist.metainfo.xml
+    sources:
+      # Staged under a fixed name by the workflow. The real filename contains a space
+      # — Tauri builds it from productName — and a flatpak-builder `path:` is not a
+      # glob, so copying it to `app.deb` is simpler than quoting a space through YAML,
+      # sh and the builder.
+      - type: file
+        path: app.deb
+      - type: file
+        path: io.github.adsouza.armchair-metropolist.metainfo.xml
