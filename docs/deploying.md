@@ -7,30 +7,38 @@ Two targets ship from this repository:
   in [`superpowers/2026-07-30-follow-ups.md`](superpowers/2026-07-30-follow-ups.md)
   — read that before touching `mix ex_tauri.build`.
 
-## The trap: a deploy that adds a migration will crash-loop until you run it
+## The trap: nothing runs your migration, and the broken deploy looks healthy
 
-**Read this before deploying a change that includes a new migration.**
+**Read this before deploying a change that includes a new migration.** No part of
+the deploy applies one: not the buildpacks, not the supervision tree, and not CI
+(see "Continuous deployment" below). You run it, by hand, every time.
 
-`CityEngine` hydrates from the database in `handle_continue(:hydrate, …)`, which
-runs during application start. If a migration the engine depends on has not been
-applied yet, `SnapshotStore.load_latest/0` raises, the engine dies, and it dies
-again on every restart until the supervisor exceeds its restart intensity and takes
-the whole application down with it. The container exits 1, Gigalixir restarts it,
-and the cycle repeats.
+`CityEngine` hydrates from the database in `handle_continue(:hydrate, …)`. If a
+migration it depends on has not been applied, `SnapshotStore.load/1` raises
+— `Repo.get/2` raises on a missing table rather than returning `{:error, _}`, so
+hydration's `{:error, reason}` arm is not a failure path here — and the engine dies.
 
-Two things make this more confusing than it should be:
+**The deploy will still look fine.** Since the 2026-08-03 per-visitor change, no
+engine starts at boot: `Application` starts the `Registry` and `DynamicSupervisor`
+that name them, and `CityRegistry.ensure_started/1` starts an actual engine only
+when somebody asks for a city. So the container boots, the endpoint serves, health
+checks pass, and nothing touches `city_snapshots` until the first visitor arrives —
+at which point their engine crashes, is restarted by the `DynamicSupervisor`
+(`restart: :transient` restarts a crash; only a `:normal` stop sticks), and crashes
+again. Every visitor repeats it.
 
-1. **The endpoint starts first and logs success.** You will see
-   `Running ArmchairMetropolistWeb.Endpoint with Bandit … at :::4000` and
-   `Access … at https://…` in the logs immediately before the crash, which reads
-   like a healthy boot. It is not: the endpoint and the engine are siblings under
-   `ArmchairMetropolist.Supervisor`, and the engine's failure brings the endpoint
-   down with it. The next lines are `Application armchair_metropolist exited:
-   shutdown` and `Your app is failing health checks`.
-2. **`gigalixir ps:migrate` cannot help you**, because it works over SSH into a
-   running replica and there is no running replica. Its own error message suggests
-   `gigalixir run mix ecto.migrate`, which is also wrong for this app — it is a
-   release build, so Mix does not exist inside it.
+> The old version of this section described the failure as an immediate boot
+> crash-loop that took the endpoint down with it. That was accurate when the engine
+> was a boot child of `ArmchairMetropolist.Supervisor`; it no longer is. How far the
+> restart cascade climbs from the `DynamicSupervisor` toward the application
+> supervisor under real traffic has **not** been measured since the change — do not
+> rely on either "it stays up" or "it comes down". Rely on: run the migration.
+
+`gigalixir ps:migrate` works over SSH into a running replica, and it needs a host
+key someone has to accept interactively the first time — so it is not something a
+script or CI can do for you. Its own error message suggests `gigalixir run mix
+ecto.migrate`, which is also wrong for this app: it is a release build, so Mix does
+not exist inside it.
 
 Use `gigalixir run`, which starts a **separate** container that does not run the
 supervision tree, so the missing table cannot stop it:
@@ -39,11 +47,10 @@ supervision tree, so the missing table cannot stop it:
 gigalixir run -a armchair-metropolist bin/armchair_metropolist eval 'ArmchairMetropolist.Release.migrate()'
 ```
 
-It self-heals: once the migration lands, the next automatic restart hydrates
-cleanly and the app comes up with no further action. Observed on the first deploy —
-crashes at `10:48:18` and `10:48:37`, migration at `10:48:38`, healthy thereafter.
-If you would rather not watch a few minutes of red, run the command above straight
-after `git push gigalixir main` instead of waiting for the rollout to settle.
+It self-heals: once the migration lands, the next engine to start hydrates cleanly,
+with no restart or further action needed. Run it straight after
+`git push gigalixir main` rather than waiting for the rollout to settle — with the
+boot crash gone, there is no longer a wall of red to tell you that you forgot.
 
 ### Why this is not fixed in the engine
 

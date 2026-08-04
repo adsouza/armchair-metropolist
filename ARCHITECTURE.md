@@ -15,7 +15,8 @@ review comment someone might miss.
   │  ┌──────────────────────────────────────────────────────┐  │
   │  │  Infrastructure                                      │  │
   │  │    Simulation.CityEngine   Persistence.SnapshotStore │  │
-  │  │    Simulation.TickServer   Persistence.FileSnapshot… │  │
+  │  │    Simulation.CityRegistry Persistence.FileSnapshot… │  │
+  │  │    Simulation.TickServer   Persistence.SnapshotReap… │  │
   │  │                            Desktop.TauriNotifier     │  │
   │  └───────────────┬──────────────────────┬───────────────┘  │
   │                  │                      │  implements      │
@@ -64,9 +65,15 @@ route in.
 
 **`Infrastructure`** — everything that talks to the outside world: the two snapshot
 adapters, the OTP processes that drive the simulation, and the desktop notifier.
-Exports only `Simulation.CityEngine`, `Persistence.Repo` and `Desktop.Config`.
+Exports only `Simulation.CityEngine`, `Simulation.CityRegistry`, `Persistence.Repo`
+and `Desktop.Config`.
 
-**`ArmchairMetropolistWeb`** — Endpoint, router, and one LiveView.
+**`ArmchairMetropolistWeb`** — Endpoint, router, one LiveView, and the small amount
+of plumbing that decides *which* city a request is looking at: `Plugs.EnsureCityId`
+mints a code into the session on first request, `CityCode` generates and validates
+them, and `CityController` turns `GET /c/:code` into that session plus a redirect.
+The code is a credential — 16 random bytes, URL-safe Base64 — so it is generated
+from `:crypto.strong_rand_bytes/1` rather than anything derived or sequential.
 
 ## Ports and adapters
 
@@ -86,31 +93,65 @@ implement less than the first.
 
 ## The simulation
 
-Two processes, and the split matters:
+One clock, and one engine per city. The split matters:
 
-**`CityEngine`** is a `GenServer` holding the authoritative city.
+**`CityEngine`** is a `GenServer` holding the authoritative city — one process per
+`city_id`, not one per node.
 
 * It traps exits and does its persisting in `terminate/2`, which is why it carries
   `shutdown: 10_000` — the default 5s can kill it mid-write.
 * It hydrates in `handle_continue(:hydrate, …)`, not `init/1`, so a slow snapshot
-  read cannot stall the whole supervision tree at boot. `handle_continue` runs
-  before any mailbox message, so no command can observe an unhydrated engine.
-* It broadcasts **only diffs** on the `"city_simulation"` topic: `{:city_delta,
-  delta}` and `{:city_metrics, metrics}` per tick, plus `{:city_node_placed, node}`
-  and `{:city_node_removed, id}` for successful commands. Rejected commands
-  broadcast nothing.
+  read cannot stall the caller that started it. `handle_continue` runs before any
+  mailbox message, so no command can observe an unhydrated engine.
+* It broadcasts **only diffs**, on its own `"city:" <> city_id` topic:
+  `{:city_delta, delta}` and `{:city_metrics, metrics}` per tick, plus
+  `{:city_node_placed, node}` and `{:city_node_removed, id}` for successful
+  commands. Rejected commands broadcast nothing. The topic is per city because the
+  broadcast carries no city id — one shared topic would have delivered every
+  visitor's diffs to every other visitor's LiveView.
 * It checkpoints every 50 ticks and again on shutdown.
 
-**`TickServer`** is the clock. It broadcasts `{:tick, n}` where `n` counts *clock
-pulses since this process started* — a diagnostic number, not the simulation's tick.
-`city_map.tick` is the authoritative one and the only one persisted. Confusing the
-two is easy and wrong. The clock also never references the engine, so a dead engine
-cannot stall it.
+**`CityRegistry`** names them. A `Registry` maps a `city_id` to its engine via a
+`:via` tuple and a `DynamicSupervisor` starts one on demand, so no engine exists
+until somebody asks for that city. `ensure_started/1` treats
+`{:error, {:already_started, pid}}` as success, which is what makes two simultaneous
+mounts of the same city safe without a lock — the loser of the race is handed the
+winner's process.
+
+Engines are `restart: :transient` and do not outlive their audience: each monitors
+its attached LiveViews, saves the moment the last one goes, and stops `:normal`
+after a linger (30s after the last viewer leaves; 2s after hydrating if none ever
+attached, so a cookieless GET cannot strand one). `:transient` is what lets that
+deliberate stop stick instead of being restarted.
+
+**`TickServer`** is the clock — one, globally, broadcasting `{:tick, n}` on
+`"city_tick"` to every engine at once. `n` counts *clock pulses since this process
+started*, a diagnostic number, not the simulation's tick; `city_map.tick` is the
+authoritative one, is per city, and is the only one persisted. Confusing the two is
+easy and wrong. The clock never references any engine, so a dead engine cannot stall
+it and an empty registry costs it nothing.
+
+**`SnapshotReaper`** deletes cities untouched for `:snapshot_retention_days` (90),
+sweeping on boot and daily after. Server target only — the desktop has exactly one
+city, which must never be reaped. Its scheduled sweeps swallow and log failures:
+`init/1` re-runs the boot sweep on restart, so an unguarded database hiccup would
+exceed the supervisor's `max_restarts` and take the application down over something
+that would have fixed itself.
 
 ## Snapshots
 
 `:erlang.term_to_binary(city_map, [:compressed])` with an MD5 checksum stored
 alongside; a mismatch is treated as corruption rather than decoded.
+
+**One row per `city_id`**, keyed on it. The table used to be append-only, read back
+with `order_by: [desc: tick]`, which made a backwards save structurally impossible —
+an older snapshot simply lost the ordering. Collapsing it to one row per city removed
+that property, so `save/3` now has to state it: a locked read-then-write that returns
+`{:stale, stored_tick}` and writes nothing when a snapshot at `tick` or later already
+exists. **That is not an error** — it is a crashed engine, hydrated from an older
+snapshot, being stopped from overwriting newer work. The guarantee did not change;
+what changed is that it is now explicit and reportable rather than a side effect of
+the schema.
 
 Decoding uses `binary_to_term(payload, [:safe])`, and `:safe` **refuses to create
 atoms**. A snapshot written by one VM therefore cannot be read by a fresh one until

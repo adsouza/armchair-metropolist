@@ -2,12 +2,20 @@
 
 An urban infrastructure simulation game.
 
-A city of power plants, water plants, waste facilities, road hubs and residential
-blocks ticks forward in real time. Each tick recomputes resource supply against
+A city of power plants, water plants, industrial and commercial blocks, road hubs,
+parks and residential blocks ticks forward in real time. Each tick recomputes six
+resources — power, water, waste, traffic, labour and money — as supply against
 demand; starved nodes lose health and eventually go offline, which removes their
-contribution and starves their neighbours further. The grid updates live over
-LiveView, and the city survives restarts via periodic compressed, checksummed
-snapshots.
+contribution and starves the rest of the city further. Money is the one resource
+whose surplus survives the tick boundary, so a city can read fully satisfied on the
+other five and still be quietly going broke.
+
+Every visitor gets their own city. A 22-character code in the signed session cookie
+identifies it, the page shows the code, and `/c/<code>` re-enters that city from
+another browser. Each city runs its own simulation process, started on demand and
+stopped a short while after the last viewer leaves. The grid updates live over
+LiveView, and a city survives both that stop and a restart via periodic compressed,
+checksummed snapshots; a city untouched for 90 days is reaped.
 
 It runs two ways from one codebase: as a web app backed by Postgres, and as a
 native desktop app with no database at all.
@@ -28,7 +36,8 @@ migrates the database, and builds the CSS and JS.
 
 The desktop build wraps the same Phoenix app in a [Tauri](https://tauri.app)
 window. Instead of Postgres it keeps the city in a file under the OS
-application-data directory, and alerts go to the native notification centre.
+application-data directory, and alerts go to the native notification centre. There
+is exactly one city there — no re-entry code is shown, and nothing reaps it.
 
 Extra prerequisites: **Rust/Cargo** and **Zig 0.16** — Burrito shells out to
 `zig build` for every build, native ones included.
@@ -72,9 +81,15 @@ cache is evicted — are written up in
 
 ## Actually playing it
 
-The simulation is unforgiving in one specific way, and your first city will almost
-certainly collapse: baseline capacity supports exactly **two** residential blocks, and
-the third starts a death spiral that cannot be reversed by building more.
+There are two ways to lose, and your first city will almost certainly find the fast
+one: baseline capacity supports exactly **two** residential blocks, and the third
+starts a death spiral that cannot be reversed by building more.
+
+The slow one is insolvency. Four resources have a free baseline of 40; labour and
+money have none, and a city opens with a one-off 500 in the treasury. A support set
+without a commercial block cannot cover its own upkeep, so the treasury drains for
+the whole game while every other resource reads 100% satisfied — commercial is part
+of the ratio, not an optional extra.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and
@@ -100,16 +115,20 @@ gigalixir config:set -a armchair-metropolist PHX_HOST=armchair-metropolist.gigal
 `PHX_HOST` is not cosmetic: Phoenix checks a LiveView socket's origin against it,
 so leaving it unset renders the page and then refuses the socket.
 
-**If your deploy includes a new migration, it will crash-loop until you run it**,
-and `gigalixir ps:migrate` cannot help because it needs a running replica. Use:
+**Nothing in the deploy runs migrations — you must run them by hand.** Neither the
+buildpacks nor the supervision tree will do it for you, and a deploy carrying a new
+migration fails in a way that reads as healthy: no city engine starts at boot, so the
+app comes up, passes its health checks, and then raises on the first visitor's
+hydrate. Run:
 
 ```bash
 gigalixir run -a armchair-metropolist bin/armchair_metropolist eval 'ArmchairMetropolist.Release.migrate()'
 ```
 
-It recovers by itself once the migration lands. The full explanation, the rest of
-the configuration, and how to verify a deploy are in
-[`docs/deploying.md`](docs/deploying.md) — worth reading before your first deploy.
+`gigalixir run` starts a separate container that does not run the supervision tree.
+Cities recover by themselves once the migration lands. The rest of the configuration
+and how to verify a deploy are in [`docs/deploying.md`](docs/deploying.md) — worth
+reading before your first deploy.
 
 ## Tests
 
@@ -139,7 +158,7 @@ Clean/Hexagonal, enforced at compile time by `boundary` rather than by conventio
 inward and the compiler rejects a violation. Swapping Postgres for a file on the
 desktop target is a config change, not a code change.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) has the layer diagram, the two-process
-simulation design, how snapshots are encoded, and what the compiler will refuse to
-let you write. The design and its deliberate deviations from the original brief are
+[`ARCHITECTURE.md`](ARCHITECTURE.md) has the layer diagram, the split between the
+clock and the per-city engines, how snapshots are encoded, and what the compiler will
+refuse to let you write. The design and its deliberate deviations from the original brief are
 recorded in [`docs/superpowers/specs/`](docs/superpowers/specs/).
