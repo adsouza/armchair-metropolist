@@ -87,13 +87,24 @@ the whole point of the function:
 
 | `RELEASE_TAG` | Returns | Effect |
 |---|---|---|
-| unset | `[]` | four sites — today's behaviour exactly, laptops and PRs unaffected |
+| unset, or `""` | `[]` | four sites — today's behaviour exactly, laptops and PRs unaffected |
 | `v0.2.0` | `[{"git tag v0.2.0", "0.2.0"}]` | compared with the rest; disagreement is fatal |
-| `v0.2`, `refs/tags/v1.2.3`, `vfoo`, `""` | `[{"git tag <raw>", nil}]` | **nil-guard fires** |
+| `v0.2`, `refs/tags/v1.2.3`, `vfoo` | `[{"git tag <raw>", nil}]` | **nil-guard fires** |
 
-Returning `[]` for a malformed tag would skip the check in silence — precisely the "a version check
+Returning `[]` for a *malformed* tag would skip the check in silence — precisely the "a version check
 that silently reads nothing passes forever" failure the nil-guard exists to prevent. Set-but-
 unparseable must be fatal, not absent.
+
+**The empty string is the exception, and it is not a nicety.** GitHub Actions cannot conditionally
+omit an environment variable: a job-level `RELEASE_TAG: ${{ github.ref_type == 'tag' &&
+github.ref_name || '' }}` evaluates to `""` on every branch push. Treating `""` as malformed would
+therefore make the nil-guard fatal on every push to `main` and every pull request — the guard would
+fire constantly and be disabled within a day. `""` is how "no tag" arrives from CI, so it means
+absent. A human never types it; the shapes a human gets wrong (`v0.2`, a full `refs/tags/…` ref) all
+still trip the guard.
+
+This is why the check can live at job level in `check` rather than needing a separate step: one line
+of YAML, no extra `mix` invocation, and `check` already runs on tags (§3).
 
 The strip is `"v" <> rest` where `rest` matches `~r/\A\d+\.\d+\.\d+\z/`. Anchored with `\A`/`\z`
 rather than `^`/`$`, because `$` accepts a trailing newline and `refs/tags/v1.2.3\n` is exactly the
@@ -237,8 +248,10 @@ need CI.
 |---|---|---|
 | 1 | `RELEASE_TAG=v9.9.9 mix check` | fails, listing five sites and the disagreement |
 | 2 | `RELEASE_TAG=garbage mix check` | fails via the **nil-guard**, naming the tag site as unreadable |
+| 2b | `RELEASE_TAG=refs/tags/v0.1.0 mix check` | fails via the nil-guard — a full ref is not a tag name |
 | 3 | `RELEASE_TAG=v0.1.0 mix check` | passes, prints `[versions] 0.1.0` |
 | 4 | `mix check` with `RELEASE_TAG` unset | passes with four sites — proves laptops and PRs are unaffected |
+| 4b | `RELEASE_TAG= mix check` (empty) | passes with four sites — this is what every main push sends |
 | 5 | `mix version.set 0.2.0` then `git diff --stat` | exactly four files changed |
 | 6 | `mix version.set 0.2` | raises before touching any file |
 | 7 | push tag `v0.0.1` while `mix.exs` says `0.1.0` | release job fails the guard; **no Release created** |
