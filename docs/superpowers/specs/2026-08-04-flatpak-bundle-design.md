@@ -269,9 +269,38 @@ thing being launched.
 | 6 | `Categories=` is non-empty | revert §4's `tauri.conf.json` change |
 | 7 | **the sidecar boots Phoenix inside the sandbox** | rebuild the whole bundle against `//46` and run this script against *that*; it must fail |
 
-Mutation 7 is the one that matters, and it is different in kind from the others: it does not edit the
-script, it rebuilds the artifact against the runtime §11 proposed. Two things have to be true for it
-to count, and they are easy to conflate:
+### Outcome of mutation 7, run 2026-08-04 — and what it exposed
+
+**Confirmed, on the second attempt.** `flatpak-builder` exited 0 against `//46` and
+`verify-flatpak.sh` went red at the loader with:
+
+```
+/app/bin/armchair_metropolist: /usr/lib/x86_64-linux-gnu/libc.so.6:
+  version `GLIBC_2.39' not found (required by /app/bin/armchair_metropolist)
+```
+
+Both conditions met: the build could not see the problem, the check could. §11's claim that
+"`flatpak-builder` still exits 0, because all it did was copy files" is now demonstrated rather than
+argued.
+
+**The first attempt passed, and that was the more valuable result.** Against `//46` the original
+assertion — start the sidecar, watch for Phoenix's banner — went perfectly green. Measuring the two
+binaries explained why:
+
+```
+armchair_metropolist   GLIBC_2.2.5 … GLIBC_2.34 GLIBC_2.39     dynamically linked
+desktop                (no GLIBC_ symbols at all)              musl, statically linked
+```
+
+The Burrito sidecar is glibc-independent by construction — Burrito's musl step runs for these
+targets — so a check that starts *it* is **structurally incapable** of detecting a glibc mismatch,
+no matter how carefully written. A `//46` bundle would have installed, started its server, and died
+the moment anyone opened the window.
+
+Hence the split: assertion 7 runs `ldd` against the **Tauri host**, the binary that carries the
+dependency, needing no display and no process management; assertion 8 keeps running the sidecar for
+everything else it proves. Neither subsumes the other, and the earlier single assertion silently
+covered only half of what it claimed.
 
 * `flatpak-builder` against `//46` must still **exit 0** — if the build itself fails, the mutation
   proved that `//46` is unbuildable, not that our check catches a bad runtime.
