@@ -3,6 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+    # `v*` rather than a semver glob. GitHub's syntax page says filter patterns
+    # accept `*`, `**`, `+`, `?` and `!`, but the cheat sheet defining whether `+`
+    # means "one or more", whether `[0-9]` classes work, and whether `.` stays
+    # literal could not be confirmed — and a trigger that silently never fires is
+    # the worst failure available here. So the glob stays coarse and deliberately
+    # over-matches; the precise check is `release_tag_site/0` in mix.exs, which is
+    # unit-testable. A `v`-prefixed non-release tag therefore fails `check` loudly,
+    # which is the right outcome for a tag that looks like a release and is not.
+    #
+    # The repository's existing non-version tag, `backup-pre-squash`, does not
+    # start with `v` and is excluded.
+    tags: ['v*']
   pull_request:
 
 # A force-push or a quick follow-up commit makes the previous run's answer
@@ -26,6 +38,14 @@ jobs:
   check:
     name: check · Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
     runs-on: ubuntu-24.04
+
+    # Empty on every branch push and pull request — Actions cannot conditionally
+    # omit a variable, and mix.exs reads "" as "no tag" for exactly that reason.
+    # On a tag this makes check_versions/1 compare the tag against all four
+    # declared versions, so a tag that disagrees fails here; `release` needs this
+    # job, so nothing is published.
+    env:
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     strategy:
       # Both versions' results are wanted: "fails only on the floor" and "fails
@@ -126,7 +146,11 @@ jobs:
       # triple, so bundling there would additionally need a multi-minute cargo install.
       #
       # Nothing waits on this: `deploy` needs only `check`, which finishes in ~50s.
-      BUNDLE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.target == 'x86_64-unknown-linux-gnu' }}
+      #
+      # Tags bundle too, because a Release carries the .deb. Pushes to main still
+      # build and verify it — that is what catches packaging breakage at merge time
+      # rather than while cutting a release — but no longer upload it.
+      BUNDLE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && matrix.target == 'x86_64-unknown-linux-gnu' }}
 
     strategy:
       fail-fast: false
@@ -278,14 +302,85 @@ jobs:
         if: env.BUNDLE == 'true'
         run: ./scripts/verify-deb.sh src-tauri/target/release/bundle
 
+      # Tag-only. On main the package is built, verified, and discarded: the
+      # Release is the durable copy, and not publishing a .deb from main also
+      # closes the route by which someone could install two *packages* carrying the
+      # same version — the stale-Burrito-payload bug. (The per-merge *sidecar*
+      # artifacts above are still uploaded and are still the same Burrito binary,
+      # so that route stays open for them, deliberately: they are the only way to
+      # test an unreleased merge.)
       - name: Upload the Linux bundle
-        if: env.BUNDLE == 'true'
+        if: env.BUNDLE == 'true' && github.ref_type == 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: desktop-bundle-${{ matrix.target }}
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 14
+
+  # Publishes what `desktop` built to a permanent, public Release. Only reachable
+  # from a v* tag, which the `on:` block at the top is what admits.
+  release:
+    name: release ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    if: github.ref_type == 'tag'
+
+    # `needs: [check]` is load-bearing, not tidiness: without it a tag whose tests
+    # fail still publishes. It is also where the tag-vs-version guard runs, so a
+    # mismatched tag stops there. `needs: [desktop]` waits for *both* matrix legs,
+    # so a broken aarch64 sidecar blocks the Release rather than yielding a partial
+    # one.
+    needs: [check, desktop]
+
+    # The workflow default is `contents: read`, which cannot create a Release —
+    # `gh release create` would fail with 403. Raised for this job alone rather
+    # than workflow-wide, so no other job gains write access to the repository.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # v8 rather than v7: upload-artifact@v7 introduced direct (unzipped) uploads
+      # behind an `archive: false` parameter this workflow does not set, so our
+      # artifacts are still zipped and either major would read them. v8 is current,
+      # understands both shapes, and defaults a download hash mismatch to *error*
+      # where earlier majors only warned.
+      #
+      # No `name:`, so every artifact from this run lands under artifacts/<name>/.
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      # Fail before `gh` does, with a message naming the missing file and showing
+      # what actually arrived. A Release is public and permanent; a partial one is
+      # worse than none.
+      - name: Verify every asset arrived
+        run: |
+          set -eu
+          DEB=$(find artifacts/desktop-bundle-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)
+          test -n "$DEB" || { echo "::error::no .deb in the bundle artifact"; find artifacts -type f; exit 1; }
+          for T in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            test -f "artifacts/desktop-$T/desktop_$T" \
+              || { echo "::error::missing sidecar for $T"; find artifacts -type f; exit 1; }
+          done
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+          ls -la "$DEB" artifacts/desktop-*/desktop_*
+
+      # --generate-notes composes the body from commits since the previous tag.
+      # This repository squash-merges, so every line is already a readable PR title
+      # and the notes need no maintenance.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            "$DEB" \
+            artifacts/desktop-x86_64-unknown-linux-gnu/desktop_x86_64-unknown-linux-gnu \
+            artifacts/desktop-aarch64-unknown-linux-gnu/desktop_aarch64-unknown-linux-gnu
+
   # The Rust half of what `mix check` does for Elixir. `deps.audit` reads mix.lock
   # against published advisories; nothing has ever read src-tauri/Cargo.lock, which
   # pulls 493 crates — almost all of them transitively, through Tauri. The asymmetry

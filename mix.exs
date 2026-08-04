@@ -37,7 +37,18 @@ defmodule ArmchairMetropolist.MixProject do
           ArmchairMetropolist.CityGenerators,
           ArmchairMetropolist.SnapshotRepositoryContract,
           ArmchairMetropolist.SnapshotRepositoryOrderingContract,
-          ArmchairMetropolist.PlayingGuide
+          ArmchairMetropolist.PlayingGuide,
+          # Developer tooling, not shipped code — a Mix task is not in either
+          # release. Same rationale as the scaffolding above: counting it measures
+          # how well the release procedure tests itself, not how well the
+          # application is tested. Its three pure transforms *are* tested
+          # (test/mix/tasks/version_set_test.exs); what is uncovered is `run/1`,
+          # which writes real files and shells out to cargo, and whose whole point
+          # is that the test suite must not do those things to its own checkout.
+          # Left unignored it read 12%, taking the total from 94.86% to 91.46% —
+          # still passing, but spending three points of headroom that belong to
+          # the application.
+          Mix.Tasks.Version.Set
         ],
         # 90%, measured 91.76%. This is the figure the design spec asked for
         # (section 9) and it became reachable only after deleting the unused
@@ -277,12 +288,7 @@ defmodule ArmchairMetropolist.MixProject do
   # (Tauri CLI, tailwind, daisyui) and in the workflow (Elixir, OTP, Zig) are unrelated
   # numbers, and a check that cries wolf gets bypassed as a reflex.
   defp check_versions(_args) do
-    sites = [
-      {"mix.exs", Mix.Project.config()[:version]},
-      {"src-tauri/tauri.conf.json", tauri_conf_version()},
-      {"src-tauri/Cargo.toml", cargo_toml_version()},
-      {"src-tauri/Cargo.lock", cargo_lock_version()}
-    ]
+    sites = version_sites()
 
     # Before comparing: a site that could not be read is nil, and four nils compare
     # equal. Without this clause a renamed file or an extractor whose pattern stopped
@@ -311,10 +317,10 @@ defmodule ArmchairMetropolist.MixProject do
 
         #{Enum.map_join(sites, "\n", fn {f, v} -> "  #{String.pad_trailing(f, 28)} #{v}" end)}
 
-        All four must carry the same value. After editing src-tauri/Cargo.toml,
-        regenerate the lock rather than editing it:
+        Every site above must carry the same value. Rather than editing them by
+        hand, move all four together:
 
-            cd src-tauri && cargo update --offline -p #{Mix.Project.config()[:app]}
+            mix version.set X.Y.Z
         """)
     end
   end
@@ -322,6 +328,68 @@ defmodule ArmchairMetropolist.MixProject do
   # OTP's own JSON decoder rather than Jason: this runs as the *first* step of the
   # `check` alias, before any task has put the dependencies' beam files on the code
   # path. `:json` is stdlib from OTP 27, which is this project's floor.
+  @doc false
+  # Public so `mix version.set` can re-derive this list after writing, instead of
+  # keeping a second copy of these readers. A hand-maintained mirror of a list the
+  # code already owns is precisely the thing that drifts, and the drift is silent.
+  # `ArmchairMetropolist.MixProject` is loaded for the whole of any Mix invocation,
+  # so the task can call this with no compile-order problem.
+  def version_sites do
+    [
+      {"mix.exs", mix_exs_version()},
+      {"src-tauri/tauri.conf.json", tauri_conf_version()},
+      {"src-tauri/Cargo.toml", cargo_toml_version()},
+      {"src-tauri/Cargo.lock", cargo_lock_version()}
+    ] ++ release_tag_site()
+  end
+
+  # From disk, not from Mix.Project.config()[:version], which is cached at load
+  # time. `mix version.set` rewrites this file and re-runs the comparison in the
+  # same process; against the cached value it would be grading its own homework
+  # with the answer sheet from before the edit.
+  defp mix_exs_version do
+    with {:ok, body} <- File.read("mix.exs"),
+         [_, version] <- Regex.run(~r/^\s*version:\s*"([^"]+)"/m, body) do
+      version
+    else
+      _ -> nil
+    end
+  end
+
+  # The git tag, and only when a release workflow put one in the environment.
+  #
+  #   unset or ""   -> []             four sites: exactly today's behaviour.
+  #   "v1.2.3"      -> [{_, "1.2.3"}] compared with the rest; disagreement fatal.
+  #   anything else -> [{_, nil}]     trips the nil-guard in check_versions/1.
+  #
+  # Returning [] for a *malformed* tag would skip the check in silence — the exact
+  # "a version check that silently reads nothing passes forever" failure the
+  # nil-guard exists to prevent.
+  #
+  # "" is the deliberate exception and is not a nicety. GitHub Actions cannot
+  # conditionally omit an environment variable, so a job-level
+  # `RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}`
+  # evaluates to "" on every branch push. Treating "" as malformed would make this
+  # guard fatal on every push to main and every pull request — including the
+  # pre-push hook — and it would be ripped out within a day. "" means absent. The
+  # shapes a *human* gets wrong ("v0.2", a full "refs/tags/..." ref) all still
+  # trip it.
+  defp release_tag_site do
+    case System.get_env("RELEASE_TAG") do
+      nil -> []
+      "" -> []
+      tag -> [{"git tag #{tag}", tag_version(tag)}]
+    end
+  end
+
+  # \A and \z rather than ^ and $: $ accepts a trailing newline, and a workflow
+  # handing over "refs/tags/v1.2.3\n" is exactly the input this must reject.
+  defp tag_version("v" <> rest) do
+    if Regex.match?(~r/\A\d+\.\d+\.\d+\z/, rest), do: rest, else: nil
+  end
+
+  defp tag_version(_other), do: nil
+
   defp tauri_conf_version do
     with {:ok, body} <- File.read("src-tauri/tauri.conf.json"),
          {:ok, %{"version" => version}} <- decode_json(body) do

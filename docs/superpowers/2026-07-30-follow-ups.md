@@ -300,11 +300,23 @@ a standing record that still says "todo" for finished work misleads exactly the 
 * **Add `UseCases.SummarizeCity`** — `lib/armchair_metropolist/use_cases/summarize_city.ex`, at 100%.
 * **Strip the Phoenix scaffolding branding** — no references remain in `layouts.ex` or
   `root.html.heex`.
-* **Add a formatting gate** — `mix.exs:601`, `"format --check-formatted"` heads the `check:` alias.
+* **Add a formatting gate** — `"format --check-formatted"` is in the `check:` alias in `mix.exs`.
+  (This entry used to say it *heads* the alias and cite `mix.exs:601`. Both were wrong by 2026-08-03:
+  `&check_versions/1` heads it, and the line had moved to 669. Line numbers in this document go stale
+  silently — cite the symbol, not the line.)
 * **`dev_routes` and the empty `seeds.exs`** — both removed.
 
-The coverage figure in this document's header is also stale: the suite is now 225 tests (5 properties,
-220 tests) at 94.33%.
+The coverage figure in this document's header is also stale: the suite is now 236 tests (5 properties,
+231 tests) at 94.86%.
+
+* **Tag-driven GitHub Releases — done 2026-08-03.** A `v*` tag now cuts a Release carrying the x86_64
+  `.deb` and both sidecars, with the tag checked against all four declared versions before anything
+  publishes, and `mix version.set X.Y.Z` to move those four together. This closes the payload-cache
+  bug for anything anyone installs: distinct releases now carry distinct versions, and `main` no
+  longer uploads a `.deb` at all. It stays open for the per-merge *sidecar* artifacts, which are
+  still uploaded on every push and are still the same Burrito binary — deliberately, since they are
+  the only way to test an unreleased merge. Spec:
+  `specs/2026-08-03-tag-driven-releases-design.md`.
 
 ## Known limitations, accepted
 
