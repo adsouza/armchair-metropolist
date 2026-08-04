@@ -15,7 +15,7 @@
 - Elixir `~> 1.17`, running on Elixir 1.20.2 / OTP 29 (erts 17.0.4).
 - **`Domain` is `type: :strict, deps: []`; `Domain.Services` is `type: :strict, deps: [ArmchairMetropolist.Domain]`.** Neither may reach OTP (`GenServer`, `Agent`, `Task`, `Process`, `Supervisor`, `:ets`, `:timer`), Ecto, or Phoenix. Enforced by `boundary` *and* by `domain_purity_test`.
 - Grid is **40 × 30**. Tick interval **1000ms**.
-- Four resources: `:power`, `:water`, `:waste`, `:traffic`. Seven node types: `:power_plant`, `:water_plant`, `:industrial`, `:road_hub`, `:residential`, `:commercial`, `:park`.
+- Four resources: `:power`, `:water`, `:waste`, `:traffic`. Seven node types: `:power_plant`, `:water_plant`, `:industrial`, `:transit_hub`, `:residential`, `:commercial`, `:park`.
 - Baseline municipal capacity: `%{power: 40, water: 40, waste: 40, traffic: 40}`.
 - Health is a **float** `0.0..100.0`. Regen `+1.0`; decay `-(1.0 - worst) * 6.0`.
 - Status: `:online` when `health >= 60.0`; `:degraded` when `20.0 <= health < 60.0`; `:offline` when `health < 20.0`.
@@ -100,7 +100,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
 
   @type resource :: :power | :water | :waste | :traffic
   @type node_type ::
-          :power_plant | :water_plant | :industrial | :road_hub
+          :power_plant | :water_plant | :industrial | :transit_hub
           | :residential | :commercial | :park
   @type status :: :online | :degraded | :offline
 
@@ -378,7 +378,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                  :power_plant,
                  :water_plant,
                  :industrial,
-                 :road_hub,
+                 :transit_hub,
                  :residential,
                  :commercial,
                  :park
@@ -397,8 +397,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.production(:industrial) == %{waste: 90.0}
       assert Node.consumption(:industrial) == %{power: 40.0, water: 25.0, traffic: 8.0}
 
-      assert Node.production(:road_hub) == %{traffic: 60.0}
-      assert Node.consumption(:road_hub) == %{power: 8.0, waste: 2.0}
+      assert Node.production(:transit_hub) == %{traffic: 60.0}
+      assert Node.consumption(:transit_hub) == %{power: 8.0, waste: 2.0}
 
       assert Node.production(:residential) == %{}
 
@@ -854,7 +854,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       park = %Node{Node.new(0, 0, :park) | health: 80.0, status: :online}
       power_hogs = for x <- 1..10, do: Node.new(x, 1, :commercial)
       # Add water and traffic capacity so only power is short.
-      supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :road_hub)]
+      supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :transit_hub)]
       map = map_with([park | power_hogs] ++ supply)
 
       stats = Calc.resource_stats(map)
@@ -889,7 +889,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # One power plant supporting more load than baseline can carry.
       plant = %Node{Node.new(0, 0, :power_plant) | health: 30.0, status: :degraded}
       consumers = for x <- 1..8, do: Node.new(x, 0, :residential)
-      support = [Node.new(0, 2, :water_plant), Node.new(1, 2, :industrial), Node.new(2, 2, :road_hub)]
+      support = [Node.new(0, 2, :water_plant), Node.new(1, 2, :industrial), Node.new(2, 2, :transit_hub)]
       initial = map_with([plant | consumers] ++ support)
 
       final =

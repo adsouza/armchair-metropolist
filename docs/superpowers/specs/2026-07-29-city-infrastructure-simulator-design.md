@@ -205,7 +205,7 @@ Every resource is therefore a uniform supply/demand pair:
 | `:power_plant` | power 120 | water 20, waste 12, traffic 3 |
 | `:water_plant` | water 100 | power 25, waste 6, traffic 2 |
 | `:industrial` | waste 90 | power 40, water 25, traffic 8 |
-| `:road_hub` | traffic 60 | power 8, waste 2 |
+| `:transit_hub` | traffic 60 | power 8, waste 2 |
 | `:residential` | — | power 15, water 12, waste 10, traffic 6 |
 | `:commercial` | — | power 22, water 8, waste 14, traffic 9 |
 | `:park` | waste 8 | water 18, traffic 2 |

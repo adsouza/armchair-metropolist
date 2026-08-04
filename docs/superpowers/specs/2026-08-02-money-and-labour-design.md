@@ -53,7 +53,7 @@ Additions only; every existing entry is untouched.
 | `residential` | money 1.0, labour 4.0 | — |
 | `industrial` | — | labour 12.0 |
 | `water_plant` | — | money 5.0 |
-| `road_hub` | — | money 4.0 |
+| `transit_hub` | — | money 4.0 |
 | `park` | — | money 3.0 |
 
 Baseline capacity gains both, explicitly zero:
