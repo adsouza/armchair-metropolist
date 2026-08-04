@@ -265,12 +265,48 @@ jobs:
       # ayatana-appindicator3-0.1, falls back to appindicator3-0.1, and panics when neither
       # .pc file exists. `libappindicator-sys` 0.9 having no build.rs is true and
       # irrelevant: it says nothing about what the bundler needs.
+      # Caching the downloaded .debs, because the download is the whole problem.
+      #
+      # Measured across four runs this step took 23s, 23s, 27s — and then 24m 52s. Same
+      # runner image, same package list, same mirror. apt's own summary for the slow one
+      # reads `Fetched 56.3 MB in 24min 52s (37.8 kB/s)`, against 8,059 kB/s for the
+      # index refresh *in the same job* and 8,121 kB/s for a later fetch. So it was one
+      # degraded backend behind azure.archive.ubuntu.com's load-balanced pool, not the
+      # runner's network.
+      #
+      # It logged zero errors, zero retries, zero timeouts — it was never stuck, only
+      # slow, so `Acquire::Retries` and `Acquire::http::Timeout` would never have fired.
+      # Timeouts catch stalls; nothing but not-downloading catches this.
+      #
+      # `actions/cache` rather than a third-party apt-cache action: the popular one
+      # (awalsh128/cache-apt-pkgs-action) pipes a script from an unpinned `master`
+      # branch into bash at install time, which is the exact pattern §10 of the bundle
+      # design cites for avoiding AppImage. Pinning the action to a SHA would not help,
+      # since the pinned code fetches master at runtime.
+      #
+      # Dir::Cache::archives points apt at a user-writable directory so the cache action
+      # can read it without sudo. Bump the -v suffix to invalidate deliberately.
+      - name: Cache the GTK and WebKit .debs
+        if: env.BUNDLE == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/apt-archives
+          key: apt-gtk-webkit-${{ matrix.runner }}-v1
+
       - name: Install the GTK and WebKit development headers
         if: env.BUNDLE == 'true'
+        timeout-minutes: 12
         run: |
+          set -eu
+          mkdir -p ~/apt-archives/partial
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::archives="$HOME/apt-archives" \
             libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libayatana-appindicator3-dev
+          # apt runs as root, so the .debs land root-owned and actions/cache (running as
+          # `runner`) cannot read them. Without this the cache silently saves nothing.
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
+          du -sh ~/apt-archives
 
       # NOT `mix ex_tauri.install`. That is the supported way to get this binary and the
       # wrong one here: it is Igniter-driven and regenerates src-tauri/src/main.rs from a
@@ -326,11 +362,29 @@ jobs:
       # earlier design excluded main pushes on an estimate of "1.5-2 GB, 6-12
       # minutes", which was wrong by about an order of magnitude and is why this now
       # runs wherever the .deb does.
+      - name: Cache the Flatpak toolchain .debs
+        if: env.BUNDLE == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/apt-archives-flatpak
+          key: apt-flatpak-${{ matrix.runner }}-v1
+
+      # --no-install-recommends here as well. Note this is a *change* in what gets
+      # installed, unlike the GTK step which already had it — so if flatpak-builder
+      # turns out to need something it merely recommends, this is the first place to
+      # look. The failure would surface at "Build the Flatpak", not here.
       - name: Install the Flatpak toolchain
         if: env.BUNDLE == 'true'
+        timeout-minutes: 12
         run: |
+          set -eu
+          mkdir -p ~/apt-archives-flatpak/partial
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::archives="$HOME/apt-archives-flatpak" \
+            flatpak flatpak-builder
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives-flatpak
+          du -sh ~/apt-archives-flatpak
 
       # --user throughout: no privilege needed beyond the apt install above, and the
       # runtime lands somewhere the build can read.
@@ -375,9 +429,17 @@ jobs:
 
       # The same script a laptop would run, except that it cannot: it installs and
       # executes a Flatpak, so it is Linux-only. See its header.
+      # timeout-minutes as well as the script's own internal `timeout 180`, because the
+      # first version of this step hung a job: `wait $PID` on a BEAM that does not exit
+      # promptly on SIGTERM, inside a `flatpak run` that will not return until its child
+      # tree is gone. Every bound was inside the sandbox, so when the sandbox would not
+      # exit there was nothing left to stop it. Two independent bounds now.
       - name: Verify the Flatpak
         if: env.BUNDLE == 'true'
+        timeout-minutes: 8
         run: ./scripts/verify-flatpak.sh armchair-metropolist.flatpak
+
+      # The sweep runs the script three more times; bound it too.
 
       # Every assertion above, shown to fail. The standing rule here is that a check
       # which passes because it is doing nothing looks identical to one that passes
@@ -391,6 +453,7 @@ jobs:
       # must turn it red, which is how we know it is wired to anything.
       - name: Prove the Flatpak checks can fail
         if: env.BUNDLE == 'true'
+        timeout-minutes: 15
         run: |
           set -eu
           B=armchair-metropolist.flatpak

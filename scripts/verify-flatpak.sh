@@ -95,11 +95,22 @@ printf 'desktop: Icon=%s Categories=%s\n' "$ICON" "$CATEGORIES"
 # ARMCHAIR_DESKTOP=1 selects the file-backed store; without it this binary is the
 # server target and waits on a Postgres that is not there.
 printf 'run:     starting %s inside the sandbox on port %s...\n' "$SIDECAR" "$PORT"
+
+# `timeout` is a hard backstop around the whole sandbox run, independent of the inner
+# script's own bounds. It exists because the first version of this check hung a CI job:
+# every bound was inside the sandbox, so when the sandbox itself would not exit there
+# was nothing left to stop it. A verification step that can hang forever is worse than
+# no verification step — it burns a runner and reports nothing.
+#
+# 180s: the inner probe loop allows 90s, plus BEAM start-up, plus the escalating kill.
+TIMEOUT_BIN=$(command -v timeout || true)
+[ -n "$TIMEOUT_BIN" ] || fail "coreutils 'timeout' not found; refusing to run unbounded"
+
 # shellcheck disable=SC2016
 # The single quotes are the point: $SIDECAR, $PORT and $PID must expand in the
 # *sandbox's* shell, where --env has defined them, not in this one. Expanding them out
 # here would bake in host values and break $PID entirely.
-OUT=$(flatpak run --user \
+OUT=$("$TIMEOUT_BIN" 180 flatpak run --user \
         --env=ARMCHAIR_DESKTOP=1 \
         --env=PORT="$PORT" \
         --env=SECRET_KEY_BASE=0000000000000000000000000000000000000000000000000000000000000000 \
@@ -129,11 +140,26 @@ OUT=$(flatpak run --user \
             kill -0 $PID 2>/dev/null || { echo SIDECAR_DIED; break; }
             i=$((i+1)); sleep 1
           done
-          kill $PID 2>/dev/null || true
-          wait $PID 2>/dev/null || true
-        ' 2>&1) || true
+          # Teardown must be bounded. An earlier version ended with `wait $PID`, which
+          # hung a CI job indefinitely: the BEAM does not exit promptly on SIGTERM here
+          # (ShutdownManager has its own drain), `flatpak run` does not return until its
+          # child tree is gone, and `wait` has no timeout. Escalate instead, and never
+          # block on the child.
+          kill "$PID" 2>/dev/null || true
+          for _ in 1 2 3 4 5; do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+          kill -9 "$PID" 2>/dev/null || true
+        ' 2>&1) && RC=0 || RC=$?
 
 printf '%s\n' "$OUT" | sed -n 's/^PROBE:/probe:   /p'
+
+# 124 is `timeout`'s signal that it fired. Distinguished from every other failure
+# because it means something did not terminate, which is a different bug from the app
+# not working — and reporting it as "the sidecar never served" would send the next
+# person looking in the wrong place.
+if [ "$RC" -eq 124 ]; then
+  printf '%s\n' "$OUT" >&2
+  fail "the sandbox run did not finish within 180s — something did not exit, see above"
+fi
 
 case "$OUT" in
   *SIDECAR_SERVED*)
