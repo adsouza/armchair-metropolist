@@ -347,6 +347,41 @@ jobs:
           time flatpak install --user -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
           flatpak list --user --runtime
 
+      # The manifest's source is `app.deb`, a fixed name, because the real filename
+      # contains a space (Tauri builds it from productName) and a flatpak-builder
+      # `path:` is not a glob. Staging beats quoting a space through YAML, sh and the
+      # builder.
+      - name: Stage the Flatpak sources
+        if: env.BUNDLE == 'true'
+        run: |
+          set -eu
+          DEB=$(find src-tauri/target/release/bundle/deb -name '*.deb' -type f | head -1)
+          test -n "$DEB" || { echo "::error::no .deb to repackage"; exit 1; }
+          cp "$DEB" packaging/flatpak/app.deb
+          ls -la packaging/flatpak/
+
+      # --disable-rofiles-fuse because FUSE is not available on a hosted runner;
+      # without it flatpak-builder fails setting up its copy-on-write build directory.
+      - name: Build the Flatpak
+        if: env.BUNDLE == 'true'
+        run: |
+          set -eu
+          flatpak-builder --user --disable-rofiles-fuse --force-clean \
+            --repo=flatpak-repo flatpak-build \
+            packaging/flatpak/io.github.adsouza.armchair-metropolist.yml
+          flatpak build-bundle flatpak-repo armchair-metropolist.flatpak \
+            io.github.adsouza.armchair-metropolist
+          ls -la armchair-metropolist.flatpak
+
+      - name: Upload the Flatpak
+        if: env.BUNDLE == 'true' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v7
+        with:
+          name: flatpak-bundle
+          path: armchair-metropolist.flatpak
+          if-no-files-found: error
+          retention-days: 14
+
       # Tag-only. On main the package is built, verified, and discarded: the
       # Release is the durable copy, and not publishing a .deb from main also
       # closes the route by which someone could install two *packages* carrying the

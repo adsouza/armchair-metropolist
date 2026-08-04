@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metadata. Not strictly required for a side-loaded bundle, but it is what
+  a software centre reads to describe the app, and it is the first thing Flathub's
+  linter checks — so it is cheaper to have now than to retrofit.
+
+  `project_license` is a licence declaration inside a distributable package, not a
+  formality: this repository's LICENSE is the GNU Affero General Public License v3.
+  `-only` rather than `-or-later` is the conservative reading of a bare LICENSE file
+  with no per-file "or any later version" notice anywhere in the tree.
+-->
+<component type="desktop-application">
+  <id>io.github.adsouza.armchair-metropolist</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+
+  <name>Armchair Metropolist</name>
+  <summary>City infrastructure simulator</summary>
+
+  <description>
+    <p>
+      Zone land, lay transit, and watch a city grow or stall. Power, water, waste,
+      traffic, labour and money are recomputed every tick as supply against demand,
+      and a starved block loses health until it goes offline — which removes its own
+      contribution and starves its neighbours further.
+    </p>
+    <p>
+      Money is the only resource whose surplus survives the tick boundary, so a city
+      can read fully satisfied on the other five and still be quietly going broke.
+      There are two ways to lose and the fast one arrives early.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.adsouza.armchair-metropolist.desktop</launchable>
+
+  <url type="homepage">https://github.com/adsouza/armchair-metropolist</url>
+  <url type="bugtracker">https://github.com/adsouza/armchair-metropolist/issues</url>
+
+  <!-- No violence, no chat, no purchases, no data collection. All-ages. -->
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-08-04" />
+  </releases>
+</component>
