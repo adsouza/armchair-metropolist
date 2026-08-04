@@ -94,78 +94,75 @@ printf 'desktop: Icon=%s Categories=%s\n' "$ICON" "$CATEGORIES"
 # the sidecar boots Phoenix, says so, and exits 0.
 # ARMCHAIR_DESKTOP=1 selects the file-backed store; without it this binary is the
 # server target and waits on a Postgres that is not there.
+# Run it in the FOREGROUND under a self-imposed timeout, and read its output. No
+# backgrounding, no PID tracking, no teardown.
+#
+# Two earlier versions of this check hung a CI job, and both times the cause was
+# managing a background process across a sandbox boundary:
+#
+#   1. `wait $PID` on a BEAM that does not exit promptly on SIGTERM.
+#   2. `kill -9 "$PID"` — which killed Burrito's *launcher*, not the `beam.smp` it had
+#      spawned. `flatpak run` does not return while anything is alive in the sandbox,
+#      so the outer `timeout 180` sent SIGTERM at 180s and then waited forever for a
+#      process that was never going to die. `timeout` without --kill-after does not
+#      escalate; it blocks.
+#
+# The fix is to stop trying to manage the process at all. `timeout` *inside* the
+# sandbox bounds the sidecar itself and kills its whole tree, and `exec` means the
+# sandbox shell is replaced rather than left waiting on a child. The sandbox therefore
+# always exits on its own.
+#
+# Reading the boot banner is as decisive as an HTTP request for what this assertion is
+# aimed at, and needs no HTTP client inside the runtime. "Running ... Endpoint" is
+# printed only after the loader resolved every symbol, the bundled ERTS started, the
+# Burrito payload unpacked and Phoenix bound the port. A glibc mismatch never reaches it.
+#
+# --no-halt is REQUIRED: Burrito launches the release as `erl -noshell -s elixir
+# start_cli`, which treats trailing arguments as scripts and then halts, so without it
+# the sidecar boots Phoenix, says so, and exits 0 before we could ask it anything.
+# ARMCHAIR_DESKTOP=1 selects the file-backed store; without it this binary is the
+# server target and waits on a Postgres that is not there.
 printf 'run:     starting %s inside the sandbox on port %s...\n' "$SIDECAR" "$PORT"
 
-# `timeout` is a hard backstop around the whole sandbox run, independent of the inner
-# script's own bounds. It exists because the first version of this check hung a CI job:
-# every bound was inside the sandbox, so when the sandbox itself would not exit there
-# was nothing left to stop it. A verification step that can hang forever is worse than
-# no verification step — it burns a runner and reports nothing.
-#
-# 180s: the inner probe loop allows 90s, plus BEAM start-up, plus the escalating kill.
 TIMEOUT_BIN=$(command -v timeout || true)
 [ -n "$TIMEOUT_BIN" ] || fail "coreutils 'timeout' not found; refusing to run unbounded"
 
+# --kill-after on the OUTER timeout too: belt and braces, so that even if the sandbox
+# somehow survives its inner bound, SIGKILL follows 15s after SIGTERM rather than this
+# script blocking. That omission is exactly what turned bug 2 above into a hung job.
 # shellcheck disable=SC2016
-# The single quotes are the point: $SIDECAR, $PORT and $PID must expand in the
-# *sandbox's* shell, where --env has defined them, not in this one. Expanding them out
-# here would bake in host values and break $PID entirely.
-OUT=$("$TIMEOUT_BIN" 180 flatpak run --user \
+# Single quotes deliberate: $SIDECAR and $PORT must expand in the sandbox's shell,
+# where --env defined them, not in this one.
+OUT=$("$TIMEOUT_BIN" --kill-after=15 120 flatpak run --user \
         --env=ARMCHAIR_DESKTOP=1 \
         --env=PORT="$PORT" \
         --env=SECRET_KEY_BASE=0000000000000000000000000000000000000000000000000000000000000000 \
         --env=SIDECAR="$SIDECAR" \
         --command=sh "$APP_ID" -c '
-          if [ ! -x "$SIDECAR" ]; then echo "SIDECAR_MISSING:$SIDECAR"; exit 0; fi
-          "$SIDECAR" --no-halt &
-          PID=$!
-          # Report which instrument was used. A check that silently degrades to a
-          # weaker test while still printing success is the failure mode this whole
-          # script exists to avoid.
-          if command -v curl >/dev/null 2>&1; then echo "PROBE:curl"
-          elif command -v wget >/dev/null 2>&1; then echo "PROBE:wget"
-          else echo "PROBE:liveness-only"; fi
-          i=0
-          while [ $i -lt 90 ]; do
-            if command -v curl >/dev/null 2>&1; then
-              curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" && { echo SIDECAR_SERVED; break; }
-            elif command -v wget >/dev/null 2>&1; then
-              wget -q -O /dev/null "http://127.0.0.1:$PORT/" && { echo SIDECAR_SERVED; break; }
-            elif [ $i -ge 20 ]; then
-              # No HTTP client in the runtime. Falling back to "did not die", which
-              # still catches the loader failure this assertion is aimed at, but
-              # proves strictly less. Named in the output so nobody reads it as more.
-              kill -0 $PID 2>/dev/null && { echo SIDECAR_ALIVE; break; }
-            fi
-            kill -0 $PID 2>/dev/null || { echo SIDECAR_DIED; break; }
-            i=$((i+1)); sleep 1
-          done
-          # Teardown must be bounded. An earlier version ended with `wait $PID`, which
-          # hung a CI job indefinitely: the BEAM does not exit promptly on SIGTERM here
-          # (ShutdownManager has its own drain), `flatpak run` does not return until its
-          # child tree is gone, and `wait` has no timeout. Escalate instead, and never
-          # block on the child.
-          kill "$PID" 2>/dev/null || true
-          for _ in 1 2 3 4 5; do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-          kill -9 "$PID" 2>/dev/null || true
+          [ -x "$SIDECAR" ] || { echo "SIDECAR_MISSING:$SIDECAR"; exit 0; }
+          timeout --kill-after=5 45 "$SIDECAR" --no-halt 2>&1 || echo "SIDECAR_EXIT:$?"
+          exit 0
         ' 2>&1) && RC=0 || RC=$?
 
-printf '%s\n' "$OUT" | sed -n 's/^PROBE:/probe:   /p'
+printf '%s\n' "$OUT" | sed 's/^/         | /' | head -25
 
-# 124 is `timeout`'s signal that it fired. Distinguished from every other failure
-# because it means something did not terminate, which is a different bug from the app
-# not working — and reporting it as "the sidecar never served" would send the next
-# person looking in the wrong place.
-if [ "$RC" -eq 124 ]; then
+# The sandbox shell always `exit 0`s, so a non-zero RC here can only come from the
+# *outer* timeout — never from the inner one, whose firing is the expected success path
+# (the sidecar is a server; it does not stop on its own). Without that separation, 124
+# would be ambiguous between "worked, then we stopped it" and "hung".
+if [ "$RC" -ne 0 ]; then
   printf '%s\n' "$OUT" >&2
-  fail "the sandbox run did not finish within 180s — something did not exit, see above"
+  fail "the sandbox did not exit within 120s (rc=$RC) — something in it would not die"
 fi
 
+# Judged on output, not exit status. "Running ... Endpoint" is Phoenix's boot banner and
+# it is printed only after the loader resolved every symbol, the bundled ERTS started,
+# the Burrito payload unpacked and the port was bound. Nothing reaches it on a glibc
+# mismatch, so it is as decisive here as an HTTP request — and needs no HTTP client
+# inside the runtime, which is what the previous version could not guarantee.
 case "$OUT" in
-  *SIDECAR_SERVED*)
-    printf 'run:     served HTTP on 127.0.0.1:%s inside the sandbox\n' "$PORT" ;;
-  *SIDECAR_ALIVE*)
-    printf 'run:     stayed alive 20s inside the sandbox (no HTTP client in the runtime)\n' ;;
+  *Running*Endpoint*)
+    printf 'run:     Phoenix booted and bound a port inside the sandbox\n' ;;
   *SIDECAR_MISSING*)
     printf '%s\n' "$OUT" >&2
     fail "$SIDECAR is not in the sandbox — the manifest did not install it" ;;
@@ -174,7 +171,7 @@ case "$OUT" in
     fail "the app died at the dynamic loader: the runtime's glibc is too old for this binary" ;;
   *)
     printf '%s\n' "$OUT" >&2
-    fail "the sidecar neither served nor survived inside the sandbox" ;;
+    fail "the sidecar ran but never printed Phoenix's boot banner — see its output above" ;;
 esac
 
 printf '\n\033[32m✓ .flatpak verified\033[0m\n'
