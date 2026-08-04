@@ -79,6 +79,42 @@ unpacks its payload only once, so rebuilds are silent no-ops at runtime unless t
 cache is evicted — are written up in
 [`docs/superpowers/2026-07-30-follow-ups.md`](docs/superpowers/2026-07-30-follow-ups.md).
 
+## Installing a release
+
+The bundles above are what a build produces locally. To just *run* it, take a
+built one from the [releases page](https://github.com/adsouza/armchair-metropolist/releases).
+
+Linux, x86_64:
+
+```bash
+sudo apt install ./armchair-metropolist_<version>_amd64.deb
+```
+
+The single-file Burrito sidecar is attached too, for both x86_64 and aarch64. It
+runs the Phoenix server without the desktop window, which is what you want on a
+machine with no display. There is no aarch64 `.deb` yet — nobody has asked, and
+that leg needs a from-source Tauri CLI build.
+
+## Cutting a release
+
+The version lives in four files and they must agree, so move them together
+rather than by hand:
+
+```bash
+mix version.set 0.2.0
+git commit -am "Release 0.2.0" && git push
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The tag is checked against the declared version in CI, so a tag that disagrees
+fails before anything is published — as does a tag whose shape is wrong, such as
+`v0.2` or a full `refs/tags/…` ref.
+
+Bumping the version is not bookkeeping. A production Burrito binary unpacks its
+payload once, keyed on the app version, so two packages sharing a version means
+the second one installs code that never runs. That is why the tag drives the
+release rather than merely labelling it.
+
 ## Actually playing it
 
 There are two ways to lose, and your first city will almost certainly find the fast

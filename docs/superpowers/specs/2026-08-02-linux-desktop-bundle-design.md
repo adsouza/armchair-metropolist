@@ -379,6 +379,23 @@ complete — from ~2 minutes to ~15.
   affordable, and a Release is permanent and public where these artifacts expire in 14 days and need
   repository access to download.
 
+  **Done, 2026-08-03** — see `2026-08-03-tag-driven-releases-design.md`. Three predictions in this
+  paragraph need correcting rather than deleting, because each is the kind of thing a reader would
+  act on:
+
+  * The tag *did* become a fifth site in §6's check, but a **conditional** one. That function also
+    runs in the PR gate and the pre-push hook, where no tag exists; an unconditional site would read
+    `nil` there and the nil-guard is deliberately fatal, so it would fail every laptop and every pull
+    request.
+  * The arm64 `cargo install tauri-cli` was considered and **declined**. Releases carry the x86_64
+    `.deb` and sidecars for both arches, so the install plus a full 338-crate compile on a slower
+    runner buys nothing until someone asks for an arm64 package.
+  * The 14-day expiry no longer applies to released artifacts. It still applies to the per-merge
+    sidecars, which are still uploaded on every push to `main` and are still the same Burrito binary
+    described above — so the stale-payload problem stays reachable through them, deliberately. They
+    are the only way to test an unreleased merge. The `.deb` route is closed: `main` no longer
+    uploads one.
+
 ## 11. Flatpak, deferred
 
 Considered and deliberately not built now. Recording why, because the reasons are not obvious and
@@ -407,10 +424,24 @@ runner but stop working if the job is ever containerised.
    `GLIBC_2.39 not found` — and `flatpak-builder` still exits 0, because all it did was copy files.
    The runtime's glibc version was **not** verified during this design and is the first thing to
    establish if we pursue this.
+
+   **Partly established, 2026-08-03.** GNOME 47 moved to freedesktop-sdk 24.08
+   (`gnome-build-meta!3447`), and freedesktop-sdk 24.08 ships glibc 2.40. Against the
+   `libc6 (>= 2.39)` floor §5 declares, that means **the `org.gnome.Platform//46` proposed above was
+   very likely never viable** — GNOME 46 is built on freedesktop-sdk 23.08 — while `//47` and `//48`
+   clear it. Read from upstream merge requests rather than measured inside a runtime, so treat it as
+   a lead. Whatever gets built must assert the floor by *running* the binary inside the sandbox,
+   because the failure mode named above is precisely that `flatpak-builder` exits 0 having only
+   copied files.
 2. *The Burrito payload cache across updates.* Flatpak gives each app a persistent
    `~/.var/app/<id>/data` that survives updates, and `$XDG_DATA_HOME` is where the sidecar unpacks.
    Combined with the `version`-only cache key in §10's last bullet, a Flatpak update ships new code
    that does not run. This is the bug that already cost a day here once.
+
+   **Resolved for released artifacts, 2026-08-03** by tag-driven releases — see
+   `2026-08-03-tag-driven-releases-design.md` §7. Distinct releases now carry distinct versions, so a
+   Flatpak built from a released `.deb` would refresh its payload. Still open for the per-merge
+   sidecar artifacts, deliberately.
 
 **And the channel is the point.** A `.flatpak` bundle file that is not on Flathub has to be
 side-loaded, which is strictly worse than a .deb for the same person. Flathub is what makes the
@@ -435,12 +466,28 @@ Each of these is asserted by the "Verify the .deb" step, and each must be shown 
 | `dpkg-deb --field <deb> Version` is `0.1.0` | this one is not mutated but observed: it proves at runtime that `tauri.conf.json` is the authority and `Cargo.toml` is the unused fallback, which §5 establishes only by reading `rust.rs:1093` |
 
 §6's alignment check is mutated independently of the bundle, since it runs in `mix check` and needs
-no Linux runner. Set each of the four sites to a different version **one at a time** and confirm
-`mix check` goes red for each — four separate mutations, not one. A single mutation would leave it
-unknown whether the other three sites are read at all, which is the failure this repository has hit
+no Linux runner. Set each of the **five** sites to a different version **one at a time** and confirm
+`mix check` goes red for each — five separate mutations, not one. A single mutation would leave it
+unknown whether the other four sites are read at all, which is the failure this repository has hit
 repeatedly: a check that passes because it is doing nothing looks exactly like one that is satisfied.
 Then confirm the aligned tree goes green, so the red is carried by the mutation and not by the check
 being broken outright.
+
+The fifth site is the release tag (added 2026-08-03), live only when `RELEASE_TAG` is set, so run
+that mutation as `RELEASE_TAG=v9.9.9 mix check`. It needs a second case the other four do not:
+confirm `RELEASE_TAG=garbage mix check` fails with **"Could not read a version"** — the nil-guard —
+rather than with the disagreement message. That is what distinguishes a guard that fired from one
+that was skipped, and an implementation returning `[]` for a malformed tag passes the first case
+while failing this one.
+
+Two traps when running the sweep itself, both hit here on 2026-08-03:
+
+* **Do not restore a mutation with `git checkout -- <file>` while the change under test is
+  uncommitted.** It reverts to the index and deletes the implementation, after which the remaining
+  mutations test `HEAD` and print exactly the red you expected. Commit first, or restore from a
+  copy the sweep made.
+* **Confirm each mutation actually applied** (`cmp` the file against its backup). A pattern that
+  silently fails to match produces a green run that reads as a passing site.
 
 Two things this cannot verify, stated rather than papered over:
 
