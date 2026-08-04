@@ -22,7 +22,7 @@ BUNDLE="${1:-armchair-metropolist.flatpak}"
 APP_ID="${EXPECT_APP_ID:-io.github.adsouza.armchair-metropolist}"
 EXPECTED_RUNTIME="${EXPECT_RUNTIME:-org.gnome.Platform/x86_64/50}"
 # Which binary the run check starts. A mutation hook: pointing it at something that
-# does not exist must turn assertion 7 red, which is how we know that assertion is
+# does not exist must turn assertion 8 red, which is how we know that assertion is
 # wired to anything at all.
 SIDECAR="${EXPECT_SIDECAR:-/app/bin/desktop}"
 PORT="${EXPECT_PORT:-41000}"
@@ -78,22 +78,52 @@ CATEGORIES=$(sed -n 's/^Categories=//p' "$DESKTOP")
 case "$CATEGORIES" in *Game*) ;; *) fail "Categories=$CATEGORIES does not place this in Game" ;; esac
 printf 'desktop: Icon=%s Categories=%s\n' "$ICON" "$CATEGORIES"
 
-# 7. THE decisive assertion.
+# 7. The Tauri host's dynamic dependencies resolve against this runtime.
 #
-# Everything above reads files, and a glibc mismatch is invisible to all of it:
-# flatpak-builder exits 0 having only copied, and the failure happens at process start.
-# So start the sidecar inside the sandbox and talk to it.
+# This assertion exists because assertion 8 below cannot do its job, and finding that
+# out took a mutation. The bundle ships two binaries with *different linkage*:
 #
-# This exercises, in one pass: the dynamic loader against the runtime's glibc, the
-# bundled ERTS, the Burrito payload unpack, Phoenix booting, and the manifest's claim
-# that loopback works with no --share=network. No display is needed, because this
-# starts the *sidecar* rather than the Tauri window.
+#   armchair_metropolist  — the Tauri host. Dynamically linked; references GLIBC_2.39.
+#   desktop               — the Burrito sidecar. Statically linked against musl;
+#                           references no GLIBC_ symbols at all, because Burrito's musl
+#                           step runs for these targets.
 #
-# --no-halt is REQUIRED: Burrito launches the release as `erl -noshell -s elixir
-# start_cli`, which treats trailing arguments as scripts and then halts, so without it
-# the sidecar boots Phoenix, says so, and exits 0.
-# ARMCHAIR_DESKTOP=1 selects the file-backed store; without it this binary is the
-# server target and waits on a Postgres that is not there.
+# Assertion 8 runs the *sidecar*, since that needs no display — so it is structurally
+# incapable of detecting a glibc mismatch. Rebuilding the whole bundle against
+# org.gnome.Platform//46, whose glibc is older than 2.39, left assertion 8 perfectly
+# green: Phoenix booted, because the sidecar does not use glibc. A user would have
+# installed that bundle, seen the app start, and had it die on opening the window.
+#
+# `ldd` answers the question directly, on the binary that actually has the dependency,
+# with no display and no process to manage. On a too-old runtime it prints
+# "version `GLIBC_2.39' not found" against libc.so.6 and this goes red.
+HOST=/app/bin/armchair_metropolist
+printf 'ldd:     resolving %s against the runtime...\n' "$HOST"
+LDD=$("$(command -v timeout)" --kill-after=5 60 flatpak run --user \
+        --command=sh "$APP_ID" -c "ldd $HOST 2>&1" 2>&1) || true
+
+case "$LDD" in
+  *"not found"*)
+    printf '%s\n' "$LDD" | grep -F 'not found' >&2
+    fail "$HOST has unresolved dependencies against this runtime — see above" ;;
+  *libc.so.6*)
+    printf 'ldd:     all dependencies resolve\n' ;;
+  *)
+    printf '%s\n' "$LDD" >&2
+    fail "could not read $HOST's dependencies; ldd said the above" ;;
+esac
+
+# 8. Running it.
+#
+# Everything before assertion 7 reads files, and a *runtime* failure is invisible to all
+# of it: flatpak-builder exits 0 having only copied. So start the sidecar inside the
+# sandbox and watch it boot.
+#
+# What this proves, and does not: the bundled ERTS starts, the Burrito payload unpacks,
+# Phoenix boots and binds a port, and loopback works with no --share=network. It does
+# NOT prove anything about glibc — see assertion 7 — and it does not touch the Tauri
+# window, so --socket=wayland, --device=dri and the tray remain unexercised.
+#
 # Run it in the FOREGROUND under a self-imposed timeout, and read its output. No
 # backgrounding, no PID tracking, no teardown.
 #
@@ -107,15 +137,13 @@ printf 'desktop: Icon=%s Categories=%s\n' "$ICON" "$CATEGORIES"
 #      process that was never going to die. `timeout` without --kill-after does not
 #      escalate; it blocks.
 #
-# The fix is to stop trying to manage the process at all. `timeout` *inside* the
-# sandbox bounds the sidecar itself and kills its whole tree, and `exec` means the
-# sandbox shell is replaced rather than left waiting on a child. The sandbox therefore
-# always exits on its own.
+# The fix is to stop managing the process at all: `timeout` *inside* the sandbox bounds
+# the sidecar and kills its tree, so the sandbox always exits on its own.
 #
-# Reading the boot banner is as decisive as an HTTP request for what this assertion is
-# aimed at, and needs no HTTP client inside the runtime. "Running ... Endpoint" is
-# printed only after the loader resolved every symbol, the bundled ERTS started, the
-# Burrito payload unpacked and Phoenix bound the port. A glibc mismatch never reaches it.
+# The boot banner is the signal because it needs no HTTP client inside the runtime.
+# "Running ... Endpoint" is printed only after the bundled ERTS started, the Burrito
+# payload unpacked and the port was bound. It is a weaker claim than serving a 200, and
+# — as assertion 7 records — no claim at all about glibc.
 #
 # --no-halt is REQUIRED: Burrito launches the release as `erl -noshell -s elixir
 # start_cli`, which treats trailing arguments as scripts and then halts, so without it
