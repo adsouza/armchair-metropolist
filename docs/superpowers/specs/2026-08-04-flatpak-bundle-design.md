@@ -226,8 +226,24 @@ follows its rules: one definition a laptop and a runner both run, and every asse
 **The decisive check is that it runs the application.** §11's own warning is that a glibc mismatch
 leaves `flatpak-builder` exiting 0, because all it did was copy files — so every file-existence
 assertion in the world cannot see the failure this design most needs to exclude. The script therefore
-installs the bundle and, **inside the sandbox**, sets `PORT`, starts the Burrito sidecar, curls
-`127.0.0.1:$PORT`, asserts a 200, and kills it.
+installs the bundle and, **inside the sandbox**, runs the Burrito sidecar in the foreground under a
+`timeout` and asserts that Phoenix's boot banner — `Running … Endpoint` — appears in its output.
+
+**An earlier draft of this section said "curls `127.0.0.1:$PORT`, asserts a 200, and kills it", and
+that design hung two CI jobs before being abandoned.** Both hangs came from managing a background
+process across a sandbox boundary: first `wait $PID` on a BEAM that does not exit promptly on
+SIGTERM, then `kill -9 "$PID"` killing Burrito's *launcher* rather than the `beam.smp` it had
+spawned. `flatpak run` does not return while anything lives in the sandbox, and a bare `timeout`
+sends SIGTERM and then waits — so with nothing escalating, the job simply stopped.
+
+Reading the banner is as decisive for the failure this assertion targets, and much harder to get
+wrong. It needs no HTTP client inside the runtime, no PID tracking and no teardown: `timeout` inside
+the sandbox stops the sidecar and the sandbox shell exits on its own. `Running … Endpoint` is printed
+only after the loader has resolved every symbol, the bundled ERTS has started, the Burrito payload
+has unpacked and the port has been bound — none of which happens on a glibc mismatch.
+
+The one thing it no longer proves directly is that a request gets a response. Binding the port is a
+strictly weaker claim than serving a 200, and this section should not pretend otherwise.
 
 That one check exercises, in a single pass: the dynamic loader against the runtime's glibc, the
 bundled ERTS, the Burrito payload unpack, Phoenix booting, and §6's claim that loopback works with no
@@ -251,7 +267,7 @@ thing being launched.
 | 4 | `/app/share/applications/<app-id>.desktop` exists | skip the rename step in the manifest |
 | 5 | the desktop entry's `Icon=` equals the app ID | skip the `Icon=` rewrite |
 | 6 | `Categories=` is non-empty | revert §4's `tauri.conf.json` change |
-| 7 | **the sidecar serves HTTP inside the sandbox** | rebuild the whole bundle against `//46` and run this script against *that*; it must fail |
+| 7 | **the sidecar boots Phoenix inside the sandbox** | rebuild the whole bundle against `//46` and run this script against *that*; it must fail |
 
 Mutation 7 is the one that matters, and it is different in kind from the others: it does not edit the
 script, it rebuilds the artifact against the runtime §11 proposed. Two things have to be true for it
