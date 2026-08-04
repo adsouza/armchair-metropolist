@@ -136,6 +136,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute render(view_b) =~ ~s{id="3:4"}
   end
 
+  test "a browser session is shown the whole address that re-enters its city",
+       %{conn: conn} do
+    html = render(elem(live(conn, ~p"/"), 1))
+
+    city_id = CityEngine.default_city_id()
+
+    # Both halves, because they fail for different reasons. The href is the promise
+    # that the link goes somewhere real - /c/:code is the only route that accepts a
+    # code, and it appears nowhere else on the page. The visible text is the promise
+    # that a player can *act* on it from another browser, which a bare code or a
+    # relative path cannot deliver: there is nothing on screen telling them the host.
+    assert html =~ ~s{href="/c/#{city_id}"}
+    assert html =~ "#{ArmchairMetropolistWeb.Endpoint.url()}/c/#{city_id}"
+  end
+
   test "the desktop target uses its configured city id and hides the re-entry code",
        %{conn: conn} do
     # Regression for Important finding 6: :desktop_city_id used to be read only from
@@ -172,7 +187,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # The desktop UI has no "elsewhere" to return to a code from, and the id is a
     # fixed constant rather than something worth revealing - so this block must not
     # render at all, not merely render a value nobody asked for.
-    refute render(view) =~ "Return to it elsewhere with code"
+    #
+    # Anchored on the link's href, not on the sentence beside it. The copy is the
+    # part of this block most likely to be reworded, and a refute against a string
+    # that has been edited out of the codebase entirely passes for the wrong reason -
+    # it would still be green with the block rendering in full. The test above
+    # asserts this same href is present for a browser session, so the two move
+    # together.
+    refute render(view) =~ ~s{href="/c/}
   end
 
   test "clicking a cell places infrastructure", %{conn: conn} do

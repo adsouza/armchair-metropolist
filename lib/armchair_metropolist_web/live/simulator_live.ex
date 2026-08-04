@@ -301,10 +301,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <.metrics metrics={@metrics} />
           </div>
 
+          <%!-- The whole address, not the bare code. The code alone told a player what
+                their city was called without telling them what to do with it — the route
+                that accepts it (`/c/:code`) appeared nowhere on the page, so the only way
+                to use the thing on offer was to guess it.
+
+                `break-all` and the two-line split are for the sidebar, not for looks:
+                `<aside>` is `min-w-fit`, so any unbreakable token it contains becomes a
+                floor under the sidebar's width and feeds straight into the wrap
+                thresholds measured above. Measured before adding this: the aside's
+                min-content is ~1020px (the legend matrix sets it) against ~514px for the
+                old one-line copy and ~670px for this URL at the production host, so the
+                line has never been what decides that width and still is not. `break-all`
+                keeps that true for a host longer than today's. --%>
           <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
-            <span>This city lives in this browser.</span>
-            <span>Return to it elsewhere with code</span>
-            <code class="font-mono select-all">{@city_id}</code>
+            <p>This city lives in this browser. To open it somewhere else, go to:</p>
+            <p>
+              <a href={~p"/c/#{@city_id}"} class="font-mono underline break-all">
+                {url(~p"/c/#{@city_id}")}
+              </a>
+            </p>
           </div>
         </aside>
       </div>
