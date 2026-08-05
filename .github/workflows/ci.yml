@@ -646,6 +646,19 @@ jobs:
       # bundle against an older runtime, which is its own experiment. What is here is
       # assertion 7's plumbing — EXPECT_SIDECAR pointing at a path that does not exist
       # must turn it red, which is how we know it is wired to anything.
+      #
+      # Assertion 9's two halves are both here, and both fail *after* the 45 s sidecar
+      # run, so they cost more than the three above — which fail at assertions 2, 3 and 8
+      # respectively, none of them having waited. Still comfortably inside the bound.
+      # Its artifact-level mutation — delete the --env line from the manifest and rebuild
+      # — is deliberately not automated, for the same reason as the glibc case: it is a
+      # rebuild, not a re-run.
+      #
+      # Useful side effect worth knowing before it confuses someone: assertion 9's second
+      # half degrades to a printed warning if the runtime has no PyGObject to ask with.
+      # If that ever happens, EXPECT_PROXY_RESOLVER_IMPL survives and this step reports
+      # MUTATION SURVIVED — so the degradation cannot sit there unnoticed. That is the
+      # intended behaviour, not a bug in the sweep.
       - name: Prove the Flatpak checks can fail
         if: env.BUNDLE == 'true'
         timeout-minutes: 15
@@ -655,7 +668,9 @@ jobs:
           for spec in \
             "EXPECT_APP_ID=io.github.adsouza.not-the-app" \
             "EXPECT_RUNTIME=org.gnome.Platform/x86_64/46" \
-            "EXPECT_SIDECAR=/app/bin/nosuchbinary"
+            "EXPECT_SIDECAR=/app/bin/nosuchbinary" \
+            "EXPECT_PROXY_RESOLVER_ENV=not-dummy" \
+            "EXPECT_PROXY_RESOLVER_IMPL=GProxyResolverPortal"
           do
             if env "$spec" ./scripts/verify-flatpak.sh "$B" >/dev/null 2>&1; then
               echo "::error::MUTATION SURVIVED: $spec — that assertion proves nothing"

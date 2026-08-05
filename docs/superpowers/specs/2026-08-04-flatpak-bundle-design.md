@@ -258,6 +258,7 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  - --env=GIO_USE_PROXY_RESOLVER=dummy   # added 2026-08-05; see below
 ```
 
 **Deliberately no `--share=network`.** Without it Flatpak gives the app a private network namespace,
@@ -268,6 +269,56 @@ than the `.deb`, which has whatever access the user has.
 This is a claim, not a fact, until §7 executes it. If it turns out the webview needs more, the fix is
 `--share=network` and a line here recording why; it must not be added pre-emptively "to be safe",
 because an unnecessary permission is exactly what a sandbox exists to refuse.
+
+### The webview did need more — and it was not `--share=network` (2026-08-05)
+
+The paragraph above reserved this decision point and it has now been reached. Reported from AerynOS:
+the app installed, the sidecar booted, and the window contained nothing but
+
+```
+GDBus.Error:org.freedesktop.portal.Error.NotAllowed: This call is not available inside the sandbox
+```
+
+**Everything the paragraph says about packets is true, and that is precisely the trap.** It reasons
+about routing — loopback is inside the private namespace, so nothing needs to leave. But omitting
+`--share=network` also withholds a *permission*, and xdg-desktop-portal gates two interfaces on it,
+both with the guard `if (!xdp_app_info_has_network (app_info))`: `NetworkMonitor` and `ProxyResolver`.
+The question is not what the app *does* with the network; it is what its libraries *ask* about it.
+
+The chain, read at each emit site rather than inferred from the message:
+
+1. `/.flatpak-info` exists, so GLib's `glib_should_use_portal()` is true and `GProxyResolverPortal`
+   (extension priority 90) wins `g_proxy_resolver_get_default()`.
+2. libsoup 3, inside `WebKitNetworkProcess`, calls `g_proxy_resolver_lookup_async` for **every** URI.
+   There is no loopback shortcut in the portal resolver, so `http://127.0.0.1:PORT` goes through it too.
+3. The portal refuses with `NOT_ALLOWED` and that exact string (`src/proxy-resolver.c`).
+4. The load fails before a packet is sent, and WebKit renders the `GError` as the page body — which is
+   why the message appeared *in the window* rather than in a log.
+
+**GLib intends to handle this, and narrowly fails to.** `g_proxy_resolver_portal_lookup` carries
+`if (!resolver->network_available) proxy = "direct://"` — but it sits *after* the early return from
+`call_lookup_sync`, so with no network the call always errors first and that fallback is dead code.
+`gnetworkmonitorportal.c` gets the identical case right by never asking
+(`if (nm->priv->has_network) update_properties (...)`). That asymmetry is what bounds the fix:
+grepping xdg-desktop-portal for the error string returns only those two files, and only one of them
+is reachable, so the proxy resolver is the *whole* problem.
+
+**So the fix is not `--share=network`.** Nothing here wants the network; what we want is the
+`direct://` GLib already intended, obtained by declining the portal resolver rather than by opening
+the sandbox. `GIO_USE_PROXY_RESOLVER` is GIO's own override for that extension point
+(`giomodule.c`, `_g_io_module_get_default`), and `dummy` selects `GDummyProxyResolver`, whose
+`is_supported` is unconditionally `TRUE` and whose lookup returns `direct://` for everything. It is
+correct here *because* the app has no network: there is no proxy it could ever legitimately need.
+
+**Why nobody saw this until a user did.** Two independent reasons, and both are structural rather
+than careless:
+
+* §7 runs the *sidecar*, never the window, so the entire webview path is unexercised — the limitation
+  §10 already recorded, now with a shipped bug attached to it.
+* It reproduces only where `xdg-desktop-portal` actually owns the name on the session bus. With no
+  portal running, `g_proxy_resolver_portal_is_supported` is `FALSE` and GLib falls back to a working
+  resolver. CI has no session portal, so **CI cannot reproduce it at all** — which is what shapes
+  assertion 9 below.
 
 ## 7. Verification
 
@@ -319,6 +370,39 @@ thing being launched.
 | 5 | the desktop entry's `Icon=` equals the app ID | skip the `Icon=` rewrite |
 | 6 | `Categories=` is non-empty | revert §4's `tauri.conf.json` change |
 | 7 | **the sidecar boots Phoenix inside the sandbox** | rebuild the whole bundle against `//46` and run this script against *that*; it must fail |
+| 9 | `GIO_USE_PROXY_RESOLVER` is `dummy` in the sandbox, **and** GIO resolves to `GDummyProxyResolver` | `EXPECT_PROXY_RESOLVER_ENV=not-dummy` and `EXPECT_PROXY_RESOLVER_IMPL=GProxyResolverPortal`, both in the sweep; artifact-level, delete the `--env` line and rebuild |
+
+(Numbering skips 8 only because assertion 8 is the sidecar run, which the table above folded into 7
+before the `ldd` split; the script's own numbering is authoritative.)
+
+### Assertion 9, and what it deliberately does not attempt
+
+It does **not** try to reproduce the portal refusal. It cannot: no session portal runs on a runner, so
+without the fix GLib would silently pick a working resolver and an end-to-end page-load assertion
+would go green on the very bundle that motivated it. That is the same trap as mutation 7's first
+attempt — a check structurally blind to the failure it was written for — and pretending otherwise
+would be worse than having no check.
+
+What it asserts instead is the configuration that avoids the call, read from inside the sandbox, in
+two halves that fail for different reasons:
+
+* **env** — `GIO_USE_PROXY_RESOLVER` is `dummy`. Red the moment the finish-arg is dropped, with no
+  dependence on what the runtime happens to contain. This is the guaranteed floor.
+* **impl** — the resolver GIO actually returns is `GDummyProxyResolver`, via PyGObject's
+  `__gtype__.name` (`type(r).__name__` is useless here: PyGObject has no wrapper class for
+  GIO-internal resolvers). This is the half that proves the override *took effect* rather than merely
+  being set — an env var GIO ignored passes the first half and fails this one.
+
+If the runtime has no PyGObject, the second half prints a warning and the first still holds. That
+degradation cannot go unnoticed: `EXPECT_PROXY_RESOLVER_IMPL` then survives the sweep, and
+"MUTATION SURVIVED" fails the job.
+
+**Mutation-verified locally, 2026-08-05** — unusually for this script, which normally needs a Linux
+runner. The sandbox-side snippet was extracted byte-for-byte from the `sh -c` argument and run under
+`sh` with a stubbed `python3`, and the verdict block driven with canned output. Five cases, all as
+intended: fix present → green; finish-arg dropped → red on env; override ignored → red on impl; no
+PyGObject → warn and green; expectation mutated → red. That checks the three-level quoting too, which
+is where this file has been bitten before (an apostrophe inside a single-quoted `sh -c` string).
 
 ### Outcome of mutation 7, run 2026-08-04 — and what it exposed
 
@@ -436,3 +520,11 @@ requires `github.event_name == 'push'`, both verified skipped on run 30904363993
   webview, so `--socket=wayland`, `--device=dri` and the tray are reasoned about rather than
   exercised. Launching the window would need xvfb and a much slower check; the glibc class of failure
   is covered, the display-integration class is not.
+
+  **This limitation cashed out on 2026-08-05** — it is no longer hypothetical. The portal proxy-resolver
+  bug in §6 lived entirely in the webview path and shipped because nothing here executes it. Assertion 9
+  closes that one specific hole by asserting configuration rather than behaviour; it does **not** narrow
+  this limitation, and the next failure of this class will be just as invisible. Worth remembering when
+  weighing xvfb again: the honest cost comparison is not "a slower check" against "no check", it is a
+  slower check against a user finding it. Note also that a real window check would need a session portal
+  to be running to have caught *this* bug, so xvfb alone would not have sufficed.
