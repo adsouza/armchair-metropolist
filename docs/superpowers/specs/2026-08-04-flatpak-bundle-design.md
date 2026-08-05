@@ -101,10 +101,61 @@ Out, and stated so nobody reads this as half-done:
   **That reasoning was wrong, measured 2026-08-04.** On a hosted runner the runtime and SDK install
   in **50 seconds** (`real 0m50.415s`, peaking at 32.2 MB/s over 7 refs), and the apt install of
   `flatpak` + `flatpak-builder` takes 77 s. The whole toolchain job is ~2m15s. The cost that
-  justified excluding `main` does not exist, so the exclusion is currently unjustified rather than
-  justified-and-accepted. Left as-is pending a decision, because the argument for including `main` is
-  the same one that already keeps the `.deb` build there — packaging breakage found at merge time
+  justified excluding `main` did not exist, so **the Flatpak now builds and verifies on every merge**,
+  for the reason that already keeps the `.deb` build there: packaging breakage found at merge time
   rather than while cutting a release.
+
+  **Both figures are now off the critical path entirely (2026-08-05).** The apt install is cached
+  (~6 s warm), and the runtime download runs in the background during `Build the Linux bundle`.
+
+  The per-ref breakdown, from run 30963444441's timestamps, is worth recording because it is not what
+  the step's name suggests:
+
+  | ref | elapsed |
+  | --- | --- |
+  | `org.gnome.Sdk` | 22.2 s |
+  | `org.gnome.Platform` | 13.4 s |
+  | `org.gnome.Platform.Locale` | 7.6 s |
+  | `org.gnome.Sdk.Locale` | 4.3 s |
+  | `org.freedesktop.Platform.GL.default` (×2) | 4.6 s |
+  | `org.freedesktop.Platform.codecs-extra` | 0.4 s |
+
+  Two refs were named; flatpak pulled seven. The five *related* refs are 17 s of the 53 s — the same
+  "a tool installs more than you asked for" shape as the `elfutils` recommends bug in §7.
+
+  **53 s is the only clean measurement**, and it was taken serially, with nothing else on the runner.
+  What the download costs while a rustc build saturates the box is *not* known: flathub throughput
+  varies, and ostree decompresses and checksums on the same CPU.
+
+  It briefly appeared to be known, and that episode is worth recording because the instrument was the
+  liar. The first join step computed the download duration as `(time the waiter observed the result)
+  − (time the download started)`. Whenever the download finished early — the success case — that is
+  the *cover* duration, not the download. It duly reported 128 s and 189 s on two runs whose cover was
+  129 s and 189 s, making an early finish look like a one-second squeak, and prompting a commit that
+  explained the non-existent slowdown as flathub serving 15–21 MB/s. Only the downloader knows when it
+  stopped, so it now stamps its own end time, and the join prints three numbers — `download`, `spare`,
+  `blocked here` — because `blocked here: 0s` alone cannot tell a comfortable overlap from a lucky one.
+
+  The background start still sits before the *sidecar* build rather than immediately before the Rust
+  build, giving ~180 s of cover instead of ~120 s. The justification is not a measured slowdown but
+  that the margin is free, and the tail is unmeasured — the same argument the apt step in §10 of the
+  bundle design settled the hard way, having looked like 25 s until the day it took 25 minutes. If the
+  download loses the race regardless, the join blocks for the difference and prints it; the overlap
+  cannot be worse than running the two in series, only less good.
+
+  `--no-related` would reclaim those 17 s and was **rejected**. It removes Mesa from a runtime this
+  job then executes, so a verification failure would become ambiguous between "the package is broken"
+  and "we deleted a dependency" — and once the download is hidden behind a 116 s (warm) or 287 s
+  (cold) rustc step, it reclaims nothing anyway. Reordering dominated trimming: 53 s saved instead of
+  17 s, with the installed runtime bit-for-bit unchanged.
+
+  Deleting `org.gnome.Sdk` — the single most expensive ref, 822 MB — is possible in principle and
+  also declined. The manifest's build-commands are `ar`, `tar`, `install` and `sed`; nothing is
+  compiled, so the SDK exists solely to supply `ar` and `tar` inside the build sandbox. Removing it
+  means assembling the tree on the host and using `flatpak build-export` instead of
+  `flatpak-builder`, which costs a hand-written `metadata` file and the builder's desktop-entry and
+  AppStream export. That is a hand-maintained mirror of generated data in exchange for seconds that
+  are already hidden.
 
 ## 4. Fix the desktop entry at source, not in the manifest
 
