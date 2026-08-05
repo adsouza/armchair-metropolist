@@ -194,6 +194,20 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+          # This action saves a run-scoped cache per arch per run, and 26 of them had
+          # accumulated to 9298 MB — 93% of the repository's 10 GB budget. Those were
+          # pruned on 2026-08-04, but caching is left ON, because turning it off was
+          # measured and cost more than it saved: the Burrito zig build went 29s -> 115s.
+          #
+          # The reason to leave it on is that the budget self-manages. GitHub evicts
+          # least-recently-used, and a stale zig entry is precisely what never gets read
+          # again — restore-keys always matches the newest. The claim that these were
+          # crowding out the mix and apt caches was a hypothesis, and a wrong one: those
+          # caches restored successfully in every run through the whole episode.
+          #
+          # Worth pruning by hand if the budget is ever actually contended:
+          #   gh api 'repos/OWNER/REPO/actions/caches?per_page=100' \
+          #     --jq '.actions_caches[] | select(.key|test("setup-zig-cache")) | .id'
 
       - uses: actions/cache@v6
         with:
@@ -333,6 +347,21 @@ jobs:
       #
       # Deliberately not guarded with `test -x`: _build is cached, and a guard would let
       # a CLI left by an older pin survive this bump silently.
+      # Caches the reusable parts of src-tauri/target — the 338 dependency crates
+      # rather than our own — which is what makes it feasible where caching the whole
+      # directory is not: target/ measures 6.7 GB, and §10 of the bundle design quoting
+      # 2.3 GB is stale.
+      #
+      # Only viable because the zig caches above stopped consuming the budget.
+      # `Build the Linux bundle` is ~269-291s of essentially pure rustc — crate
+      # download is 1.4s of it, measured — so the dependency compile is the whole
+      # target.
+      - uses: Swatinem/rust-cache@v2.9.1
+        if: env.BUNDLE == 'true'
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
       - name: Install the Tauri CLI
         if: env.BUNDLE == 'true'
         env:
