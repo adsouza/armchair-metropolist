@@ -40,6 +40,35 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <!--
+      0.1.0 was never published, so this is the first release users can install
+      and the notes describe what it *is* rather than what changed.
+
+      Adding a <description> makes this entry a container rather than a
+      self-closing tag. `mix version.set` handles both — see the @release_open
+      comment in lib/mix/tasks/version.set.ex, which explains why an earlier
+      version would have inserted the next release *underneath* this one.
+    -->
+    <release version="0.2.0" date="2026-08-05">
+      <description>
+        <p>First installable release.</p>
+        <ul>
+          <li>
+            Available as a Flatpak as well as a Debian package. The Flatpak
+            carries its own runtime, so it installs on distributions whose
+            system libraries are older than the .deb requires.
+          </li>
+          <li>
+            The Flatpak runs with no network access at all. The game talks only
+            to its own engine over the loopback interface inside the sandbox.
+          </li>
+          <li>
+            Appears under Games, with a description, in application menus and
+            software centres.
+          </li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-04" />
   </releases>
 </component>
