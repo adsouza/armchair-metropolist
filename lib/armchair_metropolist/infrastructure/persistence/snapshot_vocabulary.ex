@@ -22,6 +22,29 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   atoms drawn from a module not already listed, or when a new struct is reachable
   from `CityMap`. `test/.../file_snapshot_store_test.exs` covers the current set in
   a genuinely cold VM; keep that city maximal.
+
+  ## Retiring an atom: `@node_type_renames`
+
+  Renaming a node type retires its atom from every module above, so stored rows
+  written under the old name stop decoding — `:safe` refuses to recreate the atom,
+  the visitor's engine crash-loops on the server, and the desktop adapter silently
+  discards the city while its stale envelope tick blocks every later save
+  (docs/deploying.md, "The other trap: renaming a node type"). The 2026-08-05
+  production outage was exactly this.
+
+  `@node_type_renames` is the remedy: its keys are the retired atoms, kept interned
+  by the literal below for as long as this module exists, and `modernize/1` rewrites
+  them to their successors as a city hydrates. Both adapters call it on every decoded
+  payload, so by the time a city leaves the persistence layer it speaks only the
+  current vocabulary.
+
+  Complete a rename by adding one entry here. Nothing else — no purge, no data
+  migration, and no desktop remediation, which is the point: v0.2.0 is a released
+  desktop version, and there is no deploy step that can reach an installed copy's
+  snapshot files. The vocabulary-coverage fixture test
+  (`test/.../snapshot_vocabulary_test.exs`) is what makes forgetting the entry
+  impossible: it decodes a committed payload written under the old vocabulary, so
+  a retirement without a rename entry turns CI red.
   """
 
   @modules [
@@ -29,11 +52,33 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     ArmchairMetropolist.Domain.Entities.Node
   ]
 
+  # Retired node-type atoms and their successors. The literal keys are load-bearing
+  # twice over: they intern the retired atoms (so `:safe` decodes accept them), and
+  # they drive the rewrite in modernize/1.
+  @node_type_renames %{road_hub: :transit_hub}
+
   @doc "The modules whose atoms a persisted city can contain."
   def modules, do: @modules
 
   @doc "Interns every atom a persisted city can legitimately contain."
   def ensure_loaded! do
     Enum.each(@modules, &Code.ensure_loaded!/1)
+  end
+
+  @doc """
+  Rewrite a freshly decoded city into the current vocabulary.
+
+  Applies `@node_type_renames` to every node, so a snapshot written before a
+  rename hydrates as though it had been written after it. A city already in the
+  current vocabulary passes through unchanged. Called by both snapshot adapters
+  immediately after their `:safe` decode — a city that skips this carries retired
+  atoms into the domain, where `Node.production/1` raises on them.
+  """
+  def modernize(%{nodes: nodes} = city_map) when is_map(nodes) do
+    %{city_map | nodes: Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end)}
+  end
+
+  defp rename_type(%{type: type} = node) do
+    %{node | type: Map.get(@node_type_renames, type, type)}
   end
 end

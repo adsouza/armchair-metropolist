@@ -108,7 +108,14 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   # checksum beside it detects corruption, not tampering.
   defp decode(tick, payload, checksum) do
     if :crypto.hash(:md5, payload) |> Base.encode16() == checksum do
-      {:ok, {tick, :erlang.binary_to_term(payload, [:safe])}}
+      # modernize/1 rewrites node types retired by a rename, so a row written
+      # under the old vocabulary hydrates instead of crash-looping the engine.
+      city_map =
+        payload
+        |> :erlang.binary_to_term([:safe])
+        |> SnapshotVocabulary.modernize()
+
+      {:ok, {tick, city_map}}
     else
       {:error, :checksum_mismatch}
     end

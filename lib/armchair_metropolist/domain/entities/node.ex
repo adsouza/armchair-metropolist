@@ -34,6 +34,11 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # decision the legend depends on.
   @resources [:power, :water, :waste, :traffic, :labour, :money]
 
+  # The status vocabulary. Must stay in step with `status_for/1`'s clauses;
+  # the `statuses/0` test derives its expectation from that function so the
+  # two cannot drift apart silently.
+  @statuses [:online, :degraded, :offline]
+
   # Production tables (resource outputs)
   @production_table %{
     power_plant: %{power: 120.0},
@@ -133,6 +138,17 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   """
   @spec resources() :: [resource()]
   def resources, do: @resources
+
+  @doc """
+  List every status a node can hold.
+
+  The single source of truth for the vocabulary `t:status/0` describes, in the
+  same way `resources/0` is for resources. The persistence vocabulary's
+  coverage fixture is compared against it, so a status this list does not name
+  cannot silently join (or leave) what snapshots may contain.
+  """
+  @spec statuses() :: [status()]
+  def statuses, do: @statuses
 
   @doc """
   Calculate the effective production of a node, scaled by its health.

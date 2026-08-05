@@ -11,6 +11,27 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
     assert {:error, :not_found} = SnapshotStore.load("city-b")
   end
 
+  test "load/1 hydrates a row stored before the transit-hub rename" do
+    # A raw insert, not save/3: the point is a payload this code no longer
+    # writes. The fixture is the row behind the 2026-08-05 production 500 —
+    # before the vocabulary shim, decode/3 raised ArgumentError out of load/1
+    # and the visitor's engine crash-looped.
+    payload = File.read!("test/support/fixtures/city_snapshot_pre_transit_hub_rename.bin")
+    checksum = :crypto.hash(:md5, payload) |> Base.encode16()
+
+    %CitySnapshot{}
+    |> CitySnapshot.changeset(%{
+      city_id: @city_id,
+      tick: 283,
+      payload: payload,
+      checksum: checksum
+    })
+    |> Repo.insert!()
+
+    assert {:ok, {283, city}} = SnapshotStore.load(@city_id)
+    assert city.nodes["19:12"].type == :transit_hub
+  end
+
   test "detects a corrupted payload" do
     :ok = SnapshotStore.save(@city_id, 1, sample_city())
 
