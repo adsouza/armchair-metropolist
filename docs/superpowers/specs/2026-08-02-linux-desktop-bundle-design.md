@@ -347,10 +347,21 @@ complete — from ~2 minutes to ~15.
 * **No bundle is built on pull requests.** A change that breaks the wrapper lands on main and is
   discovered by the post-merge run. Consistent with the desktop job already being non-blocking, but
   it does mean the break is found after the fact.
-* **The Rust build is not cached.** `src-tauri/target/release` is 2.3 GB; against a 10 GB
+* **The Rust build is not cached.** ~~`src-tauri/target/release` is 2.3 GB; against a 10 GB
   repository-wide cache budget already holding four mix caches, caching it is not viable, and
   neither is the up/download time. The full compile is paid on every push to main. If this becomes
-  painful, `~/.cargo/registry` alone is small enough to cache and is the first thing to try.
+  painful, `~/.cargo/registry` alone is small enough to cache and is the first thing to try.~~
+
+  **Superseded, 2026-08-04.** Three of those claims were wrong when measured. `src-tauri/target` is
+  **6.7 GB**, not 2.3. `~/.cargo/registry` is *not* the first thing to try — crate download is
+  **1.4 s** of a 276 s step, so caching it saves nothing; the cost is pure `rustc`. And caching is
+  viable after all, just not of the whole directory: `Swatinem/rust-cache` keeps the dependency
+  crates in a **472 MB** cache and takes the step from **276 s to 116 s**, with the whole x86_64 job
+  going ~516 s → 341 s.
+
+  The budget claim was also inverted. It was not the mix caches filling it: 26 accumulated
+  `mlugg/setup-zig` entries held 9298 MB of the 10 GB, against 685 MB for everything else. Pruned;
+  zig caching stays on, because disabling it costs 86 s on the Burrito build.
 * **The Rust toolchain is whatever the runner image ships.** No `dtolnay/rust-toolchain` pin. A
   toolchain that is too old fails as a compile error rather than a silent wrong result, which is an
   acceptable failure mode for this job.
