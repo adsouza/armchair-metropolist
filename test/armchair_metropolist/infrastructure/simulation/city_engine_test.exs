@@ -561,14 +561,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   describe "critical deficit notifications" do
     test "notifies once when the city first enters a critical deficit", %{city_id: city_id} do
-      # Seed a city that cannot meet demand: many consumers, no producers.
-      city =
-        Enum.reduce(0..9, CityMap.new(40, 30), fn x, acc ->
-          CityMap.put_node(acc, Node.new(x, 0, :commercial))
-        end)
-
-      StubSnapshotRepository.set_initial({:ok, {0, city}})
       start_supervised!({CityEngine, city_id: city_id})
+      starve(city_id)
 
       Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, "city_tick", {:tick, 1})
       assert_receive {:notified, _title, _body}, 1_000
@@ -579,8 +573,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "names the resources in deficit, worst first", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
       start_supervised!({CityEngine, city_id: city_id})
+      starve(city_id)
 
       broadcast_tick(1)
 
@@ -612,8 +606,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "re-arms once satisfaction recovers", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, starved_city()}})
       start_supervised!({CityEngine, city_id: city_id})
+      starve(city_id)
 
       broadcast_tick(1)
       assert_receive {:notified, _, _}, 1_000
@@ -627,6 +621,50 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :commercial) end)
       broadcast_tick(3)
+      assert_receive {:notified, _, _}, 1_000
+    end
+
+    # Every test above lives inside one engine process, which is the one axis this
+    # suppression used to be blind to: `critical?` was a field of that process's
+    # state, so each new process was armed again while the deficit it guards was
+    # still sitting in the snapshot. The desktop log showed the result - three
+    # byte-identical "power at 23% of demand, water at 24%..." notifications, one
+    # about 3s after each relaunch of an app whose city had not changed in between.
+    test "does not notify again when a new engine hydrates a city already in deficit",
+         %{city_id: city_id} do
+      StubSnapshotRepository.echo_saves()
+      start_supervised!({CityEngine, city_id: city_id})
+      starve(city_id)
+
+      broadcast_tick(1)
+      assert_receive {:notified, _, _}, 1_000
+
+      # Quitting the app and reopening it: terminate/2 saves the starving city, and a
+      # brand-new process hydrates it. Nothing about the deficit is new to the player.
+      stop_supervised!(CityEngine)
+      start_supervised!({CityEngine, city_id: city_id})
+      broadcast_tick(2)
+
+      # Also proves the restart rehydrated the *saved* map rather than an empty one,
+      # so the refute below is about suppression and not about a second engine that
+      # never saw a deficit at all.
+      assert {:ok, %{city_map: %{tick: 2}, metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert Enum.any?(metrics.resources, fn {_r, stats} -> stats.satisfaction < 1.0 end)
+
+      refute_receive {:notified, _, _}, 300
+    end
+
+    # The other half of hydration: seeding the flag must not make it sticky. Without
+    # this, `critical?: true` at hydrate would satisfy every other test in this
+    # describe block and silence the notification permanently.
+    test "notifies a city that hydrates satisfied and then falls into deficit",
+         %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      start_supervised!({CityEngine, city_id: city_id})
+      starve(city_id)
+
+      broadcast_tick(1)
+
       assert_receive {:notified, _, _}, 1_000
     end
   end
@@ -929,6 +967,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     Enum.reduce(0..9, CityMap.new(40, 30), fn x, acc ->
       CityMap.put_node(acc, Node.new(x, 0, :commercial))
     end)
+  end
+
+  # The same ten consumers as `starved_city/0`, but placed through a *running* engine
+  # rather than seeded into its stored snapshot. The notification tests need this one:
+  # since an engine now derives `critical?` from the city it hydrates, a seeded deficit
+  # is by design one that has already been announced, so seeding cannot produce the
+  # edge those tests are about. Placing them is also the only way a real deficit is
+  # ever unannounced - a player builds consumers, and the next tick is the first to see
+  # it. Deliberately no tick here: `place/4` recomputes metrics but never notifies, so
+  # each caller decides which tick discovers the deficit.
+  defp starve(city_id) do
+    Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :commercial) end)
   end
 
   # Polls `fun` until it returns truthy or 500ms have passed, returning the last

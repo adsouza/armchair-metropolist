@@ -47,6 +47,21 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   flag until every resource is satisfied again, which re-arms it. Notifying on
   every tick of a sustained blackout would make notifications unusable.
 
+  A deficit begins when a *satisfied* city stops being one, and that comparison has
+  to survive the process. `handle_continue(:hydrate, ...)` therefore seeds `critical?`
+  from the hydrated city's own metrics instead of `init/1`'s `false`: a city restored
+  mid-deficit is not a city that just entered one. Without that, every relaunch,
+  crash-restart and post-linger restart re-announced a deficit the player had already
+  been told about — the desktop log showed three byte-identical notifications, one per
+  launch of an app whose city had not changed in between.
+
+  The consequence worth knowing: a deficit that no tick ever evaluated is never
+  announced. `place/4` recomputes metrics but deliberately does not notify, so
+  building consumers and quitting inside the same tick stores an unannounced deficit
+  that hydration then treats as old news. That window is one tick wide, and the
+  alternative — persisting an "already notified" flag beside the city — stores a copy
+  of a fact the city already determines, free to drift from it.
+
   ## `metrics.resources` at hydration
 
   `snapshot/1` reports full resource statistics from the moment the engine hydrates,
@@ -211,11 +226,28 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     # long before it matters, so this window only needs to be wide enough to
     # absorb that ordinary case - not the 30s that exists to absorb a page *reload*
     # after a viewer has actually been present, which this path is not.
+    metrics = summarize(city_map)
+
     {:noreply,
      %{
        state
        | city_map: city_map,
-         metrics: summarize(city_map),
+         metrics: metrics,
+         # A hydrated city brings its deficits with it, so arriving in one is not the
+         # edge this notification reports - whichever process was running when the
+         # deficit began has already reported it. Left at init/1's `false`, every
+         # relaunch, crash-restart and post-linger restart was a fresh edge, and the
+         # desktop log showed exactly that: three byte-identical notifications, one
+         # per launch of an app whose city had not changed in between.
+         #
+         # Derived here rather than persisted alongside the city on purpose. The
+         # deficit is already stored - it is a property of the stored nodes - so a
+         # stored flag would be a second copy of a fact that can be recomputed, free
+         # to drift from it. And this recomputation is exact, not an approximation:
+         # AdvanceCityTick builds its metrics from the *post*-tick map, so these are
+         # the very figures the last tick before the save evaluated, which makes this
+         # the flag that process was holding when it went away.
+         critical?: critical_resources(metrics) != [],
          linger: arm_linger(:engine_unattached_linger_ms, @default_unattached_linger_ms)
      }}
   end
