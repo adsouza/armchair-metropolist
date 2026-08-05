@@ -179,7 +179,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   # Same reasoning as safe_binary_to_term/1 above.
   defp decode(%{checksum: checksum, payload: payload}) do
     if checksum(payload) == checksum do
-      {:ok, :erlang.binary_to_term(payload, [:safe])}
+      # modernize/1 rewrites node types retired by a rename. On this adapter
+      # that is the difference between hydrating the city and silently starting
+      # over — the rescue below would fold the retired atom into :malformed,
+      # and the stale envelope tick would then block every save.
+      {:ok, payload |> :erlang.binary_to_term([:safe]) |> SnapshotVocabulary.modernize()}
     else
       {:error, :checksum_mismatch}
     end

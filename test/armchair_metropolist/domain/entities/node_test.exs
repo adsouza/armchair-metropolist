@@ -29,6 +29,21 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
   end
 
+  describe "statuses/0" do
+    test "lists exactly the statuses status_for/1 can produce" do
+      # Derived, not written out: snapshot_vocabulary_test.exs compares the
+      # committed coverage fixture against this function, and spelling the
+      # atoms here as literals would keep a retired status interned — see the
+      # standing rule at the top of that file.
+      produced =
+        0..100
+        |> Enum.map(&Node.status_for(&1 / 1))
+        |> Enum.uniq()
+
+      assert Enum.sort(Node.statuses()) == Enum.sort(produced)
+    end
+  end
+
   describe "resources/0" do
     test "lists the six resources in display order" do
       assert Node.resources() == [:power, :water, :waste, :traffic, :labour, :money]

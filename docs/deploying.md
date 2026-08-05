@@ -48,9 +48,18 @@ gigalixir run -a armchair-metropolist bin/armchair_metropolist eval 'ArmchairMet
 ```
 
 It self-heals: once the migration lands, the next engine to start hydrates cleanly,
-with no restart or further action needed. Run it straight after
-`git push gigalixir main` rather than waiting for the rollout to settle — with the
-boot crash gone, there is no longer a wall of red to tell you that you forgot.
+with no restart or further action needed. Run it straight after the merge that
+carries the migration lands on main — deploys are CI-driven (see "Continuous
+deployment"), so there is no `git push gigalixir` moment to attach this to any more;
+the human act a migration rides along with is *merging the PR that contains it*, and
+with the boot crash gone there is no wall of red to tell you that you forgot.
+
+This is the one post-deploy step that is still manual. The vocabulary trap below
+used to be the other, until the 2026-08-05 outage — a green CI deploy shipped a
+rename and nobody was at a terminal to run its follow-up — moved its remedy into
+code. Automating this one the same way means making `gigalixir run`'s success or
+failure observable from the deploy job, which has not been established; do not wire
+it in without proving that first.
 
 ### Why this is not fixed in the engine
 
@@ -61,79 +70,65 @@ turning a brief outage into permanent data loss. "No snapshot exists yet" alread
 starts a fresh city and is not an error; "the snapshot cannot be read" must stay
 fatal. The ordering belongs in the deploy, not in a `rescue`.
 
-## The other trap: renaming a node type is a data migration
+## The other trap: renaming a node type
 
-**Read this before deploying a change that renames or removes a value in
-`Domain.Entities.Node`'s `node_type` or `status` vocabulary.** A stored city is made of
-atoms, and both snapshot adapters decode with `:safe`, which refuses to *create* them —
-see `Infrastructure.Persistence.SnapshotVocabulary`. The old value only decodes because
-loading `Node` interns it. Complete the rename and nothing interns it any more, so every
-row written before the deploy raises `ArgumentError` on decode.
+**A rename is completed by adding one entry to `@node_type_renames` in
+`Infrastructure.Persistence.SnapshotVocabulary`.** That is the whole procedure: no
+purge, no migration file, and nothing to run on anyone's desktop install.
 
-That is the *unreadable* case, not the *absent* case, so by the section above it is
-deliberately fatal: the visitor's engine dies in `handle_continue(:hydrate, …)`, the
-`DynamicSupervisor` restarts it, and it dies again. Nothing else notices — the container
-boots and health checks pass, exactly as with a missing migration.
+Why there is a procedure at all: a stored city is made of atoms, and both snapshot
+adapters decode with `:safe`, which refuses to *create* them. Retire an atom — rename
+or remove a value in `Domain.Entities.Node`'s `node_type` or `status` vocabulary — and
+every row or snapshot file written before the change stops decoding. On the server
+that is the *unreadable* case, deliberately fatal per the section above: the returning
+visitor's engine crash-loops in `handle_continue(:hydrate, …)` behind passing health
+checks, and they get a 500 while a fresh session gets a 200. On the desktop it is
+quieter and worse: `FileSnapshotStore` rescues the decode to `:malformed`, the engine
+silently starts over, and the stale file's envelope tick — which still decodes, its
+atoms being the envelope's own — blocks every subsequent save through
+`save_current/2`'s older-tick refusal. At 1 tick/second, a snapshot at tick 5550 means
+~92 minutes of unbroken play before anything persists again. (That refusal is not the
+bug: it exists to stop a *transient* load miss from destroying a good city. The stale
+file is the bug.)
 
-Nothing in CI or in the test suite can catch this. The compiler sees a consistent
-codebase and every fixture is written by the new code; the only disagreeing copies of the
-old vocabulary are rows on the server.
+The rename map fixes both at the layer that owns them. Its literal keys keep the
+retired atoms interned, so `:safe` accepts them; `SnapshotVocabulary.modernize/1`,
+called by both adapters on every decoded payload, rewrites them to their successors.
+A snapshot written before the rename hydrates as though it had been written after it.
+There is nothing to reach into installed desktop copies for, which matters now that
+released versions exist.
 
-Stored cities are per-visitor sandboxes that `SnapshotReaper` already deletes on a
-retention window, so the answer is to drop them rather than carry migration code for a
-term that self-deletes. Straight after the push:
+**Forgetting the entry is what the test suite now catches.** An earlier version of
+this section prescribed `DELETE FROM city_snapshots` "straight after the push", and
+claimed no test could catch the omission because "the only disagreeing copies of the
+old vocabulary are rows on the server". Both failed together on 2026-08-05: deploys
+had become CI-driven, no human was present at push time, the purge was never run, and
+a stored city 500'd every visit by its owner. The answer to the second claim is
+committed binary fixtures — payloads written under an old vocabulary that the compiler
+cannot see into, decoded by `snapshot_vocabulary_test.exs` on every run:
 
-```bash
-gigalixir pg:psql -a armchair-metropolist -c 'DELETE FROM city_snapshots'
-```
+* `test/support/fixtures/city_snapshot_pre_transit_hub_rename.bin` is the actual
+  payload behind the 2026-08-05 outage, and keeps the `road_hub → transit_hub` rename
+  honest permanently.
+* `test/support/fixtures/city_snapshot_vocabulary_coverage.bin` pins every node type
+  and status the code currently ships. Retiring one without a rename entry turns the
+  suite red — in CI, before the change can reach a stored row it cannot read.
+  Regenerate it only when the vocabulary *gains* an atom, using
+  `generate_coverage_fixture.exs` beside it; the test's equality check against
+  `Node.types/0` and `Node.statuses/0` goes red to remind you. Never spell a retired
+  atom as a literal in a test: it would re-intern it and disarm the decode the
+  fixtures exist to exercise (the test file's header comment explains).
 
-Every visitor then starts a fresh city, which is the not-an-error path. Do this as its
-own step rather than as an Ecto migration: migrations are run by hand here anyway (above),
-so a migration would add a file to maintain without removing a manual step.
+If a rename map entry ever needs to be dropped (say, to finally let `road_hub` go),
+that *is* a data migration again: purge or rewrite the stored rows first, and delete
+the pre-rename fixture with it.
 
-If a stored city ever becomes worth preserving, the alternative is to keep the retired
-atom interned — a `@legacy_atoms` list in `SnapshotVocabulary` — and rewrite it to the new
-one as `CityMap` hydrates. That is real code and wants a test that decodes a payload built
-from the old vocabulary; do not add it speculatively.
-
-### The desktop target needs purging too, and it fails silently
-
-`FileSnapshotStore` returns rather than raises (see its "Failures are returned, never
-raised"), so the desktop app does **not** crash-loop. It does something quieter and worse.
-Measured, not inferred:
-
-1. `load_current/0` rescues both files to `:malformed` and reports `{:error, :not_found}`.
-   The engine starts a fresh city at tick 0. Nothing is logged.
-2. `save/3` sees that `:not_found`, so its own staleness guard does not fire, and it calls
-   `save_current/2`.
-3. `save_current/2`'s `stale?/1` reads the tick from the **envelope**, which decodes fine:
-   the envelope's atoms are `:version`, `:tick`, `:checksum`, `:payload`, and the city stays
-   an opaque binary inside it. So it reports the *old* high tick.
-4. `old_tick > new_tick`, so it returns `:ok` **without writing**. The engine is told the
-   checkpoint succeeded.
-
-The result is an app that looks fine and persists nothing. Every launch starts over, and no
-save lands until one unbroken session's tick exceeds the stored tick — at 1 tick/second, a
-snapshot at tick 5550 means ~92 minutes of play before the first successful write.
-
-Note the irony before changing `save_current/2` to "fix" it: the older-tick refusal exists
-precisely to stop a *transient* load miss from demoting a good city into the backup and then
-overwriting that too. A retired atom makes the miss permanent, and the safeguard becomes the
-thing blocking recovery. The bug is the stale file, not the guard.
-
-So a node-type rename also has to purge each installed copy — there is no deploy step that
-can reach them:
-
-```bash
-rm ~/Library/Application\ Support/armchair_metropolist/snapshot.{bin,bak}   # macOS
-rm ~/.local/share/armchair_metropolist/snapshot.{bin,bak}                   # Linux
-```
-
-The directory is `ExTauri.Paths.data_dir()`, named from `:app_name` in `config/config.exs`
-("Armchair Metropolist" → `armchair_metropolist`). It is *not* the
-`io.github.adsouza.armchair-metropolist` directory beside it, which holds Tauri's window
-state. For a released version this is a reason to prefer the `@legacy_atoms` shim above:
-you cannot ask every install to run `rm`.
+For debugging a desktop install, the snapshot files live in `ExTauri.Paths.data_dir()`
+— named from `:app_name` in `config/config.exs` ("Armchair Metropolist" →
+`armchair_metropolist`): `~/Library/Application Support/armchair_metropolist/` on
+macOS, `~/.local/share/armchair_metropolist/` on Linux. It is *not* the
+`io.github.adsouza.armchair-metropolist` directory beside it, which holds Tauri's
+window state.
 
 ## Deploying the server
 

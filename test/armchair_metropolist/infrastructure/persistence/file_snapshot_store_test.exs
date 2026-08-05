@@ -48,6 +48,28 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     end
   end
 
+  test "load_current/0 hydrates a snapshot written before the transit-hub rename", %{dir: dir} do
+    # Before the vocabulary shim this was the desktop's silent-loss path: the
+    # retired atom made safe_binary_to_term/1 rescue to :malformed, load
+    # reported :not_found, and the engine started a fresh city while the stale
+    # file's higher envelope tick blocked every save (docs/deploying.md). The
+    # envelope is built here with current atoms on purpose — only the *city*
+    # payload inside it predates the rename, exactly as on a real install.
+    payload = File.read!("test/support/fixtures/city_snapshot_pre_transit_hub_rename.bin")
+
+    envelope = %{
+      version: 1,
+      tick: 283,
+      checksum: :crypto.hash(:md5, payload) |> Base.encode16(),
+      payload: payload
+    }
+
+    File.write!(Path.join(dir, "snapshot.bin"), :erlang.term_to_binary(envelope))
+
+    assert {:ok, {283, city}} = FileSnapshotStore.load_current()
+    assert city.nodes["19:12"].type == :transit_hub
+  end
+
   test "load_current/0 prefers the backup when it holds the higher tick", %{dir: dir} do
     # Reachable whenever a save lands out of order, and the reason load_current/0
     # cannot simply trust the primary.
