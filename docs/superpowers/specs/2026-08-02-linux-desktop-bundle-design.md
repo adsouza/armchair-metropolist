@@ -422,7 +422,9 @@ are corrected in place further down:
   working: Phoenix boots and binds a port inside the sandbox.
 * Its "1.5–2 GB per run and uncacheable" cost estimate implied this was expensive. Measured, the
   runtime and SDK install in **50 seconds** and the whole Flatpak addition costs ~117s, which is why
-  it now runs on every merge rather than only at release.
+  it now runs on every merge rather than only at release. Since 2026-08-05 the runtime download runs
+  in the background *during* the Rust build, so its marginal cost is **zero** — see §3 of the Flatpak
+  design for the per-ref measurement and why `--no-related` was rejected in favour of reordering.
 
 What *did* hold up is the channel objection, and it still stands: the bundle is side-loaded, not on
 Flathub, so it does not auto-update. Its real value turned out to be the glibc floor — the `.deb`

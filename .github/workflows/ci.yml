@@ -224,6 +224,147 @@ jobs:
       # are gitignored, so a release built without this ships no CSS and no JS.
       - run: mix assets.setup
 
+      # ---------------------------------------------------------------------------
+      # The Flatpak toolchain, installed HERE — before the sidecar build, and a long
+      # way above the Flatpak steps that use it. The runtime download below runs in
+      # the background, and this is simply the earliest point it can start: it needs
+      # flatpak on the runner and nothing else. Everything from here to `Build the
+      # Linux bundle` is cover for it.
+      - name: Cache the Flatpak toolchain .debs
+        if: env.BUNDLE == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/apt-archives-flatpak
+          # v2: elfutils joined the package list. The key must move with the list,
+          # because actions/cache only *saves* on a miss — a v1 hit would restore the
+          # old set and quietly re-download elfutils on every run forever.
+          key: apt-flatpak-${{ matrix.runner }}-v2
+
+      # `elfutils` is listed explicitly, and that is not optional.
+      #
+      # flatpak-builder strips debug symbols from every binary by default, shelling out
+      # to `eu-strip` — which lives in elfutils, a package flatpak-builder only
+      # *recommends*. Adding --no-install-recommends here therefore broke the build
+      # with `Failed to execute child process "eu-strip" (No such file or directory)`,
+      # after the module had already been assembled. (`eu-elfcompress`, warned about a
+      # line earlier in that log, is the same package.)
+      #
+      # Naming it beats dropping the flag: the install stays minimal, and the thing the
+      # build actually needs is written down instead of arriving as a side effect of
+      # someone else's recommends list. That is the same lesson §7 of the bundle design
+      # records — enumerate build inputs by process, not by dependency graph.
+      - name: Install the Flatpak toolchain
+        if: env.BUNDLE == 'true'
+        timeout-minutes: 12
+        run: |
+          set -eu
+          mkdir -p ~/apt-archives-flatpak/partial
+          # See the GTK step above: apt needs `_apt` to own this directory or it
+          # abandons its download sandbox and fetches as root.
+          sudo chown -R _apt:root ~/apt-archives-flatpak
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::archives="$HOME/apt-archives-flatpak" \
+            flatpak flatpak-builder elfutils
+          command -v eu-strip >/dev/null \
+            || { echo "::error::eu-strip missing; flatpak-builder will fail after assembling the module"; exit 1; }
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives-flatpak
+          du -sh ~/apt-archives-flatpak
+
+      # --user throughout: no privilege needed beyond the apt install above, and the
+      # runtime lands somewhere the build can read.
+      #
+      # //50, not the //46 an earlier design proposed: GNOME 46 is built on
+      # freedesktop-sdk 23.08, whose glibc (~2.37) is *older* than the
+      # `libc6 (>= 2.39)` this .deb declares, so the app would die at the dynamic
+      # loader while flatpak-builder exited 0 having merely copied files.
+      #
+      # IN THE BACKGROUND, and that is the whole point of this step's position.
+      #
+      # This download depends on nothing the job produces and blocks nothing until the
+      # Flatpak is built, so it costs whatever is left after the work that follows it.
+      #
+      # The only clean measurement of it is 53s, taken on run 30963444441 while it ran
+      # serially with nothing else on the box: Sdk 22.2s, Platform 13.4s, and 17.0s of
+      # *related* refs flatpak pulled without being asked (both .Locale extensions,
+      # Mesa twice, codecs). What it costs while a rustc build saturates the runner is
+      # not known — flathub's own throughput varies, and ostree decompresses and
+      # checksums on the CPU the build is using. The `download:` line the join step
+      # prints is there to find out.
+      #
+      # This step therefore sits before the *sidecar* build rather than immediately
+      # before the Rust build: ~180s of cover instead of ~120s, for nothing. Buying
+      # margin against an unmeasured tail is worth it when the margin is free — see
+      # the apt step above, which looked like 25s until the day it took 25 minutes.
+      #
+      # If the download ever loses the race anyway, the step below blocks for the
+      # difference and reports it. That is strictly better than running the two in
+      # series, which is the property that actually matters — the overlap cannot be
+      # worse, only less good.
+      #
+      # `--no-related` would drop the extensions (17s of 53s, ~41s of 128s) and is
+      # deliberately NOT used. It buys margin, not wall-clock, and it pays for that by
+      # removing Mesa from a runtime this job goes on to execute — which would make a
+      # verification failure ambiguous between "the package is broken" and "we deleted
+      # a dependency". Buy the margin by starting earlier instead; that costs nothing.
+      #
+      # setsid and the redirections are load-bearing. A background process that still
+      # holds the step's stdout keeps the step from completing; detaching the session
+      # and sending every stream to a file is what lets this step return immediately.
+      # The exit status goes to a file because `wait` only works within one shell, and
+      # each workflow step is a new one.
+      - name: Start the GNOME runtime and SDK download
+        if: env.BUNDLE == 'true'
+        run: |
+          set -eu
+          flatpak remote-add --user --if-not-exists \
+            flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          rm -f ~/flatpak-runtime.log ~/flatpak-runtime.rc ~/flatpak-runtime.pid \
+                ~/flatpak-runtime.start ~/flatpak-runtime.end
+          # The background shell records its OWN pid, not `$!`. setsid forks when it is
+          # already a process group leader, so `$!` here can name a parent that exits
+          # immediately — and the waiter would read that as "the downloader died".
+          #
+          # It also stamps .end itself, before .rc. The waiter cannot time this download
+          # by noting when it noticed the result — that measures when the waiter
+          # arrived. The first version did exactly that and reported the *cover*
+          # duration as the download duration: 128s and 189s on two runs whose cover was
+          # 129s and 189s, which dressed a download finishing early as one finishing by
+          # a one-second margin. Only the downloader knows when it stopped.
+          #
+          # .rc stays the last write, because the waiter treats "process dead, no .rc"
+          # as failure.
+          #
+          # Keep apostrophes out of the quoted body below — it is a single-quoted
+          # sh -c string, and one in a comment ends it. shellcheck catches that
+          # (SC1011); actionlint runs shellcheck over these blocks.
+          #
+          # SC2016 is the point, not an oversight: $$ and $RC must expand in the inner
+          # shell, so the body stays single-quoted.
+          # shellcheck disable=SC2016
+          setsid sh -c '
+            echo $$ > ~/flatpak-runtime.pid
+            date +%s > ~/flatpak-runtime.start
+            flatpak install --user -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
+              > ~/flatpak-runtime.log 2>&1
+            RC=$?
+            date +%s > ~/flatpak-runtime.end
+            echo $RC > ~/flatpak-runtime.rc
+          ' < /dev/null > /dev/null 2>&1 &
+
+          # Confirm it started rather than announcing that it did. The pid file is the
+          # background shell's first act, so if it has not appeared in 10s the shell
+          # never ran — and this is the place to say so. Without this check that case
+          # surfaces as the waiter spinning out its full timeout with an empty log,
+          # which is the least informative failure this design can produce.
+          i=0
+          while [ ! -f ~/flatpak-runtime.pid ]; do
+            i=$((i + 1))
+            [ "$i" -lt 20 ] || { echo "::error::the runtime downloader never started"; exit 1; }
+            sleep 0.5
+          done
+          echo "started as pid $(cat ~/flatpak-runtime.pid); the wait step reports its result"
+
       - name: Build the Burrito release
         run: mix release desktop --overwrite
 
@@ -332,21 +473,6 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
           du -sh ~/apt-archives
 
-      # NOT `mix ex_tauri.install`. That is the supported way to get this binary and the
-      # wrong one here: it is Igniter-driven and regenerates src-tauri/src/main.rs from a
-      # template, discarding the hand-injected ARMCHAIR_DESKTOP=1 that every desktop
-      # config override keys off (docs/superpowers/2026-07-30-follow-ups.md, "Desktop
-      # release env staleness"). This does the one thing that installer does which CI
-      # needs: put a binary where ExTauri's `tauri_cli_path!()` looks for it.
-      #
-      # A prebuilt binary rather than `cargo install tauri-cli`, which compiles for
-      # minutes. Pinned rather than following config/config.exs's floating `^2.5.1`: a
-      # runner should be reproducible where a laptop may float. Bump this when that pin
-      # moves. Note the asset only exists for x86_64 and riscv64gc — there is no
-      # aarch64-unknown-linux-gnu build, which is half the reason for the arch gate above.
-      #
-      # Deliberately not guarded with `test -x`: _build is cached, and a guard would let
-      # a CLI left by an older pin survive this bump silently.
       # Caches the reusable parts of src-tauri/target — the 338 dependency crates
       # rather than our own — which is what makes it feasible where caching the whole
       # directory is not: target/ measures 6.7 GB, and §10 of the bundle design quoting
@@ -362,6 +488,21 @@ jobs:
           workspaces: src-tauri -> target
           key: ${{ matrix.target }}
 
+      # NOT `mix ex_tauri.install`. That is the supported way to get this binary and the
+      # wrong one here: it is Igniter-driven and regenerates src-tauri/src/main.rs from a
+      # template, discarding the hand-injected ARMCHAIR_DESKTOP=1 that every desktop
+      # config override keys off (docs/superpowers/2026-07-30-follow-ups.md, "Desktop
+      # release env staleness"). This does the one thing that installer does which CI
+      # needs: put a binary where ExTauri's `tauri_cli_path!()` looks for it.
+      #
+      # A prebuilt binary rather than `cargo install tauri-cli`, which compiles for
+      # minutes. Pinned rather than following config/config.exs's floating `^2.5.1`: a
+      # runner should be reproducible where a laptop may float. Bump this when that pin
+      # moves. Note the asset only exists for x86_64 and riscv64gc — there is no
+      # aarch64-unknown-linux-gnu build, which is half the reason for the arch gate above.
+      #
+      # Deliberately not guarded with `test -x`: _build is cached, and a guard would let
+      # a CLI left by an older pin survive this bump silently.
       - name: Install the Tauri CLI
         if: env.BUNDLE == 'true'
         env:
@@ -400,61 +541,59 @@ jobs:
       # Measured on run 30904363993: apt 77s, runtime+SDK 50s (32 MB/s peak). An
       # earlier design excluded main pushes on an estimate of "1.5-2 GB, 6-12
       # minutes", which was wrong by about an order of magnitude and is why this now
-      # runs wherever the .deb does.
-      - name: Cache the Flatpak toolchain .debs
-        if: env.BUNDLE == 'true'
-        uses: actions/cache@v6
-        with:
-          path: ~/apt-archives-flatpak
-          # v2: elfutils joined the package list. The key must move with the list,
-          # because actions/cache only *saves* on a miss — a v1 hit would restore the
-          # old set and quietly re-download elfutils on every run forever.
-          key: apt-flatpak-${{ matrix.runner }}-v2
-
-      # `elfutils` is listed explicitly, and that is not optional.
+      # runs wherever the .deb does. Both are now off the critical path — the apt
+      # install is cached, and the runtime download runs during the Rust build.
       #
-      # flatpak-builder strips debug symbols from every binary by default, shelling out
-      # to `eu-strip` — which lives in elfutils, a package flatpak-builder only
-      # *recommends*. Adding --no-install-recommends here therefore broke the build
-      # with `Failed to execute child process "eu-strip" (No such file or directory)`,
-      # after the module had already been assembled. (`eu-elfcompress`, warned about a
-      # line earlier in that log, is the same package.)
+      # This step is the join. It reports how long the download took and how much of
+      # that the build did NOT hide, so the overlap keeps measuring itself: if
+      # "blocked here" ever stops reading 0s, the download has become the long pole
+      # again and this comment is how the next person finds out why.
       #
-      # Naming it beats dropping the flag: the install stays minimal, and the thing the
-      # build actually needs is written down instead of arriving as a side effect of
-      # someone else's recommends list. That is the same lesson §7 of the bundle design
-      # records — enumerate build inputs by process, not by dependency graph.
-      - name: Install the Flatpak toolchain
+      # A polling loop rather than `wait`, because the downloader is not a child of
+      # this shell — it is not even in this shell's session. The completion signal is
+      # the .rc file, written only after `flatpak install` returns.
+      #
+      # The loop also watches the downloader's pid, and that is not belt-and-braces.
+      # Without it the one interesting failure — the process is gone and no .rc is
+      # ever coming — is indistinguishable from a slow download, so it costs the full
+      # timeout-minutes to report, with nothing in the log to say which happened. Two
+      # steps in this feature have already hung CI for exactly that reason. Checking
+      # .rc *before* liveness avoids the race where the downloader writes .rc and
+      # exits between the two tests.
+      - name: Wait for the GNOME runtime and SDK
         if: env.BUNDLE == 'true'
-        timeout-minutes: 12
+        timeout-minutes: 10
         run: |
           set -eu
-          mkdir -p ~/apt-archives-flatpak/partial
-          # See the GTK step above: apt needs `_apt` to own this directory or it
-          # abandons its download sandbox and fetches as root.
-          sudo chown -R _apt:root ~/apt-archives-flatpak
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            -o Dir::Cache::archives="$HOME/apt-archives-flatpak" \
-            flatpak flatpak-builder elfutils
-          command -v eu-strip >/dev/null \
-            || { echo "::error::eu-strip missing; flatpak-builder will fail after assembling the module"; exit 1; }
-          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives-flatpak
-          du -sh ~/apt-archives-flatpak
-
-      # --user throughout: no privilege needed beyond the apt install above, and the
-      # runtime lands somewhere the build can read.
-      #
-      # //50, not the //46 an earlier design proposed: GNOME 46 is built on
-      # freedesktop-sdk 23.08, whose glibc (~2.37) is *older* than the
-      # `libc6 (>= 2.39)` this .deb declares, so the app would die at the dynamic
-      # loader while flatpak-builder exited 0 having merely copied files.
-      - name: Install the GNOME runtime and SDK
-        if: env.BUNDLE == 'true'
-        run: |
-          flatpak remote-add --user --if-not-exists \
-            flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          time flatpak install --user -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
+          JOINED=$(date +%s)
+          while [ ! -f ~/flatpak-runtime.rc ]; do
+            # The final re-test of .rc is what makes this race-free: the downloader
+            # writes .rc and only then exits, so a dead pid with no .rc cannot be a
+            # downloader that finished microseconds ago.
+            if [ -f ~/flatpak-runtime.pid ] \
+               && ! kill -0 "$(cat ~/flatpak-runtime.pid)" 2>/dev/null \
+               && [ ! -f ~/flatpak-runtime.rc ]; then
+              echo "::error::the runtime downloader is gone and never reported a result"
+              cat ~/flatpak-runtime.log 2>/dev/null || echo "(it wrote no log)"
+              exit 1
+            fi
+            sleep 2
+          done
+          DONE=$(date +%s)
+          START=$(cat ~/flatpak-runtime.start)
+          END=$(cat ~/flatpak-runtime.end)
+          cat ~/flatpak-runtime.log
+          # Three numbers, because two of them can hide a problem on their own.
+          # "download" is measured by the downloader, so it is the real cost. "spare"
+          # is how long it had been finished before anyone asked — the margin, and the
+          # only figure that says whether the overlap is comfortable or lucky. "blocked"
+          # is what the overlap actually cost this job, and is 0 whenever spare is
+          # positive. A green run with spare near 0 is one slow flathub day from
+          # blocking, and nothing but this line would say so.
+          printf '\ndownload: %ss, spare: %ss, blocked here: %ss\n' \
+            "$((END - START))" "$((JOINED - END))" "$((DONE - JOINED))"
+          RC=$(cat ~/flatpak-runtime.rc)
+          [ "$RC" = 0 ] || { echo "::error::the runtime download failed (rc=$RC) — its log is above"; exit 1; }
           flatpak list --user --runtime
 
       # The manifest's source is `app.deb`, a fixed name, because the real filename
