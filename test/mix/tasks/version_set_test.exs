@@ -115,6 +115,45 @@ defmodule Mix.Tasks.Version.SetTest do
       assert first == "0.2.0"
     end
 
+    # The head entry gains a <description> the moment anyone writes release notes,
+    # which makes it a container rather than self-closing. A pattern anchored on
+    # `/>` skips it, matches the release *below*, and inserts the new version under
+    # the old one — leaving mix.exs reading a superseded version from the top of the
+    # list. Assert the ordering, since presence alone would pass either way.
+    test "still prepends when the head entry has a description" do
+      container =
+        ~s|  <releases>\n| <>
+          ~s|    <release version="0.2.0" date="2026-08-05">\n| <>
+          ~s|      <description><p>First packaged release.</p></description>\n| <>
+          ~s|    </release>\n| <>
+          ~s|    <release version="0.1.0" date="2026-08-04" />\n| <>
+          ~s|  </releases>|
+
+      after_ = Set.bump_metainfo(container, "0.3.0", "2026-09-01")
+
+      assert [_, first] = Regex.run(~r/<release\s+version="([^"]+)"/, after_)
+      assert first == "0.3.0"
+      assert after_ =~ ~s|<description><p>First packaged release.</p></description>|
+      assert after_ =~ ~s|<release version="0.2.0" date="2026-08-05">|
+    end
+
+    # Idempotent re-run against a container head must not strip its description or
+    # turn the tag into a self-closing one, which would orphan </release>.
+    test "updates a container head in place, keeping its form and children" do
+      container =
+        ~s|    <release version="0.2.0" date="2026-08-05">\n| <>
+          ~s|      <description><p>Notes.</p></description>\n| <>
+          ~s|    </release>|
+
+      after_ = Set.bump_metainfo(container, "0.2.0", "2026-08-07")
+
+      assert after_ =~ ~s|<release version="0.2.0" date="2026-08-07">|
+      refute after_ =~ ~s|date="2026-08-05"|
+      refute after_ =~ ~s|/>|
+      assert after_ =~ ~s|</release>|
+      assert after_ =~ ~s|<description><p>Notes.</p></description>|
+    end
+
     test "leaves the rest of the document alone" do
       body =
         ~s|<component type="desktop-application">\n| <>

@@ -34,6 +34,17 @@ defmodule Mix.Tasks.Version.Set do
 
   @metainfo_path "packaging/flatpak/io.github.adsouza.armchair-metropolist.metainfo.xml"
 
+  # Matches a release's OPENING tag only, so it works whether that entry is
+  # self-closing (`<release … />`) or a container (`<release …><description>…`).
+  #
+  # That distinction is load-bearing. Requiring `/>` looks harmless until someone
+  # writes release notes into the newest entry: the pattern then skips it, matches
+  # the *previous* release, and inserts the new version underneath the older one.
+  # `metainfo_version/0` reads the first entry, so the file would then report the
+  # superseded version — caught by `check_versions/1`, but as a confusing failure
+  # whose cause is in a different file.
+  @release_open ~r|^([ \t]*)<release\s+version="([^"]+)"([^>]*?)(/?)>|m
+
   @impl Mix.Task
   def run([version]) do
     unless Regex.match?(@version_pattern, version) do
@@ -95,14 +106,28 @@ defmodule Mix.Tasks.Version.Set do
   @spec bump_metainfo(binary(), binary(), binary()) :: binary()
   def bump_metainfo(body, version, date) do
     Regex.replace(
-      ~r|^([ \t]*)<release\s+version="([^"]+)"[^>]*/>|m,
+      @release_open,
       body,
-      fn whole, indent, existing ->
-        entry = ~s|#{indent}<release version="#{version}" date="#{date}" />|
-        if existing == version, do: entry, else: entry <> "\n" <> whole
+      fn _whole, indent, existing, attrs, slash ->
+        rewrite_release(indent, existing, attrs, slash, version, date)
       end,
       global: false
     )
+  end
+
+  defp rewrite_release(indent, existing, attrs, slash, version, date) do
+    entry = ~s|#{indent}<release version="#{version}" date="#{date}"|
+
+    if existing == version do
+      # Same version at the head: update its date in place rather than stacking a
+      # duplicate, keeping any other attributes and the tag's own form. `slash`
+      # tells us which form without re-parsing.
+      rest = attrs |> String.replace(~r/\s*date="[^"]*"/, "") |> String.trim_trailing()
+      entry <> rest <> if(slash == "/", do: " />", else: ">")
+    else
+      # A new version always goes in as its own self-closing entry, above the head.
+      entry <> " />\n" <> indent <> "<release version=\"#{existing}\"#{attrs}#{slash}>"
+    end
   end
 
   # Raising when nothing changed is the point: a silent no-op here would leave
