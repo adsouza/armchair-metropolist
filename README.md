@@ -144,8 +144,10 @@ the Gigalixir deploy is for.
 
 ## Cutting a release
 
-The version lives in four files and they must agree, so move them together
-rather than by hand:
+The version lives in five files and they must agree, so move them together
+rather than by hand. One of them, the Flatpak's AppStream metainfo, holds a
+release *list* — the changelog a software centre shows — so the task prepends
+to it rather than overwriting, and dates the entry today:
 
 ```bash
 mix version.set 0.2.0

@@ -2,14 +2,16 @@ defmodule Mix.Tasks.Version.Set do
   @shortdoc "Moves every version declaration to X.Y.Z"
 
   @moduledoc """
-  Sets the project version across all four places that declare it.
+  Sets the project version across every place that declares it.
 
       mix version.set 0.2.0
 
-  Four files must agree or `mix check` refuses to build, and one of them is a
-  lock file that must be *regenerated* rather than edited. The incantation for
-  that is not the obvious one: `cargo metadata --offline` exits 101, and the
-  form that works is `cargo update --offline -p armchair_metropolist`.
+  Those files must agree or `mix check` refuses to build. Two of them resist a
+  plain search-and-replace: `Cargo.lock` must be *regenerated* rather than
+  edited — and the incantation is not the obvious one, since `cargo metadata
+  --offline` exits 101 while `cargo update --offline -p armchair_metropolist`
+  works — and the Flatpak metainfo holds a release *list* that must be extended
+  rather than overwritten.
 
   `check_versions/1` in `mix.exs` already *catches* drift between these files.
   This task *prevents* it, and then re-runs that same comparison rather than
@@ -30,6 +32,8 @@ defmodule Mix.Tasks.Version.Set do
 
   @version_pattern ~r/\A\d+\.\d+\.\d+\z/
 
+  @metainfo_path "packaging/flatpak/io.github.adsouza.armchair-metropolist.metainfo.xml"
+
   @impl Mix.Task
   def run([version]) do
     unless Regex.match?(@version_pattern, version) do
@@ -41,9 +45,12 @@ defmodule Mix.Tasks.Version.Set do
       """)
     end
 
+    today = Date.utc_today() |> Date.to_iso8601()
+
     update!("mix.exs", &bump_mix_exs(&1, version))
     update!("src-tauri/tauri.conf.json", &bump_tauri_conf(&1, version))
     update!("src-tauri/Cargo.toml", &bump_cargo_toml(&1, version))
+    update!(@metainfo_path, &bump_metainfo(&1, version, today))
     regenerate_lock!()
     verify!()
   end
@@ -70,6 +77,32 @@ defmodule Mix.Tasks.Version.Set do
   @spec bump_cargo_toml(binary(), binary()) :: binary()
   def bump_cargo_toml(body, version) do
     String.replace(body, ~r/^(version\s*=\s*)"[^"]+"/m, ~s|\\1"#{version}"|, global: false)
+  end
+
+  @doc ~S"""
+  Adds a `<release>` to the AppStream metainfo, newest first.
+
+  Unlike the other four sites this one is a *list*, not a field. `<releases>` is
+  the changelog a software centre shows, so a bump prepends rather than
+  overwrites — rewriting the entry in place would silently delete the history of
+  every previous release.
+
+  Re-running for the version already at the head updates its date instead of
+  prepending a duplicate, so the task stays idempotent.
+
+  `date` is passed in rather than read from the clock so this is testable.
+  """
+  @spec bump_metainfo(binary(), binary(), binary()) :: binary()
+  def bump_metainfo(body, version, date) do
+    Regex.replace(
+      ~r|^([ \t]*)<release\s+version="([^"]+)"[^>]*/>|m,
+      body,
+      fn whole, indent, existing ->
+        entry = ~s|#{indent}<release version="#{version}" date="#{date}" />|
+        if existing == version, do: entry, else: entry <> "\n" <> whole
+      end,
+      global: false
+    )
   end
 
   # Raising when nothing changed is the point: a silent no-op here would leave

@@ -65,4 +65,67 @@ defmodule Mix.Tasks.Version.SetTest do
       refute after_ =~ ~s|version = "0.1.0"|
     end
   end
+
+  describe "bump_metainfo/3" do
+    @releases ~s|  <releases>\n    <release version="0.1.0" date="2026-08-04" />\n  </releases>|
+
+    test "prepends the new release above the existing one" do
+      after_ = Set.bump_metainfo(@releases, "0.2.0", "2026-08-05")
+
+      assert after_ ==
+               ~s|  <releases>\n| <>
+                 ~s|    <release version="0.2.0" date="2026-08-05" />\n| <>
+                 ~s|    <release version="0.1.0" date="2026-08-04" />\n| <>
+                 ~s|  </releases>|
+    end
+
+    # The point of prepending rather than rewriting: <releases> is the changelog a
+    # software centre displays, so overwriting the head silently deletes history.
+    test "keeps every earlier release" do
+      two =
+        ~s|  <releases>\n| <>
+          ~s|    <release version="0.2.0" date="2026-08-05" />\n| <>
+          ~s|    <release version="0.1.0" date="2026-08-04" />\n| <>
+          ~s|  </releases>|
+
+      after_ = Set.bump_metainfo(two, "0.3.0", "2026-09-01")
+
+      assert after_ =~ ~s|<release version="0.3.0" date="2026-09-01" />|
+      assert after_ =~ ~s|<release version="0.2.0" date="2026-08-05" />|
+      assert after_ =~ ~s|<release version="0.1.0" date="2026-08-04" />|
+    end
+
+    # Re-running the task must not stack duplicates: the head is updated in place.
+    test "updates the date instead of duplicating the head" do
+      after_ = Set.bump_metainfo(@releases, "0.1.0", "2026-08-06")
+
+      assert after_ =~ ~s|<release version="0.1.0" date="2026-08-06" />|
+      refute after_ =~ ~s|date="2026-08-04"|
+      assert after_ |> String.split("<release ") |> length() == 2
+    end
+
+    # mix.exs reads the FIRST <release> as the current version, so the new entry
+    # must land above the old one. Asserting on order, not just presence — a
+    # version appended to the bottom would satisfy every =~ above and still make
+    # the reader report the previous release.
+    test "the new version is the one mix.exs would read" do
+      after_ = Set.bump_metainfo(@releases, "0.2.0", "2026-08-05")
+
+      assert [_, first] = Regex.run(~r/<release\s+version="([^"]+)"/, after_)
+      assert first == "0.2.0"
+    end
+
+    test "leaves the rest of the document alone" do
+      body =
+        ~s|<component type="desktop-application">\n| <>
+          ~s|  <id>io.github.adsouza.armchair-metropolist</id>\n| <>
+          ~s|  <project_license>AGPL-3.0-only</project_license>\n| <>
+          @releases <> ~s|\n</component>|
+
+      after_ = Set.bump_metainfo(body, "0.2.0", "2026-08-05")
+
+      assert after_ =~ ~s|<project_license>AGPL-3.0-only</project_license>|
+      assert after_ =~ ~s|<id>io.github.adsouza.armchair-metropolist</id>|
+    end
+  end
 end

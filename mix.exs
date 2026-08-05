@@ -276,8 +276,9 @@ defmodule ArmchairMetropolist.MixProject do
   # consults more than one: `mix.exs` names Burrito's payload cache directory,
   # `tauri.conf.json` names the .deb and its control `Version:` field, `Cargo.toml` is
   # the fallback Tauri takes when `tauri.conf.json` omits `version`
-  # (crates/tauri-cli/src/interface/rust.rs:1093), and `Cargo.lock` is what `cargo audit`
-  # reads. This found a real drift the day it was written: the two Cargo files said
+  # (crates/tauri-cli/src/interface/rust.rs:1093), `Cargo.lock` is what `cargo audit`
+  # reads, and the Flatpak's AppStream metainfo is what a software centre shows the
+  # user. This found a real drift the day it was written: the two Cargo files said
   # 0.2.0 while the two that actually ship said 0.1.0.
   #
   # A step in `mix check` rather than a git hook, deliberately. `.githooks/pre-push` is
@@ -318,7 +319,7 @@ defmodule ArmchairMetropolist.MixProject do
         #{Enum.map_join(sites, "\n", fn {f, v} -> "  #{String.pad_trailing(f, 28)} #{v}" end)}
 
         Every site above must carry the same value. Rather than editing them by
-        hand, move all four together:
+        hand, move them all together:
 
             mix version.set X.Y.Z
         """)
@@ -334,13 +335,34 @@ defmodule ArmchairMetropolist.MixProject do
   # code already owns is precisely the thing that drifts, and the drift is silent.
   # `ArmchairMetropolist.MixProject` is loaded for the whole of any Mix invocation,
   # so the task can call this with no compile-order problem.
+  @metainfo_path "packaging/flatpak/io.github.adsouza.armchair-metropolist.metainfo.xml"
+
   def version_sites do
     [
       {"mix.exs", mix_exs_version()},
       {"src-tauri/tauri.conf.json", tauri_conf_version()},
       {"src-tauri/Cargo.toml", cargo_toml_version()},
-      {"src-tauri/Cargo.lock", cargo_lock_version()}
+      {"src-tauri/Cargo.lock", cargo_lock_version()},
+      {@metainfo_path, metainfo_version()}
     ] ++ release_tag_site()
+  end
+
+  # The Flatpak's AppStream metadata, which arrived after this check did and was not
+  # added to it — so the first bump after the Flatpak landed would have shipped a
+  # 0.2.0 package advertising 0.1.0 to every software centre, with all four other
+  # sites agreeing and `mix check` green. Exactly the failure this list exists for,
+  # reintroduced by adding a file rather than by editing one.
+  #
+  # Reads the FIRST <release>, because AppStream orders that list newest-first and
+  # `mix version.set` maintains that by prepending. The rest of the list is release
+  # history and must not be touched.
+  defp metainfo_version do
+    with {:ok, body} <- File.read(@metainfo_path),
+         [_, version] <- Regex.run(~r/<release\s+version="([^"]+)"/, body) do
+      version
+    else
+      _ -> nil
+    end
   end
 
   # From disk, not from Mix.Project.config()[:version], which is cached at load
