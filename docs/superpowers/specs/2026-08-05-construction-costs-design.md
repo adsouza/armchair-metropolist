@@ -181,6 +181,15 @@ Two consequences for this document:
 * **§7's opening analysis excludes `park` entirely.** Every figure there is measured against types
   whose tables this change does not touch. `park`'s place in an opening is an open question until
   the park design answers it.
+* **§7's smallest viable city is invalidated by that design, and so is the 500 grant.** The park
+  design also staffs `transit_hub` (labour 2.0), which makes the set §7 costs at 445 — 2 power, 1
+  water, 1 industrial, 1 transit, 1 commercial, 5 residential — **non-viable**: labour demand reaches
+  22, needing 6 residential, while its single water plant caps residential at 5. Measured by
+  regenerating the guide's `capacities` block. The smallest viable set becomes 2 power, **2** water, 1
+  industrial, 1 transit, 1 commercial and 6 residential, at **530** — which overshoots the 500 grant
+  by 30. So either the grant rises or the cost table comes down, and §7's "buys exactly one working
+  city" claim has to be re-derived rather than adjusted. Deferred to whichever branch lands second,
+  which by §4's sequencing is this one.
 
 ### Measured findings, recorded for the park design
 
@@ -318,6 +327,11 @@ sets contain.
 guide documents — 2 power, 1 water, 1 industrial, 1 transit, 1 commercial, 5 residential — costs
 **445** of the 500, leaving 55: not enough for a second power plant, and one misplaced 80 puts the
 first city out of reach until income accumulates.
+
+> **This whole section is measured against today's tables and does not survive the park design.**
+> That design staffs `transit_hub`, which makes the 445 set non-viable outright and moves the smallest
+> viable city to 530 — above the grant. Every figure below is therefore a *pre-park* baseline, kept
+> because the reasoning transfers, and re-derived during implementation. See §4.
 
 | set | build cost | net money/tick once running |
 |---|---|---|
