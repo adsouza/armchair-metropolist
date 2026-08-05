@@ -2,6 +2,13 @@
 
 **Date:** 2026-08-05
 **Status:** designed, not yet implemented
+**Depends on:** the park amenity design, which is implemented and merged first — see §4
+
+**Amended 2026-08-05, before implementation.** The first draft buffed `park` here, by giving it money
+production. Rejected on review: a public park earning revenue does not describe anything a park does,
+and the mechanic chosen instead (an amenity multiplier on labour) changes how supply is computed
+rather than what a table contains, so it needs its own design. §4 records the sequencing and the two
+measured findings that came out of the rejected attempt.
 
 ## 1. Problem
 
@@ -29,8 +36,9 @@ bounded by what the city has earned.
   the follow-ups entry.
 * **No change to the six-resource vocabulary.** Costs are not a seventh resource, and they never
   enter supply or demand. See §3.
-* **No rebalancing of the wider economy** beyond `park`, which §4 addresses because this change
-  would otherwise make an already-weak type strictly dead weight.
+* **No rebalancing of any node's production or consumption tables.** `park` needs one — a 20 price
+  tag on an already-weak type would make it dead weight — but that is a separate design which lands
+  *before* this one. See §4.
 
 ## 2. The prices
 
@@ -151,53 +159,55 @@ Prices are rules, not state. Keeping them in a compile-time module attribute is 
 balance patch a code change rather than a data migration, and stops a saved city from disagreeing
 with the current prices.
 
-## 4. Park earns its place
+## 4. Park is fixed by a separate design, which lands first
 
 `docs/PLAYING.md` already calls `park` "usually a trap — it trades a lot of water for a little
 waste capacity, so it only pays when you have spare water and are waste-limited, which is rare
-given how much `industrial` supplies." Attaching a 20 price tag to a type that is already a bad
-deal would make it strictly dead weight, so its production side gains income:
+given how much `industrial` supplies." Attaching a 20 price tag to an already-bad deal would make it
+strictly dead weight, so `park` has to gain value — but not here.
 
-| | before | after |
-|---|---|---|
-| produces | waste 8.0 | waste 8.0, **money 9.0** |
-| consumes | water 18.0, traffic 2.0, money 3.0 | *unchanged* |
+**Sequencing: the park design is implemented and merged before this one.** That way construction
+costs price a `park` that is already worth building, and `park`'s value never has to be tuned twice.
+The alternative — buff `park` inside this spec — was rejected because the chosen mechanic (an
+amenity multiplier on labour) is a change to how supply is *computed*, not a change to a table, and
+it revises the legend's marginal-impact contract. That is a spec's worth of decisions and does not
+belong in a spec about money.
 
-Net **+6 money per tick** at full health.
+Two consequences for this document:
 
-**The income goes on the production side, and its existing money consumption stays.** Those two
-choices together are what keep `park` inside the mechanic the whole game is built on. Production is
-scaled by health; consumption deliberately is not. So `produce 9, consume 3` nets +6 at full health
-and **−3 at zero** — a neglected park becomes a liability, exactly like every other node. The
-arithmetically-equal `produce 6, consume 0` would net +6 at full health and **0 at zero**, making
-`park` the one type that neglect cannot punish. Net effect is not a complete specification of a
-node in this engine: two tables with the same net differ at every health below 100, which is most of
-the states that matter.
+* **`park`'s 20.0 in §2 is provisional.** It is priced for a type whose value is not yet designed,
+  so it is re-derived once the park design settles, in that branch or this one, whichever lands
+  second.
+* **§7's opening analysis excludes `park` entirely.** Every figure there is measured against types
+  whose tables this change does not touch. `park`'s place in an opening is an open question until
+  the park design answers it.
 
-The legend needs no change to render this. `marginal_cell/2` already computes
-`(produced || 0.0) - (consumed || 0.0)`, so the row shows `+6`, and `total_cell/2` already handles
-a type appearing in both tables for one resource.
+### Measured findings, recorded for the park design
 
-**Water stays at 18.0, deliberately.** That is `park`'s balancing constraint and the reason this
-buff does not create a dominant opening. Against the free baseline of 40 water, two parks
-(water 36, traffic 4) hold at full health indefinitely and net +12 money per tick for 40 spent; a
-third needs 54 and starts decaying immediately. Scaling parks past two therefore requires a water
-plant, which costs 70 and draws 25 power, which needs a power plant at 80. Parks bootstrap income
-cheaply and then stop, which is a niche rather than an answer.
+Both came out of running `SimulationCalculator` while exploring park buffs here, and both are
+inputs to that spec rather than to this one.
 
-**Measured, not reasoned.** The proposed production table was applied and run through
-`SimulationCalculator` for 500 ticks: one park nets +6/tick and holds health 100; two net +12/tick
-and hold 100; three fall to water satisfaction 0.741 and every node is at health 0 within 200 ticks.
-The cap is genuinely water, not money — the three-park city is *earning* +18/tick as it dies.
+**Park's niche is labour, not waste.** At 5 residential the industrial-based support set is
+labour-saturated at exactly 20/20, so adding a second `commercial` kills the city — labour
+satisfaction 0.714, every node dead. Three parks supplying the same 90 waste consume **no labour**,
+which frees 12 and makes that second `commercial` viable: income measured at +42/tick against
++26/tick, both stable at health 100 over 400 ticks. So whatever `park` becomes, the pressure it
+should relieve is labour.
 
-Worth recording because the same script falsified an assumption first: under the **current** tables
-even a single park eventually dies. It produces no money, draws 3, and so drains the 500 grant in
-about 167 ticks, after which money satisfaction drops below 1.0 and decay begins. So "park is a
-trap" is stronger than `docs/PLAYING.md` currently states — it is not merely poor value, it is
-terminal on a long enough timeline. That makes this buff a fix rather than a nicety.
+**A buff belongs on the production side.** Production is scaled by health and consumption
+deliberately is not, so `produce 9, consume 3` and `produce 6, consume 0` net identically at full
+health and differ at every health below it — −3 versus 0 at zero. The first keeps a neglected park
+inside the death spiral like every other node; the second would make `park` the one type neglect
+cannot punish. Net effect is not a complete specification of a node in this engine.
 
-The type keeps its character — thirsty, and only worth it when water is spare — while the payoff
-changes from a resource that is rarely scarce to one that always is.
+### Correction
+
+An earlier draft of this section claimed that measurement showed "park is a trap" to be *stronger*
+than the guide states, because a single park drains the 500 grant in about 167 ticks and then decays.
+The measurement was right and the conclusion was wrong: `water_plant` (money 5) and `transit_hub`
+(money 4) both die alone on the same timeline, verified, for the same reason — money has no baseline
+capacity, so any type with money upkeep and no income is terminal in isolation. That is a property of
+every money consumer, not a special indictment of `park`.
 
 ## 5. Presentation
 
@@ -295,10 +305,12 @@ drift.
 
 **Sections that need revising:** "The controls" (placing can now be refused, and both gestures
 spend); "Build producers first" (which now trades against affordability, since producers are the
-expensive types); and the `park` paragraph in the consumption reference, per §4.
+expensive types).
 
-The generated `production` and `consumption` blocks change with `park`'s tables. The `capacities`
-block does not: its support sets exclude `park`, and it is computed by simulation.
+The generated `production`, `consumption` and `capacities` blocks are **untouched by this change** —
+no node's tables move here (§4). The park design revises the first two; `capacities` is computed by
+simulation from support sets that exclude `park`, so it moves only if that design changes a type the
+sets contain.
 
 ## 7. Balance
 
@@ -310,7 +322,7 @@ first city out of reach until income accumulates.
 | set | build cost | net money/tick once running |
 |---|---|---|
 | 2 residential (baseline only) | 30 | +2 |
-| 2 park (baseline only) | 40 | +12 |
+| 2 park (baseline only) | 40 | −6 — see §4, park's value is designed separately |
 | 2 power, 1 water, 1 industrial, 1 transit, 1 commercial, 5 residential | 445 | +26 |
 | 3 power, 3 water, 2 industrial, 2 transit, 2 commercial, 12 residential | 910 | +49 |
 
@@ -321,17 +333,16 @@ costs are sums of §2.
 **The game stays winnable from any state that still has a living money producer.** Two residential
 blocks cost 30, sit inside the free baseline on all four flow resources, consume no money at all,
 and hold 100 health indefinitely — so they yield +2/tick against zero money demand, without bound.
-Two parks reach +12/tick for 40, also stable on the bare baseline, though unlike residential they
-do draw money (3 each) and so net rather than gross their income. Either way a player who overspends
-is slowed, never stuck.
+A player who overspends is therefore slowed, never stuck.
 
-**The opening is a real decision rather than a solved one.** Parks bootstrap money about six times
-faster per tick than residential, but residential is the only source of labour, which `industrial`
-and `commercial` both need. Neither dominates.
+Residential is the only type with that property today: it is the sole node that produces money and
+consumes none. `park` as it stands is the opposite — 20 to build and −6/tick for two, so building
+parks brings the dead end *closer*, which is precisely why §4 sequences the park design ahead of this
+one. Once that lands, this paragraph and the table above are re-derived against park's new tables.
 
 **Honest limitation: costs gate the rate of expansion and the first city, not a mature one.**
-Payback periods are short — `commercial` recovers its 40 in under two ticks at +30, `park` its 20 in
-between three and four. So a large city with healthy income can rebuild almost at will. That is the
+Payback periods are short — `commercial` recovers its 40 in under two ticks at +30, and `residential`
+its 15 in fifteen. So a large city with healthy income can rebuild almost at will. That is the
 intended shape and matches the genre: the constraint bites hardest when the player has least, and
 fades as the city succeeds. It is recorded here so nobody later reads this spec as promising a
 permanent budget constraint and "fixes" it by inflating prices.
@@ -400,11 +411,7 @@ that everything else would let through.
 
 ### Park
 
-* **Net +6 at full health and −3 at zero.** Both, in one test or two — the zero-health case is the
-  whole reason the income sits on the production side (§4), and without it `produce 6, consume 0`
-  passes every other assertion.
-* **Two parks on the bare baseline hold at full health; three decay.** The claim §4 makes about
-  this not being a dominant opening, tested rather than asserted in prose.
+No tests here. This change does not touch any node's tables (§4); the park design carries its own.
 
 ### Presentation
 
