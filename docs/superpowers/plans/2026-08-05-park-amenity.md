@@ -157,6 +157,43 @@ Then update the comment above it so the next reader knows why the type matters:
       # supplies the labour instead.
 ```
 
+- [ ] **Step 6b: Document and pin `sub_rounding_city`'s newly starving parks**
+
+This fixture's test **passes** after staffing, but not because the fixture is unaffected. Measured: its three parks demand 3 labour against a supply of 0 — nothing here houses anyone — so labour satisfaction is `0.0`, each park takes the full `6.0` decay from `100.0` to `94.0`, and the delta grows from `["0:0"]` to `["0:0", "0:3", "1:3", "2:3"]`. The test survives only because its assertions name two node ids and never look at the parks or the delta's size.
+
+It cannot be fixed by adding housing. Labour comes only from `residential`, `residential` draws water 12, and a water demand of exactly `74.0` is what puts the power plant on `89.7`. One residential block takes water satisfaction from `0.95` to `0.817` and destroys what the fixture exists to test.
+
+So document it and assert it. Append to the comment above `sub_rounding_city`:
+
+```elixir
+  # Since transit hubs and parks were staffed (2026-08-05) a sixth resource is in play:
+  # the three parks demand 3 labour against a supply of 0, because nothing here houses
+  # anyone. Labour satisfaction is 0.0, so each park takes the full 6.0 decay,
+  # 100.0 -> 94.0, and all three land in the delta.
+  #
+  # Left that way deliberately, because it cannot be fixed without destroying the
+  # fixture: labour comes only from residential, residential draws water 12, and the
+  # water demand of exactly 74.0 is what puts the power plant on 89.7 — one residential
+  # block moves water satisfaction to 0.817. The decay is inert for what this fixture
+  # tests, since the power plant consumes no labour and its worst ratio is still water's
+  # 0.95, and the test now asserts the parks' presence in the delta so the behaviour is
+  # documented rather than incidental.
+```
+
+And add to the test, immediately after the existing `assert Map.has_key?(delta, "0:0")`:
+
+```elixir
+      # The three parks are in the delta too, and for a different reason than the water
+      # plant: labour satisfaction is 0.0 here, so each takes the full 6.0 decay.
+      # Asserted rather than tolerated, so a future change to park staffing surfaces as
+      # a failure here instead of as a silently different delta.
+      for id <- ["0:3", "1:3", "2:3"] do
+        assert Map.has_key?(delta, id), "a labour-starved park must enter the delta"
+      end
+```
+
+Run `mix test test/armchair_metropolist/domain/services/simulation_calculator_test.exs` and expect PASS. Then mutation-verify by reverting `park`'s `labour: 1.0` — the new loop must fail, proving it is pinned to staffing rather than to something else. Restore.
+
 - [ ] **Step 7: Drop the support set that is no longer viable**
 
 Transit's 2 labour takes the smallest documented set to 22 labour demand, needing 6 residential, while its single water plant caps residential at 5. The band is empty, and `residential_range/5` returns `nil`, which publishes a row of `none none none none`.
@@ -1096,5 +1133,7 @@ notes that amenity decays twice over during a collapse."
 **One spec item deliberately not implemented here.** §8 notes that the construction-costs spec's balance figures are invalidated by this change — the smallest viable city moves from 445 to 530, above the 500 grant. That is recorded in both specs and belongs to the construction-costs branch, which lands second. Nothing in this plan should touch `CityMap`'s opening grant.
 
 **Type consistency.** `labour_multiplier/1` and `labour_supply/1` both take a **list of nodes**, not a `CityMap` — Task 3 calls them with `CityMap.nodes(city_map)`. `build/3`'s third argument is a map keyed `:amenity` and `:amenity_marginal_labour`, matching the struct field names exactly so there is no translation layer. `amenity_marginal_labour` is the **supply-side delta only** throughout; the netting against park's own labour happens once, in Task 4's `marginal_cell/3` clause. Task 4 changes `marginal_cell` from arity 2 to arity 3 and updates its only caller in the same step.
+
+**A test passing is not the same as a fixture being unaffected.** Task 1 Step 6b exists because `sub_rounding_city`'s test passes after staffing while three of its five nodes silently change from stable to decaying. It was found by asking why, not by reading the suite result — the suite said `254 passed` both before and after. When a data change touches a resource, check the fixtures that *pass*, not only the ones that fail: a fixture whose assertions name specific node ids will absorb an arbitrary amount of unrelated change.
 
 **Verified rather than assumed.** Task 1's code, its three expected failures, its fixture fix and the exact `docs/PLAYING.md` diff were all produced by applying the change and running `mix test` before this plan was written, then restoring the tree. Task 2's expected arithmetic (`24.0`, `48.0`, `40.0`, `32.0`, `2.0`) was computed from the rule directly. Tasks 3–5 are designed but not trial-run; treat their expected values as predictions to check, not guarantees.
