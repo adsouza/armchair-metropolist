@@ -288,6 +288,56 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute render(view) =~ ~s{id="7:8"}
   end
 
+  @tag treasury: 79.6
+  test "the treasury renders floored, not rounded", %{conn: conn} do
+    # 79.6 rounding to 80 while an 80-cost build is refused is a cell contradicting
+    # itself. Both halves asserted together, because the defect is precisely the two
+    # disagreeing — and 79.6 is chosen so they *can* disagree: at a whole number
+    # `trunc` and `round` return the same thing and the test could not fail.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert view |> element("#metrics-treasury") |> render() =~ "79"
+    refute view |> element("#metrics-treasury") |> render() =~ "80"
+  end
+
+  @tag treasury: 39.6
+  test "a refused build flashes the cost and the balance", %{conn: conn} do
+    # 39.6 rather than 40.0 for the same reason as above: the flash floors the balance
+    # too, and a whole-number fixture could not tell `trunc` from `round`.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    html = place(view, :power_plant, 1, 1)
+
+    assert html =~ "Not enough money"
+    assert html =~ "power_plant costs 80"
+    assert html =~ "treasury holds 39"
+  end
+
+  test "an affordable build flashes nothing", %{conn: conn} do
+    # The positive case. Without it, the assertions above pass against a page that
+    # flashes on every click. No tag: the untouched 150 grant covers an 80 plant.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    refute place(view, :power_plant, 1, 1) =~ "Not enough money"
+  end
+
+  @tag treasury: 24.0
+  test "a refused demolition flashes the demolition cost", %{conn: conn} do
+    # Seeded at 24 and then spent down *by playing*: a park costs 20, leaving 4, which
+    # is below the flat 10 demolition fee. No mid-test balance setter needed, and the
+    # path is one a player can actually walk.
+    {:ok, view, _html} = live(conn, ~p"/")
+    place(view, :park, 2, 2)
+
+    html =
+      view
+      |> element(~s{[phx-click="demolish"][phx-value-x="2"][phx-value-y="2"]})
+      |> render_click()
+
+    assert html =~ "demolishing costs 10"
+    assert html =~ "treasury holds 4"
+  end
+
   describe "legend" do
     # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
     # negotiable for this block: the `+120` and `+360` figures two of these tests pin are

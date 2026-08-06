@@ -106,10 +106,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   def handle_event("place", %{"x" => x, "y" => y}, socket) do
     x = String.to_integer(x)
     y = String.to_integer(y)
+    type = socket.assigns.selected_type
 
-    case CityEngine.place(socket.assigns.city_id, x, y, socket.assigns.selected_type) do
-      {:ok, node} -> {:noreply, stream_insert(socket, :nodes, node)}
-      {:error, _reason} -> {:noreply, socket}
+    case CityEngine.place(socket.assigns.city_id, x, y, type) do
+      {:ok, node} ->
+        {:noreply, stream_insert(socket, :nodes, node)}
+
+      {:error, :insufficient_funds} ->
+        {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics.money))}
+
+      {:error, _reason} ->
+        {:noreply, socket}
     end
   end
 
@@ -118,8 +125,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     y = String.to_integer(y)
 
     case CityEngine.demolish(socket.assigns.city_id, x, y) do
-      {:ok, id} -> {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
-      {:error, _reason} -> {:noreply, socket}
+      {:ok, id} ->
+        {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
+
+      {:error, :insufficient_funds} ->
+        {:noreply,
+         put_flash(socket, :error, unaffordable_demolition(socket.assigns.metrics.money))}
+
+      {:error, _reason} ->
+        {:noreply, socket}
     end
   end
 
@@ -451,7 +465,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
-      <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
+      <%!-- `trunc/1`, not `round/1`: this figure is spendable, and rounding it up makes
+            the page contradict itself — a balance of 79.6 would read 80 while an 80-cost
+            build is refused. Because every construction cost is a whole number,
+            `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
+            and the domain's exact comparison agree. --%>
+      <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
       <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
@@ -630,6 +649,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp signed(value) do
     rounded = round(value)
     if rounded > 0, do: "+#{rounded}", else: to_string(rounded)
+  end
+
+  # Both figures named, not just the refusal: the gap is what tells a player how long to
+  # wait. `trunc/1` matches the treasury line's own flooring — a message saying the
+  # treasury holds 80 while an 80-cost build was refused would be the same
+  # self-contradiction in another place.
+  #
+  # The other three placement errors stay silent. `:out_of_bounds` is unreachable from a
+  # grid that renders only in-bounds cells, and `:occupied` is nearly so, since the node
+  # div sits above its cell and turns that click into a demolish.
+  defp unaffordable(type, money) do
+    "Not enough money: #{type} costs #{trunc(Node.construction_cost(type))}, " <>
+      "treasury holds #{trunc(money)}."
+  end
+
+  defp unaffordable_demolition(money) do
+    "Not enough money: demolishing costs #{trunc(Node.demolition_cost())}, " <>
+      "treasury holds #{trunc(money)}."
   end
 
   defp cell_style(x, y, cell_size) do
