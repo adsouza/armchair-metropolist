@@ -185,10 +185,15 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
 
     test "every cost is a whole number" do
-      # Every reader of a cost truncates it: the legend's cost `<td>`, its `cost_title/2`
-      # tooltip and the refusal flash's `unaffordable/2`, all in `simulator_live.ex`. A
-      # fractional cost would render a figure the engine does not charge. It is also what
-      # makes `trunc(money) >= cost` agree with `money >= cost` exactly.
+      # Every *display* of a cost truncates it: the legend's cost `<td>`, its
+      # `cost_title/2` tooltip, and the refusal flashes `unaffordable/2` and
+      # `unaffordable_demolition/1`, all in `simulator_live.ex`. A fractional cost would
+      # render a figure the engine does not charge.
+      #
+      # "Display" and not "reader": `affordable?/2` and `ManageInfrastructure` both
+      # compare the cost *raw*, and that is the point — wholeness is what makes the
+      # truncated display agree with the untruncated comparison, so `trunc(money) >= cost`
+      # exactly when `money >= cost`.
       for type <- Node.types() do
         cost = Node.construction_cost(type)
         assert cost == Float.round(cost), "#{type}'s cost #{cost} is not a whole number"
