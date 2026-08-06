@@ -627,22 +627,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are midpoints of measured windows (expanded [1935, 2084], collapsed
-    # [1212, 1337]), not the wrap points themselves. See the comment in `render/1`: an
-    # earlier pair sat on the windows' lower edges and fell out the moment the cells grew
-    # a line. If a legitimate content change moves these, move them to the new *midpoint*.
+    # The values are midpoints of measured windows (expanded [2254, 2415], collapsed
+    # [1415, 1415] — that one is degenerate, so it is the only legal value rather than a
+    # midpoint with slack), not the wrap points themselves. See the comment in `render/1`:
+    # an earlier pair sat on the windows' lower edges and fell out the moment the cells
+    # grew a line. If a legitimate content change moves these, re-measure in the browser
+    # and move them to the new *midpoint* — do not derive them from these plus a guess at
+    # the width of whatever you added.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2010px]:flex-row"
-      refute expanded =~ "max-[1275px]:flex-row"
+      assert expanded =~ "max-[2335px]:flex-row"
+      refute expanded =~ "max-[1415px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
-      assert collapsed =~ "max-[1275px]:flex-row"
-      refute collapsed =~ "max-[2010px]:flex-row"
+      assert collapsed =~ "max-[1415px]:flex-row"
+      refute collapsed =~ "max-[2335px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
@@ -787,6 +790,37 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # labour now, so pick a genuinely untouched pair: it produces no money.
       assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
     end
+
+    test "every legend row shows its construction cost", %{conn: conn} do
+      # Asserted on the cell's *text*, not on `render/1`'s HTML. The HTML includes the
+      # `title` attribute added in this same step, whose value is "costs 80" — so
+      # `render() =~ "80"` would pass even if the cell body rendered the count, or the
+      # demolition cost, or nothing at all. An exact match on trimmed text can fail.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert cost_text(view, :power_plant) == "80"
+      assert cost_text(view, :residential) == "15"
+    end
+
+    test "the cost column survives a collapse, unlike the resource columns", %{conn: conn} do
+      # The type rows are the only way to choose what to place, and choosing now spends
+      # money — so price cannot be detail-only.
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      assert has_element?(view, ~s{[data-cell="power_plant-cost"]})
+      refute has_element?(view, ~s{[data-cell="power_plant-power"]})
+    end
+
+    @tag treasury: 40.0
+    test "unaffordable rows are marked, affordable ones are not", %{conn: conn} do
+      # Both directions: a hardcoded "false" would satisfy either alone. 40 sits between
+      # residential's 15 and power_plant's 80, so one row must be marked each way.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#legend-row-power_plant[data-affordable="false"]})
+      assert has_element?(view, ~s{#legend-row-residential[data-affordable="true"]})
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -865,6 +899,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       satisfaction: satisfaction,
       flow_satisfaction: satisfaction
     }
+  end
+
+  # The cost cell's *text*, with the markup and the attributes stripped off. The cell
+  # carries a `title` that spells the same figure out in prose, so an assertion against
+  # the rendered HTML cannot tell the price apart from its own tooltip.
+  #
+  # `LazyHTML` and not `Floki`: LiveView 1.2 dropped Floki for it, and `mix.exs` carries
+  # `lazy_html` as the test-only HTML dependency. Floki is not available here at all.
+  defp cost_text(view, type) do
+    view
+    |> element(~s{[data-cell="#{type}-cost"]})
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.text()
+    |> String.trim()
   end
 
   # Selects the type once, then places it at one cell — the two-step gesture the UI
