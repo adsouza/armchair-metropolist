@@ -862,8 +862,8 @@ Now the tests:
       # which is below the flat 10 demolition fee. No mid-test balance setter needed, and
       # the path is one a player can actually walk.
       #
-      # Fractional for the same reason as the two tests above, and this one was nearly
-      # got wrong: an earlier draft seeded 24.0, leaving exactly 4.0 — where `trunc` and
+      # Fractional for the same reason as the two tests above, and this is the one that
+      # nearly slipped: an earlier draft seeded 24.0, leaving exactly 4.0 — where `trunc` and
       # `round` agree, so the assertion could not tell them apart and
       # `unaffordable_demolition/1`'s flooring was unverified by anything in the suite.
       # 4.6 truncs to 4 and rounds to 5.
