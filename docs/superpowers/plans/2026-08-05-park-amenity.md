@@ -901,7 +901,7 @@ the two disagree where an added park crosses the ratio cap."
 
 **Interfaces:**
 - Consumes: `@metrics.amenity` and `@metrics.amenity_marginal_labour` from Task 3; `Node.consumption(:park)[:labour]` from Task 1.
-- Produces: `#metrics-amenity` element; `[data-cell="park-labour"]` shows a signed net figure.
+- Produces: `#metrics-workforce` element labelled `Workforce:`; `[data-cell="park-labour"]` shows a signed net figure.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -932,7 +932,7 @@ Then, in the legend describe block:
       # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
       # and draws 1 of its own.
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
-      assert view |> element("#metrics-amenity") |> render() =~ "1.5"
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.5"
     end
 
     test "past parity park's labour cell goes negative" do
@@ -977,7 +977,7 @@ Then, in the legend describe block:
 mix test test/armchair_metropolist_web/live/simulator_live_test.exs
 ```
 
-Expected: the first three FAIL. `park-labour` currently renders `-1` for every state (park draws 1 labour and the amenity is invisible to the cell), and `#metrics-amenity` does not exist. Note the second test may pass for the wrong reason at this point — that is what Step 6's mutation check is for.
+Expected: the first three FAIL. `park-labour` currently renders `-1` for every state (park draws 1 labour and the amenity is invisible to the cell), and `#metrics-workforce` does not exist. Note the second test may pass for the wrong reason at this point — that is what Step 6's mutation check is for.
 
 - [ ] **Step 3: Thread the marginal figure into the cell**
 
@@ -1062,15 +1062,17 @@ with:
   # city state — and past the cap the honest figure changes sign.
 ```
 
-- [ ] **Step 5: Add the metrics line**
+- [ ] **Step 5: Add the workforce line**
 
 In the `metrics/1` component, after the treasury line:
 
 ```heex
-      <p id="metrics-amenity">Amenity: ×{Float.round(@metrics.amenity, 2)}</p>
+      <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
 ```
 
 Two decimals, not one: the ratio is continuous, and 7 housing with 3 parks is ×1.43, which one decimal would collapse into its neighbours.
+
+**The label and id say "Workforce"; the struct field stays `amenity`.** That mismatch is deliberate, not drift — `amenity` names the mechanism (parks are an amenity) and belongs in the domain, while a player cares that their workforce is 1.43× what their housing alone would field. Do not rename the field to match, and do not rename the label to match the field.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -1083,7 +1085,7 @@ Expected: PASS.
 - [ ] **Step 7: Mutation-verify**
 
 1. Drop the netting — `signed(amenity_marginal_labour)` → "shows the amenity net of the park's own staffing" fails (`+5`, not `+4`) and "past parity goes negative" fails (`+0`, not `-1`). Both must go red; if only one does, the second test is passing for the wrong reason. Restore.
-2. Change `Float.round(@metrics.amenity, 2)` to `round(@metrics.amenity)` → the `1.5` assertion fails. Restore.
+2. Change `Float.round(@metrics.amenity, 2)` to `round(@metrics.amenity)` → the `Workforce: ×1.5` assertion fails. Restore.
 3. Delete the `{:park, :labour}` clause → the em dash test still passes and the first two fail, confirming the special case is scoped. Restore.
 
 - [ ] **Step 8: Verify in the browser**
@@ -1092,7 +1094,7 @@ The spec asks for this because the sidebar is `min-w-fit` and any content wider 
 
 Start the dev server with the Browser pane (never `mix phx.server` via Bash), place two residential and one park, then confirm:
 
-- `#metrics-amenity` reads `Amenity: ×1.5`;
+- `#metrics-workforce` reads `Workforce: ×1.5`;
 - `[data-cell="park-labour"]` reads `+3`;
 - the page body does not scroll horizontally, and the legend still sits beside the grid at a wide viewport.
 
@@ -1109,7 +1111,8 @@ of the labour it draws — so +4 below the ratio cap and -1 past it. An em dash
 there would have claimed park does not touch labour, which is the opposite of
 true.
 
-Metrics gains an Amenity line, at two decimals because the ratio is continuous."
+Metrics gains a Workforce line, at two decimals because the ratio is continuous. The label is the
+player's word; the domain keeps `amenity` for the mechanism."
 ```
 
 ---
@@ -1214,6 +1217,40 @@ Parks are thirsty, and that is what bounds them. Two is the most the free baseli
 water will carry, so scaling beyond that means water plants, which need power. A
 neglected park is worse than none: amenity is scaled by health, its staffing and water
 draw are not, so a dead park amplifies nothing while still costing everything.
+```
+
+- [ ] **Step 4b: Add the housing-first rule**
+
+This is the largest documentation consequence of the change, and it *contradicts* the guide's current
+headline advice. Measured with a single block alone on an empty grid: `residential` survives forever
+(labour 0/5), and **every other type is offline at tick 14 and dead at tick 17** — labour satisfaction
+is 0.0 and they take the full decay.
+
+Add a new subsection immediately after "The controls", before "Position does not matter":
+
+```markdown
+### Build a house first
+
+**Every block needs staff except the homes the staff live in.** Power plants, water plants,
+transit hubs, parks, industry and commerce all draw labour; `residential` is the only thing
+that supplies it. So a city with no housing cannot run *any* infrastructure — measured, a
+lone power plant is offline in 14 ticks and dead in 17, and so is a lone anything-else.
+
+Place one residential block before anything else. It is the cheapest block, it needs no
+support at all on an empty grid, and it is the only one that will still be standing in a
+minute if you walk away.
+
+This qualifies the "build producers first" rule below rather than replacing it: demand
+still arrives instantly and in full, so a consumer placed before its support still does
+damage. The order is **one house, then producers, then the rest.**
+```
+
+Then amend the existing "Build producers first" paragraph so the two rules do not appear to
+compete — add to the end of it:
+
+```markdown
+This is subordinate to housing, though: a producer placed on an empty grid has no staff and
+dies in 17 ticks. See "Build a house first" above.
 ```
 
 - [ ] **Step 5: Extend the min-residential explanation**

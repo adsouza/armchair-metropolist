@@ -322,15 +322,23 @@ old wording will not expect the cell to move.
 `transit_hub` needs no special handling: its labour is ordinary consumption, so its cell renders `−2`
 through the existing path.
 
-**Metrics gains an amenity line**, beside the treasury:
+**Metrics gains a workforce line**, beside the treasury:
 
 ```elixir
-<p id="metrics-amenity">Amenity: ×{Float.round(@metrics.amenity, 2)}</p>
+<p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
 ```
 
 A city-wide scalar belongs with the other city-wide figures, not in a per-type flow column. Two
 decimals because the ratio is continuous — 7 housing and 3 parks gives ×1.43, and one decimal would
 collapse distinguishable states.
+
+**The player-facing word is "Workforce"; the domain word stays "amenity", and the split is
+deliberate.** `amenity` names the *cause* — parks are an amenity — and belongs with the rule in
+`SimulationCalculator`. A player does not care what the mechanism is called; they care that their
+workforce is 1.43 times what their housing alone would field, which is what the figure means. So the
+struct field, the module attributes and the tests keep `amenity`, while the label and the element id
+(`metrics-workforce`) use the player's word. Recorded so nobody later "fixes" the mismatch in either
+direction.
 
 **Wrap thresholds.** A new Metrics line changes that column's height, not its width, and the
 `max-[2010px]` / `max-[1275px]` thresholds are set by width. `Amenity: ×1.43` is shorter than the
@@ -431,10 +439,30 @@ push the park count past parity and observe where supply stops rising.
 production, so no table shows park's labour effect. The guide carries the rule in `constants` and in
 prose instead. Putting a multiplier into a table of additive rates would misrepresent it.
 
+**A new rule at the top of the guide: build a house first.** This is the largest documentation
+consequence of the change and it is not advice, it is a fact about the game. Measured, with a single
+block alone on an empty grid:
+
+| block | labour demand / supply | offline at | dead at |
+|---|---|---|---|
+| `residential` | 0 / 5 | never | never |
+| every other type | 1–12 / 0 | tick 14 | tick 17 |
+
+Six of the seven types cannot survive a single tick's worth of neglect without housing, because labour
+satisfaction is 0.0 and they take the full decay. A city with no people is not merely unproductive, it
+is uninhabitable by its own infrastructure.
+
+This **contradicts the guide's current headline advice**, "Build producers first", which was correct
+when labour was a tax on two types: demand arrives instantly and in full, so a consumer placed before
+its support does damage. That is still true *between* the other five resources, but it is now
+subordinate to housing — a power plant placed first is dead in 17 ticks with nothing to show for it.
+The advice becomes: **one house, then producers, then the rest.**
+
 **Prose rewrites.** The `park` paragraph in the consumption reference stops being "usually a trap" and
 becomes a description of provision. The min-residential explanation currently names `industrial` and
 `commercial` as the types needing workers and must instead state the rule: everything except
-`residential` draws staff. The rescue section gains the double-decay note above.
+`residential` draws staff. "Why your first city dies" needs the housing-first rule alongside it. The
+rescue section gains the double-decay note above.
 
 ## 10. Testing
 
@@ -487,7 +515,9 @@ covered.
 * **`transit_hub`'s labour cell renders `−2` and `power_plant`'s `−1`** through the ordinary path.
 * **Other types' em dashes are unaffected.** Positive case first: assert a type still renders `—` for
   a resource it does not touch, so the park special case cannot leak into the general path.
-* **The Metrics amenity line renders two decimals** and moves when parks are placed.
+* **The Metrics workforce line renders two decimals** and moves when parks are placed. Asserted on
+  `#metrics-workforce`, and on the label reading "Workforce" — the player-facing word is a decision, so
+  a rename should fail a test rather than pass silently.
 
 ### Documentation
 

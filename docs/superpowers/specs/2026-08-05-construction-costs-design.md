@@ -151,30 +151,50 @@ spec's 2026-08-02 amendment exists to fix — a cell reading `13/23 · 100%`, wh
 is not derivable from the two numbers beside it. A test asserts that after a placement,
 `resource_stats(:money).demanded` reflects upkeep only.
 
-### The grant lives in two places, and both must change
+### The grant becomes one named constant
 
-`CityMap` states 150.0 twice — once as the `defstruct` default and once explicitly in `new/2`:
+`CityMap` currently states the figure **twice** — as the `defstruct` default and again explicitly in
+`new/2` — and that duplication is a live trap rather than mere untidiness. `CityEngine.normalize_city_map/1`
+merges a decoded snapshot onto `%CityMap{}`, so the *defstruct* default is what an old city inherits,
+while `new/2`'s literal is what a fresh city gets. Change one and not the other and the two disagree
+about the grant, silently, on a path only cold loads exercise.
+
+Replace both with a module attribute and expose it:
 
 ```elixir
-defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: 150.0
+  # The money a new city starts with. One constant, read by both the struct default and
+  # `opening_grant/0` — it used to be stated twice, here and again in `new/2`.
+  @opening_grant 150.0
 
-def new(width, height) do
-  %__MODULE__{width: width, height: height, tick: 0, nodes: %{}, money: 150.0}
-end
+  defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: @opening_grant
+
+  @doc """
+  The money a new city starts with.
+
+  Public so tests and the playing-guide generator can reference the figure instead of
+  restating it — three readers pinned the old literal.
+  """
+  @spec opening_grant() :: float()
+  def opening_grant, do: @opening_grant
 ```
 
-The duplication predates this change and is a live trap: `new/2` overrides the default with the same
-literal, so changing only one leaves new cities and decoded-then-normalised cities disagreeing about
-the grant — and `CityEngine.normalize_city_map/1` merges onto `%CityMap{}`, so the *defstruct* default
-is the one an old snapshot inherits while `new/2`'s is the one a fresh city gets. Change both, and
-prefer deleting `new/2`'s redundant `money:` key so the constant has one home.
+and delete `money:` from `new/2`'s struct literal entirely, so the default is the single source.
+Verified: `opening_grant/0`, `CityMap.new/2`'s `money` and a bare `%CityMap{}` all return 150.0 with
+this shape — a module attribute is available to `defstruct` provided it is declared above it.
 
-Three readers pin the old value and must move with it: `city_engine_test.exs`'s
-`assert loaded.money == 500.0`, and comments in `simulation_calculator_test.exs` and
-`test/support/playing_guide.ex` that both name "the 500.0 grant" while explaining fixtures that depend
-on it. The `playing_guide.ex` one matters most — `city_with/1` deliberately zeroes money so the
-capacities table measures steady-state solvency, and its comment explains why the grant must *not* be
-in play there.
+**Three readers pin the old literal and must move to the accessor**, not to a new literal:
+
+* `city_engine_test.exs`'s `assert loaded.money == 500.0` becomes
+  `assert loaded.money == CityMap.opening_grant()`.
+* `simulation_calculator_test.exs` has a fixture comment explaining that money's satisfaction stays at
+  1.0 only because "`CityMap.new/2`'s default 500.0 grant" covers the upkeep as `carried`. At 150 that
+  is still true for that fixture, but the figure in the prose is wrong — and the comment is the only
+  thing recording that the fixture is clean arithmetic over four resources rather than five.
+* `test/support/playing_guide.ex`'s `city_with/1` deliberately sets `money: 0.0` and explains why: over
+  a 120-tick window a city whose income falls one short of upkeep drains the grant at 1/tick and
+  survives all 120, so the guide would certify a city that goes bankrupt later. That reasoning is
+  unchanged by the new value but its comment names the old one. **A smaller grant makes this trap
+  worse, not better** — at 150 a 1/tick shortfall survives 150 ticks, still longer than the window.
 
 ### No snapshot migration
 
@@ -348,6 +368,13 @@ drift.
 spend); "Build producers first" (which now trades against affordability, since producers are the
 expensive types).
 
+**"Build a house first" gains a second reason.** The park design adds that rule for a staffing reason —
+every block but `residential` needs staff, so a lone anything-else is dead in 17 ticks. Costs supply an
+independent one: `residential` at 15 is the cheapest block, it is the only one that produces money while
+consuming none, and it is therefore the only first placement that leaves the treasury able to grow. That
+paragraph should carry both reasons, because a player who follows it for either is protected from the
+dead end in §8.
+
 The generated `production`, `consumption` and `capacities` blocks are **untouched by this change** —
 no node's tables move here (§4). The park design revises the first two; `capacities` is computed by
 simulation from support sets that exclude `park`, so it moves only if that design changes a type the
@@ -414,11 +441,20 @@ no in-app recovery.
 
 This is the same dead end §8 already accepted, not a new one — at 500 it takes six or seven placements
 instead of two. But two is a plausible opening for a player who has not read the guide, and "build
-producers first" is exactly the advice `docs/PLAYING.md` gives. Recorded rather than mitigated, because
-the mitigations all sit outside this spec: a money baseline (rejected by the money design as
-load-bearing), free demolition (rejected), or a reset control (below). **The evidence for promoting the
-reset control from a deferred idea to a real requirement is now much stronger than when it was
-deferred**, and whoever implements this should read that as a recommendation rather than a note.
+producers first" was exactly the advice `docs/PLAYING.md` used to give.
+
+**The guide's new housing-first rule is the mitigation, and it is a real one.** A player who places a
+`residential` block first has spent 15, holds 135, and has a city with positive money income that can
+never fall to zero — `residential` consumes no money at all. From there every subsequent mistake is
+recoverable, because income keeps arriving. The dead end needs a player to spend the entire grant on
+blocks that earn nothing, which the guide now tells them not to do in its first substantive section.
+
+That is mitigation by documentation, not by mechanism, so it does not close the hole. The mechanical
+options were all rejected or deferred: a money baseline (the money design calls its absence
+load-bearing), free demolition (rejected), or a reset control. **The evidence for promoting the reset
+control from a deferred idea to a real requirement is stronger than when it was deferred** — two
+placements is a much shorter fuse than six — and whoever implements this should read that as a
+recommendation rather than a note.
 
 **A fully collapsed city is permanently unrecoverable.** Chosen deliberately over the alternatives.
 Two existing facts combine: `@baseline_capacity` gives money `0.0` — no free income, which the money
