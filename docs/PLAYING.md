@@ -41,9 +41,8 @@ only thing that supplies it. So a city with no housing cannot run *any* infrastr
 measured, a lone power plant is offline in 14 ticks and dead in 17, and so is a lone
 anything-else.
 
-Place one residential block before anything else. It is the cheapest block, it needs no
-support at all on an empty grid, and it is the only one that will still be standing in a
-minute if you walk away.
+Place one residential block before anything else. It needs no support at all on an empty
+grid, and it is the only block that will still be standing in a minute if you walk away.
 
 This qualifies the "build producers first" rule below rather than replacing it: demand
 still arrives instantly and in full, so a consumer placed before its support still does
@@ -250,10 +249,12 @@ cost: it still drinks 18 water, still needs a groundskeeper, and adds nothing. T
 legend's labour column tells you which side of that line you are on, showing `+4` while
 parks are worth building and `-1` once they are not.
 
-Parks are thirsty, and that is what bounds them. Two is the most the free baseline's 40
-water will carry, so scaling beyond that means water plants, which need power. A
-neglected park is worse than none: amenity is scaled by health, its staffing and water
-draw are not, so a dead park amplifies nothing while still costing everything.
+Parks are thirsty, and that is what bounds them. On the free baseline's 40 water exactly
+one park fits — and it needs a house to staff it and a commercial block to cover its
+upkeep, so the smallest city with a park in it is three blocks. Measured: water 38/40,
+income +28 per tick, stable indefinitely. A second park needs a water plant, which needs
+power. A neglected park is worse than none: amenity is scaled by health, its staffing and
+water draw are not, so a dead park amplifies nothing while still costing everything.
 
 ### Health and timing
 

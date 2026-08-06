@@ -217,9 +217,16 @@ ratio and therefore the multiplier arbitrarily high, and the cost of keeping it 
 Recorded explicitly so nobody later removes it as dead weight *or* tunes it as though it were live —
 it is neither.
 
-**Water remains the physical brake.** Each park draws 18 against a free baseline of 40, so two parks
-is the ceiling with no water plant; beyond that every park needs waterworks, which need power. The cap
-governs the *benefit*; water governs the *volume*.
+**Water remains the physical brake.** Each park draws 18 against a free baseline of 40. Counting the
+housing a park needs to staff it and the income it needs to cover its 3 money upkeep, **one** park is
+the ceiling with no water plant: measured, one house plus one park plus one commercial block sits at
+water 38/40 and +28 money per tick and holds indefinitely, while a second park reaches 56/40 and dies.
+Beyond one, every park needs waterworks, which need power. The cap governs the *benefit*; water governs
+the *volume*.
+
+(Corrected 2026-08-05 during implementation. This paragraph previously claimed two parks were the
+ceiling — a figure measured before `park` drew labour and never re-measured after staffing landed. It
+reached `docs/PLAYING.md` before the task review caught it.)
 
 ## 5. Implementation
 
