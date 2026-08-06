@@ -6,7 +6,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        production of `r`, plus whatever balance `r` carried over from the
-       previous tick (every resource but money carries nothing).
+       previous tick (every resource but money carries nothing). Labour is then
+       multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
+       both sides health-weighted — so parks raise the workforce their housing
+       supplies without producing labour themselves. With no housing the
+       multiplier is 1.0 and labour supply is 0.0 regardless of parks.
     2. `demand(r)` is every node's *full* consumption of `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
@@ -53,6 +57,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # resource discards its surplus; money is a treasury. Named as a list rather
   # than tested against the atom :money at each site.
   @carryover [:money]
+
+  # The park amenity: parks per housing block multiply labour supply. Both values are
+  # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
+  # §4.
+  #
+  # `k` below 1.0 makes the whole mechanic a no-op, because a park draws 1 labour of its
+  # own and so nets `4k - 1`: at k = 0.5 the net is +1, and the optimal city is
+  # identical to one with no amenity at all. The cap is the ratio past which more parks
+  # add nothing; it is inert in small cities and binds gently in large ones.
+  @amenity_per_housing 1.0
+  @max_amenity_ratio 1.0
 
   @regen_per_tick 1.0
   @decay_per_tick 6.0
@@ -145,10 +160,48 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     SimulationMetrics.build(city_map, resource_stats(city_map))
   end
 
-  # Baseline capacity plus health-scaled production from every node.
+  # Baseline capacity plus health-scaled production from every node, with labour then
+  # scaled by the park amenity.
+  #
+  # Applied here rather than in `resource_stats/1` so there is exactly one labour supply
+  # figure: satisfaction, deficit, health decay, the deficit notification and the
+  # Tightest line all read this and cannot disagree about it.
   defp total_supply(nodes) do
-    Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
-      Enum.reduce(Node.effective_production(node), acc, &add_resource/2)
+    supply =
+      Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
+        Enum.reduce(Node.effective_production(node), acc, &add_resource/2)
+      end)
+
+    Map.update!(supply, :labour, &(&1 * labour_multiplier(nodes)))
+  end
+
+  # Effective parks per effective housing block, capped, scaled by
+  # `@amenity_per_housing`. Health-weighted on both sides: a neglected park provides no
+  # amenity, and a dying neighbourhood needs fewer parks to serve it. A count-based
+  # ratio would let a dead park go on multiplying, making `park` the one type neglect
+  # cannot punish.
+  #
+  # The `housing > 0.0` guard is load-bearing, not defensive. Erlang does not follow
+  # IEEE 754 for float division, so `0.0 / 0.0` raises `ArithmeticError` rather than
+  # yielding NaN — it is not enough that the result would be multiplied by a zero labour
+  # supply, because the division happens first. An empty city and a city bulldozed to
+  # nothing but parks both reach this on an ordinary tick.
+  defp labour_multiplier(nodes) do
+    housing = effective_count(nodes, :residential)
+
+    if housing > 0.0 do
+      parks = effective_count(nodes, :park)
+      1.0 + @amenity_per_housing * min(parks / housing, @max_amenity_ratio)
+    else
+      1.0
+    end
+  end
+
+  # Counted by health rather than by node: a park at 40% health is 0.4 of a park.
+  defp effective_count(nodes, type) do
+    Enum.reduce(nodes, 0.0, fn
+      %{type: ^type, health: health}, acc -> acc + health / 100.0
+      _node, acc -> acc
     end)
   end
 

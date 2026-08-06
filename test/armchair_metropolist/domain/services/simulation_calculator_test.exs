@@ -220,6 +220,84 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
   end
 
+  describe "park amenity" do
+    defp labour_supplied(city) do
+      city |> Calc.resource_stats() |> Map.fetch!(:labour) |> Map.fetch!(:supplied)
+    end
+
+    # `housing` residential blocks and `parks` parks, all at full health unless
+    # overridden. Coordinates are irrelevant to the simulation and only need to be
+    # distinct, so the two types sit on separate rows.
+    defp housing_and_parks(housing, parks, opts \\ []) do
+      housing_health = Keyword.get(opts, :housing_health, 100.0)
+      park_health = Keyword.get(opts, :park_health, 100.0)
+
+      residential =
+        for i <- 1..housing//1 do
+          %Node{
+            Node.new(i, 0, :residential)
+            | health: housing_health,
+              status: Node.status_for(housing_health)
+          }
+        end
+
+      park_nodes =
+        for i <- 1..parks//1 do
+          %Node{
+            Node.new(i, 1, :park)
+            | health: park_health,
+              status: Node.status_for(park_health)
+          }
+        end
+
+      map_with(residential ++ park_nodes)
+    end
+
+    test "no parks leaves labour supply unmultiplied" do
+      assert labour_supplied(housing_and_parks(6, 0)) == 30.0
+    end
+
+    test "one park per housing block is the maximum, x2.0" do
+      assert labour_supplied(housing_and_parks(6, 6)) == 60.0
+    end
+
+    test "past parity the multiplier is capped" do
+      # Kills a missing `min/2`: uncapped this would be 6 residential x 5 x (1 + 20/6).
+      assert labour_supplied(housing_and_parks(6, 20)) == 60.0
+    end
+
+    test "below the cap each park adds a constant L*k labour, whatever the city size" do
+      # The identity that pins L, k, the legend's figure and the balance work together.
+      # Asserted over several shapes rather than one, because a single pair is also
+      # satisfied by formulas that are not this one. Expect 45.0, 80.0, 75.0, 50.0.
+      for {housing, parks} <- [{6, 3}, {12, 4}, {10, 5}, {8, 2}] do
+        assert labour_supplied(housing_and_parks(housing, parks)) ==
+                 5.0 * housing + 5.0 * parks,
+               "expected LH + LkP for H=#{housing} P=#{parks}"
+      end
+    end
+
+    test "no housing means no labour, whatever the park count, and does not raise" do
+      # Two claims: the design property, and that the zero-housing branch is guarded.
+      # Erlang raises ArithmeticError on 0.0/0.0, so an unguarded division fails here
+      # rather than returning a wrong number.
+      assert labour_supplied(housing_and_parks(0, 8)) == 0.0
+    end
+
+    test "the amenity is health-weighted on the park side" do
+      assert labour_supplied(housing_and_parks(8, 4)) == 60.0
+      # 4 parks at half health is 2.0 effective parks against 8 housing: ratio 0.25,
+      # so 40.0 base x 1.25.
+      assert labour_supplied(housing_and_parks(8, 4, park_health: 50.0)) == 50.0
+    end
+
+    test "the amenity is health-weighted on the housing side" do
+      # 8 blocks at half health supply 20 labour and count as 4.0 effective housing,
+      # so 4 parks is parity and the multiplier caps at x2.0.
+      assert labour_supplied(housing_and_parks(8, 4, housing_health: 50.0)) == 40.0
+    end
+  end
+
   describe "advance_tick/1 health arithmetic" do
     test "increments the tick by exactly one" do
       {map, _} = Calc.advance_tick(CityMap.new(40, 30))
