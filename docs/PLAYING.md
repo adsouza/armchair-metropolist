@@ -185,8 +185,8 @@ Two approaches still work, because neither waits on labour to recover first:
    That has a price now. Cutting a nineteen-block city back to the two houses the baseline
    supports means seventeen demolitions, which is 170 — and a city whose money producers
    are all dead earns nothing to pay it with. Start bulldozing while the treasury can cover
-   the whole cut: stopping part way earns nothing back, because nothing heals until the grid
-   is inside the baseline.
+   the whole cut: stopping part way earns nothing back, because nothing heals while the
+   demand still standing outruns what is supplied.
 2. **Never let residential fully die in the first place.** Add support while some
    residential is still alive — this is the "build producers first" advice above,
    and it is the only way to keep labour (and, once a commercial block exists, income)
@@ -227,18 +227,19 @@ for good — nothing earning, nothing healing, and too little saved to change ei
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. On a grid of dead houses it is not: the free baseline is one pool spread across
-everything still standing, the dead houses draw their full share of it, and a house supplies
-none of what *they* draw — no number of houses would. Adding one makes it worse, because
-it draws 15 power of its own: put a third house beside two dead ones and all three end up
-dead, where leaving them alone would have healed both.
+again. Beside dead blocks it turns on one question: with the new house's own 15 power added,
+does the demand still standing outrun what is supplied? The free baseline is one pool spread
+across everything standing, and a house supplies none of what dead houses draw — no number
+of houses would. So the house either fits, and survives, or it does not, and dies with them:
+two dead houses heal on their own, and a third placed beside them leaves all three dead.
 
-So on a grid of dead housing, demolish first and then rebuild — and keep enough in the
-treasury to do both. That order is not universal, though, because what a dead block starves
-for may be exactly what a house supplies. A dead power plant is short of one unit of labour
-and nothing else the baseline cannot cover, so building the house first heals both and
-starts earning, while demolishing first leaves you holding 5 against a 15 bill. Read what
-the dead blocks actually draw before choosing which gesture to spend on.
+So where the demand still outruns supply, demolish first and then rebuild — and keep
+enough in the treasury to do both. That order is not universal, though, because what a
+dead block starves for may be exactly what a house supplies. A dead power plant is short
+of one unit of labour and nothing else the baseline cannot cover, so building the house
+first heals both and starts earning, while demolishing first spends 10 that does nothing
+toward the house. Read what the dead blocks draw — and what the house you would add draws
+— before choosing which gesture to spend on.
 
 ## How long you have to react
 
