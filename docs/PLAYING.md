@@ -46,7 +46,7 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 plants, transit hubs, parks, industry and commerce all draw labour; `residential` is the
 only thing that supplies it. So a city with no housing cannot run *any* infrastructure —
 measured, a lone power plant is offline in 14 ticks and dead in 17, and so is a lone
-anything-else.
+anything-that-needs-staff.
 
 Place one residential block before anything else. It needs no support at all on an empty
 grid, and it is the only block that will still be standing in a minute if you walk away.
@@ -184,8 +184,9 @@ Two approaches still work, because neither waits on labour to recover first:
 
    That has a price now. Cutting a nineteen-block city back to the two houses the baseline
    supports means seventeen demolitions, which is 170 — and a city whose money producers
-   are all dead earns nothing to pay it with. Start bulldozing while the treasury still has
-   something in it.
+   are all dead earns nothing to pay it with. Start bulldozing while the treasury can cover
+   the whole cut: stopping part way earns nothing back, because nothing heals until the grid
+   is inside the baseline.
 2. **Never let residential fully die in the first place.** Add support while some
    residential is still alive — this is the "build producers first" advice above,
    and it is the only way to keep labour (and, once a commercial block exists, income)
@@ -207,19 +208,29 @@ full in 100 ticks.
 The treasury is the one resource whose surplus survives a tick, and the one you can spend
 to zero with no warning. Two things follow.
 
-**A city with no income and no savings cannot act at all.** Money has no free baseline —
-the only sources are `residential` and `commercial`, and production is scaled by health, so
-a city whose housing and shops are all dead earns exactly nothing, forever. While the
-treasury still holds 10 you can keep demolishing, which is the way out described above.
-Once it reaches zero with nothing earning, every gesture is refused: you cannot build,
-and you cannot tear down to make room. That is the one unrecoverable state in the game,
-and it takes both halves — no income *and* no savings.
+**Dead is not the same as unrecoverable — but the way back has a fixed price.** Money has
+no free baseline: the only sources are `residential` and `commercial`, and production is
+scaled by health, so a city whose housing and shops are all dead earns nothing *while they
+stay dead*. They stay dead as long as the demand still standing outruns what is supplied.
+Cut back until it fits inside the free baseline and dead housing heals itself, with an empty
+treasury and no further help — measured, two dead houses and 0 in the bank are at full
+health in 100 ticks, having earned 99 on the way. That is approach 1 above, finished.
+
+The cliff is arithmetic, and it is the one that killed your first city: a house draws 15
+power against a baseline of 40, and dead blocks draw in full, so two dead houses heal and
+three never do. That makes the escape all or nothing. Demolition stays *available* while
+the treasury holds 10, but 10 buys exactly one block, the bill is 10 a block, and nothing
+is earned until the last one is gone — nineteen dead houses cut back to three still earn
+zero over 400 ticks. Nineteen down to two is 170, and 169 is not close: it leaves you three
+houses, 9 in the bank, and nothing the treasury will pay for. That is the only way to lose
+for good — nothing earning, and too little saved to change that.
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. On a crowded one it is not: the dead blocks around it still draw power, water, waste
-and traffic, and a single house cannot satisfy that demand, so it decays too. Demolish
-first, then rebuild — and keep enough in the treasury to do both.
+again. On a crowded one it is not: the free baseline is one pool spread across everything
+still standing, the dead blocks draw their full share of it, and a house supplies none of
+what they draw — no number of houses would. Demolish first, then rebuild — and keep
+enough in the treasury to do both.
 
 ## How long you have to react
 
