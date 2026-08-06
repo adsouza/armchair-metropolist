@@ -9,7 +9,7 @@ worth buying first
 
 *First amendment* added staffing for `transit_hub` and `park`. The two changes cannot ship
 separately: staffing `park` drops its net labour contribution, and at the originally specified
-`k = 0.5` the net is +1, which measurement shows changes nothing. Releasing the amenity alone and
+`k = 0.5` the net is +1 (at residential's then-4.0 labour), which measurement shows changes nothing. Releasing the amenity alone and
 adding staffing afterwards would ship a mechanic that is provably a no-op in between. `k` is
 therefore 1.0, not 0.5.
 
@@ -148,7 +148,7 @@ amendment's loss of a support set is undone rather than deepened.
 is identical at either value, so this takes the lower end.
 
 **`park` at 1.0 is not free — it forces `k`.** Park's net contribution is `Lk − 1`, so a `k` that
-leaves the net at +1 makes the amenity a no-op. §4 records the search.
+leaves the net too small makes the amenity a no-op — measured, `k = 0.5` (net +1.5) is indistinguishable from no amenity at all. §4 records the search.
 
 ### This reverses a documented decision, and replaces its rule
 

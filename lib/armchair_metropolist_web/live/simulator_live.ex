@@ -428,8 +428,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             almost nothing. Anything added here must stay short or wrappable. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 for power, water, waste and traffic, which
-        belongs to no type. Labour and money have no free baseline. Labour also carries the
-        park amenity, a multiplier on housing's output that belongs to no type either.
+        belongs to no type. Labour and money have no free baseline.
+        Labour's total also includes the park amenity; park's own row carries it.
       </p>
     </div>
     """

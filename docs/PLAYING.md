@@ -170,7 +170,7 @@ Two approaches still work, because neither waits on labour to recover first:
    and it is the only way to keep labour (and, once a commercial block exists, income)
    flowing through a rescue.
 
-**Neglecting parks shrinks the workforce; damage spread evenly does not.** The
+**Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on the parks costs more.** The
 multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
 on housing and parks cancels out — the workforce shrinks in step with the housing, no
 faster. What moves the multiplier is *uneven* damage: let the parks rot while the housing
