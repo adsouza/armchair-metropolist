@@ -1325,9 +1325,11 @@ it is per block, not per city. A house draws power, water, waste and traffic —
 never money — so a house can sit at full health beside a block that will never recover, and
 often does. Two consequences worth knowing:
 
-- **A new house helps when the power still fits.** It brings 15 power of its own against a pool
-  of 40, so one dead house plus a new one is 30 and both reach full health, while two dead plus
-  a new one is 45 and all three die.
+- **A new house survives when all four of the resources it draws still fit** — power, water,
+  waste and traffic, not power alone. One dead house plus a new one is 30 power against a pool of
+  40 and both reach full health; two dead plus a new one is 45 and all three die. Power is not
+  always the binder: two dead parks plus a house is 15 power (fits) and 48 water (does not), and
+  the house dies. A labour or money shortfall, however severe, cannot touch a house at all.
 - **Whether it revives the neighbour depends on what the neighbour draws.** A dead power plant
   wants one unit of labour, which only a house supplies, so building revives it. A dead shop
   wants eight and a dead water plant wants money — a house cannot cover either, so they stay
