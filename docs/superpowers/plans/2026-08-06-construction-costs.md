@@ -1179,7 +1179,11 @@ commercial 40, industrial 60, park 20, power_plant 80, residential 15, transit_h
 
 - [ ] **Step 4: Rewrite the six affected prose passages**
 
-All outside the `<!-- generated:… -->` markers. **Every factual claim below has been checked against the merged code or measured.** Two false sentences reached this guide on the park-amenity branch by being plausible and unverified, so if you find yourself wanting to improve any sentence here, verify the replacement the same way — `mix run --no-start` against the domain — and report what you measured.
+All outside the `<!-- generated:… -->` markers.
+
+**Read this first: only the fenced ` ```markdown ` blocks are content for the guide.** The `>` blockquotes after them are notes to you explaining what the earlier draft got wrong and why the replacement reads as it does. Do not copy a blockquote into `docs/PLAYING.md`.
+
+**Every factual claim below has been checked against the merged code or measured.** Two false sentences reached this guide on the park-amenity branch by being plausible and unverified, so if you find yourself wanting to improve any sentence here, verify the replacement the same way — `mix run --no-start` against the domain — and report what you measured.
 
 **(a) "The controls"** — placing can now be refused, and both gestures spend. Add after the three bullets:
 
