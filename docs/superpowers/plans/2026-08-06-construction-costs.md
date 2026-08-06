@@ -1320,16 +1320,19 @@ anything. 170 has to be on hand up front. Nineteen dead houses holding 10 have s
 are finished; **169 is as terminal as 0** — sixteen demolitions leave three houses and 9,
 which buys neither a demolition at 10 nor a house at 15.
 
-**Whether a house helps depends on the grid it lands in, not on how ruined it looks.** A house
-costs 15, draws 15 power of its own, and supplies labour that nothing else does. So it helps
-when the grid *including it* still fits inside what is supplied, and hurts when it does not —
-one dead house plus a new one is 30 power and both reach full health; two dead plus a new one
-is 45 against a pool of 40 and all three die. The same test decides the order to spend in: a
-dead power plant is short of one unit of labour and nothing else the baseline cannot cover, so
-building first heals both while demolishing first leaves you short of the 15 a house costs.
-Read what the dead blocks draw **and what the house draws** before choosing — a dead
-industrial also starves for labour alone, yet building there kills the house, because its 40
-power plus the house's 15 overruns the pool.
+**Every block heals only when everything *it* draws is supplied.** That is the whole rule, and
+it is per block, not per city. A house draws power, water, waste and traffic — never labour,
+never money — so a house can sit at full health beside a block that will never recover, and
+often does. Two consequences worth knowing:
+
+- **A new house helps when the power still fits.** It brings 15 power of its own against a pool
+  of 40, so one dead house plus a new one is 30 and both reach full health, while two dead plus
+  a new one is 45 and all three die.
+- **Whether it revives the neighbour depends on what the neighbour draws.** A dead power plant
+  wants one unit of labour, which only a house supplies, so building revives it. A dead shop
+  wants eight and a dead water plant wants money — a house cannot cover either, so they stay
+  dead however healthy the house beside them looks. A dead industrial block draws 40 power, and
+  the new house's 15 on top of it overruns the pool and kills them both.
 ```
 
 > **This section took five passes and the first four each shipped a new false claim** — every
@@ -1340,11 +1343,22 @@ power plus the house's 15 overruns the pool.
 > lines away by shipping its own counter-board, after an earlier round had correctly judged that
 > sentence true-where-it-sat.
 >
-> **The move that finally worked: name the mechanism, not the board.** "As long as the demand
-> still standing outruns what is supplied" is true at every n, for every type, and has no board
-> to escape. Every board-scoped phrasing this section tried needed a new exception. If you are
-> editing here and reach for "on a grid of…", stop and write the demand-versus-supply test
-> instead.
+> **Draft 5 tried "name the mechanism, not the board" — and produced defect six, for a reason
+> worth more than the other five.** I prescribed "as long as the demand still standing outruns
+> what is supplied" and called it the regeneration precondition. It is not. `worst_satisfaction/2`
+> iterates **`Node.consumption(node.type)`** — so regeneration is per **node**, over the resources
+> *that node* draws, while my phrasing was city-wide. A house draws power, water, waste and
+> traffic and nothing else, so labour and money shortfalls cannot touch it: on four of the six
+> dead-block boards "demand outruns supply" is plainly true and the house sits at 100 anyway.
+>
+> **A mechanism has a scope too.** Swapping a board for a mechanism only helps if the mechanism's
+> own quantifier is right, and I replaced a wrong set with a wrong quantifier while feeling like I
+> had generalised. Before writing "the mechanism is X", open the function that implements X and
+> read what it iterates over.
+>
+> The statement that actually covers every board: **a block heals only when everything *it* draws
+> is supplied.** If you are editing here, write that, and let each claim name whose demand it
+> means.
 >
 > The earlier drafts, for the record. Draft 1: "there
 > is no way back" — false while the treasury holds the 10 fee, and it contradicted approach 1
