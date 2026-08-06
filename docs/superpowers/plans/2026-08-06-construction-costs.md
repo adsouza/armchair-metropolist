@@ -1310,23 +1310,43 @@ the grid back inside the **free baseline** and it heals on its own: two dead hou
 empty treasury are at full health, and earning, in 100 ticks. Three cannot — `residential`
 draws 15 power against a baseline of 40, so `15n ≤ 40` puts the cliff at two.
 
-**What is unrecoverable is no income plus too little saved to change that.** "Change", not
-"bulldoze": a dead power plant plus 15 recovers by *building* a house, so naming only the
-teardown route would be another false claim of the same shape. Where teardown *is* the route,
+**What is unrecoverable is nothing earning, nothing healing, and too little saved to change
+either.** All three clauses are load-bearing. "Nothing healing" excludes the recovering board
+above, which the first two clauses describe exactly. And "change" rather than "bulldoze",
+because a dead power plant plus 15 recovers by *building*. Where teardown *is* the route,
 partial progress buys nothing — power demand is `15n` against the baseline of 40, so of the
 seventeen demolitions a nineteen-block city needs, the seventeenth is the first that heals
 anything. 170 has to be on hand up front. Nineteen dead houses holding 10 have savings and
 are finished; **169 is as terminal as 0** — sixteen demolitions leave three houses and 9,
 which buys neither a demolition at 10 nor a house at 15.
 
-**Getting out is easier the earlier you start.** A house costs 15, needs no support on an
-empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. On a crowded one it is not: the dead blocks around it still draw power, water, waste
-and traffic, and a single house cannot satisfy that demand, so it decays too. Demolish
-first, then rebuild — and keep enough in the treasury to do both.
+**Whether a house helps depends on the grid it lands in, not on how ruined it looks.** A house
+costs 15, draws 15 power of its own, and supplies labour that nothing else does. So it helps
+when the grid *including it* still fits inside what is supplied, and hurts when it does not —
+one dead house plus a new one is 30 power and both reach full health; two dead plus a new one
+is 45 against a pool of 40 and all three die. The same test decides the order to spend in: a
+dead power plant is short of one unit of labour and nothing else the baseline cannot cover, so
+building first heals both while demolishing first leaves you short of the 15 a house costs.
+Read what the dead blocks draw **and what the house draws** before choosing — a dead
+industrial also starves for labour alone, yet building there kills the house, because its 40
+power plus the house's 15 overruns the pool.
 ```
 
-> **This section took three passes and each pass shipped a new false claim.** Draft 1: "there
+> **This section took five passes and the first four each shipped a new false claim** — every
+> one of them a true statement with a **board** attached that was one case too wide. Draft 3:
+> "the dead blocks" where the reasoning was about dead housing. Draft 4: "a grid of dead
+> houses" where the reasoning was about *two* dead houses — false at one, where a second house
+> takes the board from 350 to 750 and keeps both alive. Draft 4 also falsified a sentence fifty
+> lines away by shipping its own counter-board, after an earlier round had correctly judged that
+> sentence true-where-it-sat.
+>
+> **The move that finally worked: name the mechanism, not the board.** "As long as the demand
+> still standing outruns what is supplied" is true at every n, for every type, and has no board
+> to escape. Every board-scoped phrasing this section tried needed a new exception. If you are
+> editing here and reach for "on a grid of…", stop and write the demand-versus-supply test
+> instead.
+>
+> The earlier drafts, for the record. Draft 1: "there
 > is no way back" — false while the treasury holds the 10 fee, and it contradicted approach 1
 > two sections away. Draft 2 (the "conjunction" fix): "a city whose housing and shops are all
 > dead earns exactly nothing, **forever**", and "the one unrecoverable state … no income *and*
