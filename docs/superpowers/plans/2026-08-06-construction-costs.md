@@ -1303,13 +1303,21 @@ something in it.
 The treasury is the one resource whose surplus survives a tick, and the one you can spend
 to zero with no warning. Two things follow.
 
-**A city with no income and no savings cannot act at all.** Money has no free baseline —
-the only sources are `residential` and `commercial`, and production is scaled by health, so
-a city whose housing and shops are all dead earns exactly nothing, forever. While the
-treasury still holds 10 you can keep demolishing, which is the way out described above.
-Once it reaches zero with nothing earning, every gesture is refused: you cannot build,
-and you cannot tear down to make room. That is the one unrecoverable state in the game,
-and it takes both halves — no income *and* no savings.
+**A dead city earns nothing only while its demand outruns supply.** Money has no free
+baseline — the only sources are `residential` and `commercial`, and production is scaled by
+health while consumption never is, so dead housing keeps drawing power at full rate. But cut
+the grid back inside the **free baseline** and it heals on its own: two dead houses and an
+empty treasury are at full health, and earning, in 100 ticks. Three cannot — `residential`
+draws 15 power against a baseline of 40, so `15n ≤ 40` puts the cliff at two.
+
+**What is unrecoverable is no income plus too little saved to change that.** "Change", not
+"bulldoze": a dead power plant plus 15 recovers by *building* a house, so naming only the
+teardown route would be another false claim of the same shape. Where teardown *is* the route,
+partial progress buys nothing — power demand is `15n` against the baseline of 40, so of the
+seventeen demolitions a nineteen-block city needs, the seventeenth is the first that heals
+anything. 170 has to be on hand up front. Nineteen dead houses holding 10 have savings and
+are finished; **169 is as terminal as 0** — sixteen demolitions leave three houses and 9,
+which buys neither a demolition at 10 nor a house at 15.
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
@@ -1318,13 +1326,20 @@ and traffic, and a single house cannot satisfy that demand, so it decays too. De
 first, then rebuild — and keep enough in the treasury to do both.
 ```
 
-> Two claims in the draft of this section were false and are corrected above. "At that point
-> neither building nor demolishing is affordable and there is no way back" — false while the
-> treasury still holds 10, which is exactly the situation the rescue section's approach 1
-> addresses; the guide would have contradicted itself two sections apart. And "any treasury
-> that can afford one can always climb back" — measured false: a fresh house added to
-> nineteen dead blocks is itself at health 0 after 300 ticks. The unrecoverable state needs
-> the conjunction, and the rescue needs an *empty enough* grid.
+> **This section took three passes and each pass shipped a new false claim.** Draft 1: "there
+> is no way back" — false while the treasury holds the 10 fee, and it contradicted approach 1
+> two sections away. Draft 2 (the "conjunction" fix): "a city whose housing and shops are all
+> dead earns exactly nothing, **forever**", and "the one unrecoverable state … no income *and*
+> no savings". Both measured false — 1 or 2 dead houses recover from zero health with an empty
+> treasury (money 349.5 and 699.0 over 400 ticks), because demand is not health-scaled and
+> `15n ≤ 40` leaves them inside the free baseline. Worse, that recovering board is the *exact
+> endpoint of approach 1*, which the guide already says returns to full health in 100 ticks —
+> so the "fix" reintroduced the same self-contradiction it was written to remove.
+>
+> The lesson for anyone editing this section: the terminal condition contains a **procedure**,
+> not just two quantities. "Everything is dead" is not it; "demand still outruns supply, and
+> you cannot afford to cut back below it" is. Compute `demand(surviving nodes)` against
+> `@baseline_capacity` and find where it crosses, rather than reasoning about collapse.
 
 **(f) "The controls", the collapse sentence** — currently "**Show detail / Hide detail** collapses the legend to its type and count columns". Task 5 makes that false: cost is always visible. Change to "collapses the legend to its type, count and cost columns" (or whatever the column set actually is after Task 5 — check the rendered page, do not assume).
 
