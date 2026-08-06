@@ -213,8 +213,9 @@ to zero with no warning. Two things follow.
 **Dead is not the same as unrecoverable — but the way back has a fixed price.** Money has
 no free baseline: the only sources are `residential` and `commercial`, and production is
 scaled by health, so a city whose housing and shops are all dead earns nothing *while they
-stay dead*. A block regains health only when every resource *it* draws is fully supplied, so
-each stays dead while anything on its own list is short. Housing's list is power, water,
+stay dead*.
+A block regains health only when every resource *it* draws is fully supplied,
+so each stays dead while anything on its own list is short. Housing's list is power, water,
 waste and traffic — every one of which has a free baseline — so cut back until what the
 houses still standing draw fits inside it, and dead housing heals itself with an empty
 treasury and no further help: measured, two dead houses and 0 in the bank are at full
@@ -226,15 +227,18 @@ three never do. That makes bulldozing all or nothing. Demolition stays *availabl
 the treasury holds 10, but 10 buys exactly one block, the bill is 10 a block, and nothing
 is earned until the cut is finished — nineteen dead houses cut back to three still earn
 zero over 400 ticks. Nineteen down to two is 170, and 169 is not close: it leaves you three
-houses, 9 in the bank, and nothing the treasury will pay for. That is how you lose for good,
-and it takes all three: the treasury no longer rising, nothing left healing, and too little
-saved to change either.
+houses, 9 in the bank, and nothing the treasury will pay for. Any city with all three of
+these has lost for good: the treasury no longer rising, nothing left healing, and too
+little saved to change either. It does not run backwards, though — a house healing on the
+baseline beside a dead water plant is already finished, because its income will never cover
+that plant's upkeep. The three tell you when a city is lost, never that one is safe.
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. Beside dead blocks it is two sums, not one, because each block regains health only
-when everything *it* draws is fully supplied. The house's own list is power, water, waste
-and traffic, so whether it survives turns on those four alone — its own share on top of
+again. Beside dead blocks it is two sums, not one.
+A block regains health only when every resource *it* draws is fully supplied,
+and the house's own list is power, water, waste and traffic —
+so whether it survives turns on those four alone: its own share on top of
 everything else still standing, against one shared pool. A shortfall in labour or money
 cannot touch it, however severe, which is why a house can sit at full health beside a block
 that never recovers. Whether *that* block recovers is the other sum, over what it draws: a
@@ -244,11 +248,21 @@ number of houses adds a drop of what dead housing needs.
 The two sums can disagree, so there is no single order. Two dead houses heal on their own,
 and a third placed beside them leaves all three dead, because housing draws the same four
 resources the baseline is already carrying for the dead ones — so where the house would
-not fit, demolish first and then rebuild, and keep enough in the treasury to do both. A
-dead power plant goes the other way: it is short of one unit of labour and nothing else the
-baseline cannot cover, so building the house first heals both and starts earning, while
-demolishing first spends 10 that does nothing toward the house. Read what the dead blocks
-draw — and what the house you would add draws — before choosing what to spend on.
+not fit, demolish first. A dead power plant goes the other way: it is short of one unit of
+labour and nothing else the baseline cannot cover, so building the house first heals both
+and starts earning, while demolishing first spends 10 that does nothing toward the house.
+Read what the dead blocks draw — and what the house you would add draws — before choosing
+what to spend on.
+
+Demolishing one block and then rebuilding has a floor of 25 — 10 for the removal, 15 for
+the house — and below it that order is the fatal one. On a single dead `industrial` with 15
+in hand, demolishing leaves 5, the rebuild is refused, and an empty grid with 5 in it is
+where the city ends. Building first on the same 15 recovers: both blocks die, but the house
+earns while it goes down, and that pays to clear
+the `industrial` afterwards — which leaves the dead house drawing only what the baseline
+covers, so it heals back to 100 on its own. When the treasury cannot cover both gestures,
+check what building first would earn you before spending on the demolition, because income
+collected on the way down can pay for a removal that the treasury cannot.
 
 ## How long you have to react
 

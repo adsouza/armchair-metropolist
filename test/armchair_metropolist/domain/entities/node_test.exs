@@ -135,6 +135,23 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.production(:residential)[:labour] == 5.0
     end
 
+    # `docs/PLAYING.md`'s "Running out of money" section tells the player that beside
+    # dead blocks a house's survival "turns on those four alone", that "a shortfall in
+    # labour or money cannot touch it, however severe", and that a house can therefore
+    # sit at full health next to a block that never recovers. Four sentences rest on
+    # this table having exactly these keys and no others: regeneration is per node over
+    # `consumption/1` (`SimulationCalculator.worst_satisfaction/2` folds `min` over it),
+    # so adding `labour` or `money` here makes every one of them false at once, and the
+    # guide's own drift test only checks the generated blocks. Assert the key set, not
+    # just the absence of labour, because `money` would break the same sentences.
+    test "residential draws exactly power, water, waste and traffic" do
+      assert Node.consumption(:residential) |> Map.keys() |> Enum.sort() ==
+               [:power, :traffic, :waste, :water],
+             "residential's consumed resources changed; docs/PLAYING.md's money section " <>
+               "claims a labour or money shortfall cannot touch a house, which is only " <>
+               "true while this table says so"
+    end
+
     test "match the specified construction cost table" do
       assert Node.construction_cost(:power_plant) == 80.0
       assert Node.construction_cost(:water_plant) == 70.0
