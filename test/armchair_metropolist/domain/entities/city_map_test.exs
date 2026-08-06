@@ -25,6 +25,23 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "debit/2" do
+    test "subtracts from the treasury" do
+      map = %{CityMap.new(40, 30) | money: 100.0}
+
+      assert CityMap.debit(map, 30.0).money == 70.0
+    end
+
+    test "floors at zero rather than going negative" do
+      # Unreachable through `ManageInfrastructure`, which refuses an unaffordable
+      # command — the clamp documents that a balance is never negative regardless of
+      # caller, which is the invariant the money design calls load-bearing.
+      map = %{CityMap.new(40, 30) | money: 5.0}
+
+      assert CityMap.debit(map, 30.0).money == 0.0
+    end
+  end
+
   describe "in_bounds?/3" do
     setup do: {:ok, map: CityMap.new(40, 30)}
 

@@ -364,6 +364,39 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "the treasury gates commands" do
+    # No setup starting the engine here, unlike the two describe blocks above: each of
+    # these tests seeds a *balance* into the stored snapshot before `start_supervised!`,
+    # and the engine owns the money from hydration onwards.
+
+    test "a refused command broadcasts nothing, but an accepted one does", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      # Affordable: exactly 20 for a park, leaving zero. Broadcast expected.
+      assert {:ok, _node} = CityEngine.place(city_id, 1, 1, :park)
+      assert_receive {:city_metrics, _}
+
+      # Now broke. Refused, and silent.
+      assert {:error, :insufficient_funds} = CityEngine.place(city_id, 2, 2, :park)
+      refute_receive {:city_metrics, _}, 50
+    end
+
+    test "metrics broadcast after a place carry the post-debit balance", %{city_id: city_id} do
+      # The treasury line must move on the click, not on the next tick. Nothing else
+      # catches an engine that computes metrics before debiting.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 100.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      {:ok, _node} = CityEngine.place(city_id, 1, 1, :park)
+
+      assert_receive {:city_metrics, metrics}
+      assert metrics.money == 80.0
+    end
+  end
+
   describe "persistence" do
     test "the engine's child spec carries the 10s shutdown budget" do
       # The 5s default can kill the process mid-write, so the save-on-shutdown
@@ -561,6 +594,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   describe "critical deficit notifications" do
     test "notifies once when the city first enters a critical deficit", %{city_id: city_id} do
+      seed_funded_city()
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -573,6 +607,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "names the resources in deficit, worst first", %{city_id: city_id} do
+      seed_funded_city()
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -606,6 +641,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "re-arms once satisfaction recovers", %{city_id: city_id} do
+      seed_funded_city()
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -633,6 +669,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "does not notify again when a new engine hydrates a city already in deficit",
          %{city_id: city_id} do
       StubSnapshotRepository.echo_saves()
+      seed_funded_city()
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -659,7 +696,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     # describe block and silence the notification permanently.
     test "notifies a city that hydrates satisfied and then falls into deficit",
          %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      # An empty city is satisfied whatever its balance, so seeding the funds `starve/1`
+      # needs does not weaken the "hydrates satisfied" half of this test.
+      seed_funded_city()
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -979,6 +1018,23 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # each caller decides which tick discovers the deficit.
   defp starve(city_id) do
     Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :commercial) end)
+  end
+
+  # The treasury every `starve/1` caller needs. Ten commercial blocks at 40 each is 400,
+  # well past the 150 opening grant, so without this the fourth `place` comes back
+  # `{:error, :insufficient_funds}` and the deficit under test never forms.
+  #
+  # Seeded *empty*: only the balance is preloaded, so `starve/1`'s consumers are still
+  # placed through the running engine. That is the property its own docstring calls
+  # load-bearing — a seeded deficit is by design one already announced, and could not
+  # produce the unannounced edge these tests are about. Do not be tempted to seed
+  # `starved_city/0` with money instead.
+  #
+  # 10_000 rather than the exact 400: "re-arms once satisfaction recovers" also demolishes
+  # and rebuilds all ten, spending 900, and a figure that has to be recomputed whenever a
+  # cost moves is a fixture that breaks for reasons unrelated to what it tests.
+  defp seed_funded_city do
+    StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 10_000.0}}})
   end
 
   # Polls `fun` until it returns truthy or 500ms have passed, returning the last

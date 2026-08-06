@@ -135,13 +135,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   """
   @spec place(String.t(), integer(), integer(), atom()) ::
           {:ok, ArmchairMetropolist.Domain.Entities.Node.t()}
-          | {:error, :out_of_bounds | :occupied | :unknown_type}
+          | {:error, :out_of_bounds | :occupied | :unknown_type | :insufficient_funds}
   def place(city_id, x, y, type), do: call(city_id, {:place, x, y, type})
 
   @doc """
   Remove the node at `(x, y)`.
   """
-  @spec demolish(String.t(), integer(), integer()) :: {:ok, String.t()} | {:error, :empty}
+  @spec demolish(String.t(), integer(), integer()) ::
+          {:ok, String.t()} | {:error, :empty | :insufficient_funds}
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
 
   @doc """

@@ -29,7 +29,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
   @topic CityEngine.topic(CityEngine.default_city_id())
 
-  setup %{conn: conn} do
+  setup %{conn: conn} = context do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -42,7 +42,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     Application.put_env(:armchair_metropolist, :snapshot_repository, StubSnapshotRepository)
 
     start_supervised!(StubSnapshotRepository)
-    StubSnapshotRepository.set_initial({:error, :not_found})
+    StubSnapshotRepository.set_initial(initial_snapshot(context))
     start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
     # Every test but the two-visitor one below shares this session's city id with
@@ -121,6 +121,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
     String.slice(tail, 0, 160)
   end
+
+  # `@tag treasury: n` seeds the balance of the city this test's engine hydrates.
+  # There is no other way to set it: the engine owns the money, the refusal is decided
+  # against the engine's copy, and this file starts its engine in `setup` — before any
+  # test body could seed anything. Untagged tests get `{:error, :not_found}` exactly as
+  # before, so the engine builds a fresh `CityMap` and they see the opening grant.
+  #
+  # The city is seeded *empty*: only the balance is preloaded, so every node in every
+  # test is still placed through the running engine.
+  defp initial_snapshot(%{treasury: money}) do
+    {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
+  end
+
+  defp initial_snapshot(_context), do: {:error, :not_found}
 
   test "two visitors with different sessions get different cities", %{conn: conn} do
     a = Plug.Test.init_test_session(conn, %{"city_id" => "aaaaaaaaaaaaaaaaaaaaaa"})
@@ -275,6 +289,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "legend" do
+    # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
+    # negotiable for this block: the `+120` and `+360` figures two of these tests pin are
+    # power_plant production, so switching to a cheaper type would turn a fixture fix into
+    # a rebalance of the test's own subject. A round balance rather than 160 exactly, so a
+    # change to the construction cost does not break a test that has no opinion about it.
+    @tag treasury: 1_000.0
     test "shows how many of each type are placed, updating as you place", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -334,6 +354,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       refute power =~ "font-semibold"
     end
 
+    # Three power plants at 80 each is 240, past the 150 opening grant.
+    @tag treasury: 1_000.0
     test "placing blocks adds a city total beside the per-block figure", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

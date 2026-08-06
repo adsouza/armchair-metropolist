@@ -59,6 +59,19 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   def opening_grant, do: @opening_grant
 
   @doc """
+  Subtract `amount` from the city's treasury, flooring at zero.
+
+  A one-line function rather than an inline `%{map | money: …}` so the floor-at-zero rule
+  lives in the entity that owns the field. `ManageInfrastructure` refuses an unaffordable
+  command, so the floor is unreachable through it — and that is the point: the clamp
+  documents that a balance is never negative regardless of caller.
+  """
+  @spec debit(t(), float()) :: t()
+  def debit(map, amount) do
+    %{map | money: max(0.0, map.money - amount)}
+  end
+
+  @doc """
   Check if the given coordinates are within the city bounds.
   Valid range is 0 <= x < width and 0 <= y < height.
   """
