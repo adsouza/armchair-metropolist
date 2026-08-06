@@ -395,6 +395,44 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert_receive {:city_metrics, metrics}
       assert metrics.money == 80.0
     end
+
+    test "a refused command leaves the engine's balance untouched", %{city_id: city_id} do
+      # The observable form of "a refusal changes nothing". The use-case tests cannot check
+      # it — a refusal returns no map, so the only `CityMap` in their scope is their own
+      # binding — but the engine holds the balance in a process that outlives the call, so
+      # here it is real state read back after the fact.
+      #
+      # The fixture is chosen so a premature debit reads a *different* number rather than a
+      # coinciding one. 20.0 seeded, minus 15.0 for the residential, leaves 5.0; a refusal
+      # that debited first and committed would read 0.0 for the park (5 − 20, floored) and
+      # 0.0 for the demolition (5 − 10, floored). Every figure below is 5.0, so none of
+      # them can be satisfied by an accidental zero.
+      #
+      # The affordable place is also the fixture's discriminator for the debit-before-the-
+      # gate mutation: 20.0 only just covers the residential's 15.0, so an implementation
+      # that debits before comparing sees 5.0 against a cost of 15.0 and refuses a command
+      # that must succeed.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, _node} = CityEngine.place(city_id, 1, 1, :residential)
+      assert {:ok, %{city_map: %{money: 5.0}}} = CityEngine.snapshot(city_id)
+
+      # Too poor for a park at 20. Refused, and the 5.0 must survive it.
+      assert {:error, :insufficient_funds} = CityEngine.place(city_id, 2, 2, :park)
+
+      assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert city_map.money == 5.0
+      assert metrics.money == 5.0, "a refusal must not recompute metrics either"
+
+      # And too poor for the flat 10 demolition, so the node it could not afford to remove
+      # is still standing — the other half of what the use-case test used to claim.
+      assert {:error, :insufficient_funds} = CityEngine.demolish(city_id, 1, 1)
+
+      assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.money == 5.0
+      refute CityMap.get_node(city_map, 1, 1) == nil
+    end
   end
 
   describe "persistence" do

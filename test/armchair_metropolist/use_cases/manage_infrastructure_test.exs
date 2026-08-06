@@ -66,15 +66,20 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert map.money == 0.0
     end
 
-    test "refuses an unaffordable build and changes nothing at all" do
+    test "refuses an unaffordable build" do
+      # Only the error tuple, deliberately. "Changes nothing" is not assertable at this
+      # layer and this test used to claim it was: a refusal returns no map, so the only
+      # `CityMap` in scope is the caller's own binding, which nothing `place/4` does can
+      # reach. `assert map.money == 19.0` after this call is unfalsifiable — measured, not
+      # reasoned: under a debit-before-the-gate mutation it stayed green while five other
+      # tests went red.
+      #
+      # Where the property *is* observable: "a refused command leaves the engine's balance
+      # untouched" in city_engine_test.exs, where the balance lives in a process that
+      # survives the call.
       map = %{CityMap.new(40, 30) | money: 19.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.place(map, 1, 1, :park)
-
-      # Both halves asserted: an implementation that debits and *then* refuses would
-      # satisfy the error tuple alone.
-      assert map.money == 19.0
-      assert map.nodes == %{}
     end
 
     test "reports occupancy before affordability" do
@@ -156,13 +161,32 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert map.money == 90.0
     end
 
-    test "refuses an unaffordable demolition and leaves the node standing" do
+    test "refuses an unaffordable demolition" do
+      # Same amendment as `place/4`'s refusal test above, and for the same reason. The two
+      # assertions struck from here were `map.money == 9.0` and
+      # `refute CityMap.get_node(map, 1, 1) == nil` — both about a binding made two lines
+      # earlier, the second about a node this test put there itself, so neither could fail
+      # for any implementation of `demolish/3`. The `refute` also had no positive case and
+      # could not be given one, which is the shape this suite treats as a defect.
+      #
+      # "The node still stands" is observable in city_engine_test.exs, against an engine's
+      # state rather than a local binding.
       {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
       map = %{map | money: 9.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.demolish(map, 1, 1)
-      assert map.money == 9.0
-      refute CityMap.get_node(map, 1, 1) == nil
+    end
+
+    test "a balance exactly equal to the demolition cost succeeds and leaves zero" do
+      # The demolish counterpart of `place/4`'s `<`-vs-`<=` test, which this file was
+      # missing: no other fixture holds exactly 10.0 going into a demolish (the refusal
+      # above uses 9.0, the debit test 100.0, the round trip 90.0), so nothing killed
+      # `<` flipped to `<=` on this gate.
+      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      map = %{map | money: 10.0}
+
+      assert {:ok, {map, _id}} = ManageInfrastructure.demolish(map, 1, 1)
+      assert map.money == 0.0
     end
 
     test "reports an empty cell before affordability" do
