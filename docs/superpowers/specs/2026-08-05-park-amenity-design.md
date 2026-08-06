@@ -1,15 +1,25 @@
-# Park amenity and staffing: parks multiply the labour their housing supplies, and both parks and transit hubs draw it — design
+# Park amenity and staffing: every block needs staff except the homes the staff live in — design
 
 **Date:** 2026-08-05
 **Status:** designed, not yet implemented
 **Ships before:** `2026-08-05-construction-costs-design.md`, which prices `park` and needs it to be
 worth buying first
 
-**Amended 2026-08-05, before implementation**, to add staffing for `transit_hub` and `park` (§3). The
-two changes cannot ship separately: staffing `park` drops its net labour contribution to `4k − 1`, and
-at the originally specified `k = 0.5` that is +1, which measurement shows changes nothing. Releasing
-the amenity alone and adding staffing afterwards would ship a mechanic that is provably a no-op in
-between. `k` is therefore 1.0, not 0.5.
+**Amended twice on 2026-08-05, both before implementation.**
+
+*First amendment* added staffing for `transit_hub` and `park`. The two changes cannot ship
+separately: staffing `park` drops its net labour contribution, and at the originally specified
+`k = 0.5` the net is +1, which measurement shows changes nothing. Releasing the amenity alone and
+adding staffing afterwards would ship a mechanic that is provably a no-op in between. `k` is
+therefore 1.0, not 0.5.
+
+*Second amendment* extended staffing to `power_plant` and `water_plant` and raised `residential`
+labour production from 4.0 to 5.0. Staffing two types but not the other two was the weakest line in
+this document — a reactor with no operators beside a park with a groundskeeper — and measurement
+showed the extension is *better* on every axis once housing supplies 5: no support set is lost (the
+first amendment lost one), the guide's `capacities` block returns to within a single cell of its
+original values, housing stops eroding, and income rises further. §3 carries the figures. The cost is
+four hand-derived test fixtures that must be re-derived; §8 records it.
 
 ## 1. Problem
 
@@ -34,8 +44,8 @@ output is 8 waste, so letting one rot costs almost nothing.
 ### Non-goals
 
 * **No new resource.** The six-resource vocabulary is unchanged.
-* **No staffing for `power_plant` or `water_plant`.** They stay automated. This matters for the
-  reversal §3 records: labour must not become universal.
+* **No labour draw on `residential`.** It is the sole *source* of labour; a house does not employ
+  anyone to be a house. This is the one exemption, and it is what keeps the rule statable.
 * **No change to `park`'s water, traffic or money consumption.** Water 18 in particular stays —
   thirst is `park`'s character and, as §4 shows, the constraint that actually bounds it.
 * **No adjacency or service radius.** `docs/PLAYING.md` records that position does not matter
@@ -73,17 +83,23 @@ cannot punish.
 
 ### The algebra that makes this work
 
-With `H` housing and `P` parks, below the cap:
+With `H` housing and `P` parks, and `L` the labour a housing block produces (5.0 after §3), below the
+cap:
 
 ```
-labour_supply = 4H × (1 + kP/H) = 4H + 4kP
+labour_supply = LH × (1 + kP/H) = LH + LkP
 ```
 
-The ratio multiplier **collapses to a constant gross bonus of `4k` per park** — with `k = 1.0`,
-exactly **+4 labour per healthy park**, independent of city size. Verified numerically at
-`(H,P) = (6,6), (6,3), (12,4), (10,10)`: every case matches `4H + 4kP` to floating-point equality.
+The ratio multiplier **collapses to a constant gross bonus of `Lk` per park** — with `L = 5.0` and
+`k = 1.0`, exactly **+5 labour per healthy park**, independent of city size. Verified numerically at
+`(H,P) = (6,3), (12,4), (10,5), (8,2)`: every case matches `LH + LkP` to floating-point equality.
 
-Net of the park's own 1 labour (§3), a healthy park below the cap is worth **+3 labour**.
+Net of the park's own 1 labour (§3), a healthy park below the cap is worth **+4 labour**.
+
+**`L` and `k` are coupled through the legend.** The legend renders `signed/1`, which rounds, so `Lk`
+must be a whole number or the cell shows a false figure. `L = 5, k = 1.0` gives 5; `k = 0.75` would
+give 3.75 and render as `+3` while supplying 2.75 net. Any future change to either constant has to
+preserve the integrality of `Lk`.
 
 Three consequences, and they are why this shape was chosen over the alternatives in §7:
 
@@ -94,21 +110,63 @@ Three consequences, and they are why this shape was chosen over the alternatives
 
 ## 3. Staffing
 
-Two consumption tables gain a labour entry. Nothing else about them changes.
+Four consumption tables gain a labour entry, and `residential`'s labour production rises to absorb
+them. The rule is one clause: **every block needs staff except the homes the staff live in.**
 
-| type | labour | rationale |
+| type | labour drawn | rationale |
 |---|---|---|
-| `transit_hub` | **2.0** | Stations and services are staffed. Small against `industrial`'s 12 |
-| `park` | **1.0** | Grounds need keeping. The smallest whole number that has any effect |
+| `industrial` | 12.0 *(unchanged)* | |
+| `commercial` | 8.0 *(unchanged)* | |
+| `transit_hub` | **2.0** | Stations and services are staffed |
+| `power_plant` | **1.0** | Operators. A reactor is not unattended |
+| `water_plant` | **1.0** | Same, and symmetric with power — the two are the same kind of thing |
+| `park` | **1.0** | Grounds need keeping |
+| `residential` | **none** | The source of labour, not a consumer of it |
+
+And one production change:
+
+| type | before | after |
+|---|---|---|
+| `residential` | labour 4.0, money 1.0 | **labour 5.0**, money 1.0 |
+
+**`residential` at 5.0 is what makes the rest viable, and it very nearly restores the reference
+table.** Measured by regenerating the guide's `capacities` block against the original committed
+values:
+
+| support set | original | four staffed, `residential` 4 | four staffed, `residential` 5 |
+|---|---|---|---|
+| 2 power, 1 water, 1 ind, 1 transit, 1 comm | 5–5 | *(dropped by the first amendment)* | **5–5** |
+| 2 power, 2 water, 1 ind, 1 transit, 1 comm | 5–7 | 7 only | **6–7** |
+| 3 power, 3 water, 2 ind, 2 transit, 2 comm | 10–12 | **none — non-viable** | **10–12** |
+
+With `residential` at 4 and all four types staffed, the largest documented support set stops existing
+and the middle one collapses to a single viable residential count. At 5, the smallest and largest sets
+return to *exactly* their original bands and only one cell in the whole block moves. So the first
+amendment's loss of a support set is undone rather than deepened.
 
 **`transit_hub` at 2.0 rather than 3.0 is free.** Measured at budgets 900 and 2000, the optimal city
-is identical at either value, so the change takes the lower end and disturbs the documented
-equilibrium less.
+is identical at either value, so this takes the lower end.
 
-**`park` at 1.0 is not free — it forces `k`.** Park's net contribution is `4k − 1`, so at the
-originally specced `k = 0.5` the net is +1, and the amenity becomes a total no-op: measured under
-staffing at budget 900, `k` at 0.0, 0.25 and 0.5 all produce the *same* optimum (income 48, 2 parks,
-8 residential). §4 records the search that sets `k = 1.0`.
+**`park` at 1.0 is not free — it forces `k`.** Park's net contribution is `Lk − 1`, so a `k` that
+leaves the net at +1 makes the amenity a no-op. §4 records the search.
+
+### This reverses a documented decision, and replaces its rule
+
+The money-and-labour design (2026-08-02) listed as an explicit non-goal: "No labour requirement on
+`power_plant`, `water_plant`, `transit_hub` or `park`. Staffing every type would make labour a
+near-universal tax and flatten the distinction being drawn."
+
+All four are now staffed, so that non-goal is fully reversed rather than half-reversed. The concern
+behind it is real and is answered differently: labour is no longer a *distinction between types*, it
+is a **cost of building anything that is not housing**. That is a cleaner rule than the one it
+replaces — the old line ("industry and commerce are staffed, infrastructure is not") had no
+defensible reason why a transit hub or a power plant runs unattended, and the intermediate line the
+first amendment drew ("utilities are automated") was weaker still.
+
+What keeps labour from being a flat tax on everything is the exemption, not the omissions:
+`residential` alone produces labour and consumes none, so every non-housing block placed increases the
+housing the city needs. That is the pressure the original spec wanted, expressed as a rule with one
+exception instead of a table with four.
 
 **Staffing is what gives `park` teeth on the downside.** The amenity is health-weighted; consumption
 never is. So a park at zero health provides **no** amenity while still drawing its full 1 labour, 18
@@ -118,66 +176,46 @@ else. This is the asymmetry the engine is built on, finally applying to `park`.
 **It also makes the ratio cap nearly redundant** (§4): a staffed park limits its own usefulness, so
 water and build cost bind before the ratio does in any ordinary city.
 
-### This reverses half of a documented decision
-
-The money-and-labour design (2026-08-02) listed as an explicit non-goal: "No labour requirement on
-`power_plant`, `water_plant`, `transit_hub` or `park`. Staffing every type would make labour a
-near-universal tax and flatten the distinction being drawn."
-
-Two of those four are now staffed. The reasoning that survives: `power_plant`, `water_plant` and
-`residential` still draw no labour, so **four of seven types** consume it and the tax is not
-universal. The distinction is narrower than it was, and deliberately so — the original line drew
-"industry and commerce are staffed, infrastructure is not", and the new line draws "utilities are
-automated, everything people use is staffed", which is the more defensible cut. Recorded rather than
-glossed, because a reader of that spec will otherwise find it contradicted with no explanation.
-
 ## 4. Why these constants
 
 Settled by search, not argument. The search enumerates every combination of the seven types within
 stated bounds, keeps those where all six resources are satisfied at full health and money does not run
 a long-run deficit, and reports the highest-income city within a build budget.
 
-### `k`, with staffing held fixed at transit 2 / park 1, budget 900
+### `k`, with all four types staffed and `residential` at 5, budget 900
 
 | k | best income | parks | residential | multiplier |
 |---|---|---|---|---|
-| 0.0 | 48 | 2 | 8 | ×1.0 |
-| 0.25 | 48 | 2 | 8 | — |
-| 0.5 | 48 | 2 | 8 | — |
-| 0.75 | 50 | 1 | 7 | — |
-| **1.0** | **62** | **5** | **6** | **×1.83** |
-| 2.0 | 99 | 4 | 5 | ×2.6 |
+| 0.0 | 50 | 1 | 7 | ×1.0 |
+| 0.5 | 50 | 1 | 7 | ×1.07 |
+| 0.75 | 74 | 3 | 7 | ×1.32 |
+| **1.0** | **74** | **3** | **7** | **×1.43** |
+| 1.5 | 99 | 4 | 5 | ×2.2 |
 
-**`k = 1.0` is the smallest value that does real work.** Below it the amenity is indistinguishable
-from absent — 0.0, 0.25 and 0.5 give byte-identical optima. `k = 0.75`, which would hold park's net at
-+2, is measured *worse for park* than 0.5: the optimiser takes one park and a cheaper shape.
+**`k = 1.0` is the value to take**, for two reasons rather than one. It clears the threshold — at 0.5
+the amenity is indistinguishable from absent, giving a byte-identical optimum to `k = 0.0`. And it is
+the smallest value at or above the threshold that keeps `Lk` a whole number (§2): `k = 0.75` reaches
+the same optimum but makes the gross bonus 3.75, which the legend would round to a figure it does not
+supply.
 
-So the staffing tax shifts the whole usable band upward. The unstaffed additive experiment found net
-+2 per park to be the sweet spot and net +3 to start eroding housing; under staffing, net +2 is
-unreachable without the mechanic collapsing, and net +3 (`k = 1.0`) is the working value. §6 records
-the erosion that comes with it.
+**Housing does not erode at `k = 1.0`.** Residential sits at 7 both with the amenity and without it,
+and at budget 2000 it is 17 without and 16 with. This is a direct improvement on the first
+amendment's numbers, where residential fell from 8 to 6 — because housing supplying 5 labour instead
+of 4 makes it a better labour source, so parks stop competing with it and start complementing it.
 
-**`k = 2.0` overshoots.** Income 99 is a large jump, but residential falls to 5 and the multiplier
-reaches ×2.6 — each home fielding more than two and a half times its own workforce.
+**`k = 1.5` overshoots.** Income 99, but residential falls to 5 and the multiplier reaches ×2.2.
 
 ### The cap
 
-| cap | budget 900 | budget 2000 |
-|---|---|---|
-| 1.0 | income 48, ratio 0.25 | income 139, ratio 1.08, ×2.0 |
-| 2.0 | income 48, ratio 0.25 — **identical** | — |
-| 3.0 | income 48, ratio 0.25 — **identical** | — |
-| uncapped | — | income 141, ratio 1.08, ×2.08 |
+Measured under the first amendment's tables, the cap bound at ratio 1.08 at budget 2000. **Under this
+version it never binds in measured play**: the optimum's park-to-housing ratio is 0.43 at budget 900
+and 0.19 at budget 2000, because housing at 5 labour needs fewer parks to reach any given labour
+target. Caps of 1.0, 2.0 and 3.0 gave byte-identical optima even before `residential` rose.
 
-**At small scale the cap is inert.** Caps of 1.0, 2.0 and 3.0 give identical optima, because the
-optimum's park-to-housing ratio is 0.25 — nowhere near any of them. A staffed park is bounded by
-water and build cost long before the ratio.
-
-**In a large city it binds, and costs almost nothing.** At budget 2000 best play sits at ratio 1.08,
-just above parity, and capping costs 1.4% of income (139 against 141). So the cap stays: it is
-irrelevant in the cities players actually build and a cheap guardrail against a water-rich city
-converting parks into unbounded labour. Kept deliberately as a bound that does not bite, which is
-recorded here so nobody later removes it as dead weight or tunes it as though it were live.
+It stays at 1.0 anyway, as a bound that does not bite: without it, a water-rich city could push the
+ratio and therefore the multiplier arbitrarily high, and the cost of keeping it is measured at zero.
+Recorded explicitly so nobody later removes it as dead weight *or* tunes it as though it were live —
+it is neither.
 
 **Water remains the physical brake.** Each park draws 18 against a free baseline of 40, so two parks
 is the ceiling with no water plant; beyond that every park needs waterworks, which need power. The cap
@@ -269,7 +307,7 @@ production term, since the amenity is not in the production table:
 
 | state | amenity | park's own labour | cell |
 |---|---|---|---|
-| below the cap | +4 | −1 | **+3** |
+| below the cap | +5 | −1 | **+4** |
 | at or above the cap | 0 | −1 | **−1** |
 
 That `−1` is a real improvement on the `+0` the un-staffed design would have shown: over-provisioning
@@ -277,7 +315,7 @@ parks does not merely stop helping, it costs labour, and the cell says so.
 
 This **keeps** `marginal_cell/2`'s documented contract — "what one more block of this type would do" —
 and is exactly that figure. What it relaxes is the parenthetical claim that the figure is "a property
-of the type, fixed, not of the current city": the magnitude is fixed at `4k` by §2's algebra, but
+of the type, fixed, not of the current city": the magnitude is fixed at `Lk` by §2's algebra, but
 whether the city is saturated is city state. That comment must be updated, since a reader trusting the
 old wording will not expect the cell to move.
 
@@ -334,35 +372,35 @@ because it is not binding.
 
 ## 8. Balance and accepted consequences
 
-**The smallest documented support set stops existing.** Measured by regenerating the guide's
-`capacities` block with staffing applied:
+**Every documented support set survives, and the reference table barely moves.** Measured by applying
+the whole change and regenerating the guide: one cell in the `capacities` block changes (the middle
+set's minimum, 5 → 6) and no set is lost. §3 carries the table. `PlayingGuide`'s `@support_sets` needs
+no edit — a conclusion that only holds because `residential` rose to 5, and one the first amendment
+could not reach.
 
-| support set | before | after |
-|---|---|---|
-| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 5–5 residential | **none — non-viable** |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 5–7 | 6–7 |
-| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 10–12 | 11–12 |
+**Housing does not erode.** At budget 900 the optimum holds 7 residential with the amenity and 7
+without it; at budget 2000 it is 16 with and 17 without. Parks stop competing with housing as a labour
+source because housing became a better one. This is the clearest gain from raising `residential` to 5:
+the first amendment's numbers had residential falling from 8 to 6.
 
-Transit's 2 labour takes that set's labour demand to 22, needing 6 residential, while its single water
-plant caps residential at 5. The band is empty. `PlayingGuide`'s `@support_sets` must therefore drop
-`{2, 1, 1, 1, 1}` — the smallest viable set becomes `{2, 2, 1, 1, 1}` at 7 support tiles — and the
-comment above that list, which currently explains why `{1,1,1,1,1}` is absent, needs the same
-explanation for `{2,1,1,1,1}`. Left in place, the published guide would carry a row of `none none none
-none`, which the generator renders without complaint.
-
-**Housing erodes somewhat.** At budget 900 the optimum moves from 8 residential (amenity off) to 6
-(`k = 1.0`). Housing remains mandatory and substantial — at budget 2000 the optimum is 14 parks against
-13 residential, close to parity — but net +3 labour per park sits at the upper end of the band the
-additive experiment found safe, and §4 explains why net +2 is not reachable under staffing. Accepted
-with the numbers on the record rather than hidden.
+**Four hand-derived test fixtures must be re-derived, and this is the real cost of the change.**
+Staffing `power_plant` and `water_plant` breaks the premises of four fixtures in
+`simulation_calculator_test.exs` that compute exact satisfactions in their comments — a power plant
+whose worst ratio was water's 0.95 now has labour's 0.0 and takes full decay instead of 0.30. Each
+needs one residential block added to supply labour, and its water plant's health re-solved against the
+new water demand of 86.0: measured, 30.3 → **41.7** for the sub-rounding fixture and 24.1333 →
+**34.5333** for the status-flip one. Both were verified by running the suite green, and the plan
+carries the tested values. Delicate rather than hard, but this is exactly the shape of change that has
+produced tests that pass while checking nothing on this project before.
 
 **`park` becomes a type you can over-build, and now it hurts.** Past parity, extra parks add water,
 money *and* labour demand for no labour gain. The legend's `−1` is the signal. A real trap, but a
 legible one, which today's park is not.
 
-**Labour gets tighter city-wide**, which is what makes the amenity matter. The min-residential column
-rises for every surviving support set, so a player building a support set with too little housing now
-starves for staff sooner.
+**Labour becomes the cost of building anything that is not housing.** That is the point of the rule in
+§3, and it is what makes the amenity matter: every non-residential block placed raises the housing the
+city needs, so a player who builds support without building homes starves for staff rather than for
+power.
 
 **Two mechanics govern labour**: a production table and a multiplier. A reader of `@production_table`
 alone will not find the amenity rule. Mitigated by the legend cell and the guide's constants block,
@@ -375,10 +413,13 @@ say it, because labour will recover more slowly than the housing count suggests.
 
 ## 9. Documentation
 
-**`consumption` block** picks up both staffing entries automatically. Verified by regenerating it:
-`park` gains labour 1 and `transit_hub` labour 2.
+**`consumption` block** picks up all four staffing entries automatically. Verified by regenerating it:
+`park` and both plants gain labour 1, `transit_hub` labour 2.
 
-**`capacities` block** changes as tabulated in §8, and `@support_sets` must be edited alongside it.
+**`production` block** changes too, which the first amendment did not touch: `residential` reads
+`labour 5, money 1`.
+
+**`capacities` block** moves by exactly one cell (§8) and `@support_sets` needs **no** edit.
 
 **`constants` block gains the amenity coefficient and ceiling.** Derived by *measurement*, not by
 reading the attributes — matching how `PlayingGuide` already handles the decay and regeneration rates
@@ -386,14 +427,14 @@ reading the attributes — matching how `PlayingGuide` already handles the decay
 duplicated here"): build a city with known housing and parks, read labour supply, solve for `k`, then
 push the park count past parity and observe where supply stops rising.
 
-**`production` block is unchanged**, and that is a seam worth naming: amenity is not production, so
-`park` still reads "waste 8" there. The guide carries the rule in `constants` and in prose instead.
-Putting a multiplier into a table of additive rates would misrepresent it.
+**`park`'s `production` row is still just "waste 8"**, and that is a seam worth naming: amenity is not
+production, so no table shows park's labour effect. The guide carries the rule in `constants` and in
+prose instead. Putting a multiplier into a table of additive rates would misrepresent it.
 
 **Prose rewrites.** The `park` paragraph in the consumption reference stops being "usually a trap" and
 becomes a description of provision. The min-residential explanation currently names `industrial` and
-`commercial` as the types needing workers and must add `transit_hub` and `park`. The rescue section
-gains the double-decay note above.
+`commercial` as the types needing workers and must instead state the rule: everything except
+`residential` draws staff. The rescue section gains the double-decay note above.
 
 ## 10. Testing
 
@@ -407,12 +448,14 @@ covered.
 
 * **No parks ⇒ multiplier is exactly 1.0**, and labour supply is unchanged from today. Pins the no-op
   case so the multiplier cannot silently apply itself everywhere.
-* **Parity ⇒ exactly ×2.0.** Equal effective housing and parks.
+* **Parity ⇒ exactly ×2.0.** Equal effective housing and parks. With `L = 5`, a 6-housing
+  6-park city supplies exactly 60.0.
 * **Above parity ⇒ still ×2.0.** The cap. Kills a missing `min/2`, which nothing else catches —
   asserted well past the ratio, not merely at it.
-* **`4k` gross per park below the cap.** For several `(H, P)` pairs, labour supply equals `4H + 4kP`
-  exactly. This identity pins `k`, the legend figure and the balance work to each other, so it is
-  asserted over several cases rather than one worked example.
+* **`Lk` gross per park below the cap.** For several `(H, P)` pairs, labour supply equals `LH + LkP`
+  exactly — 45.0, 80.0, 75.0 and 50.0 for `(6,3), (12,4), (10,5), (8,2)`. This identity pins `L`, `k`,
+  the legend figure and the balance work to each other, so it is asserted over several cases rather
+  than one worked example.
 * **No housing ⇒ labour supply exactly 0.0, and no raise**, for a city with many parks. Two claims in
   one situation: the arithmetic guard and the design property. A test asserting only `0.0` would pass a
   version that crashed before returning, so the absence of a raise is asserted explicitly.
@@ -421,35 +464,37 @@ covered.
 
 ### Staffing
 
-* **`transit_hub` and `park` each draw their labour**, and it is **not** health-scaled: a node at 0
-  health still contributes its full labour demand. The second half is the point of putting staffing on
-  the consumption side, so it is asserted directly rather than inferred from the table.
+* **All four staffed types draw their labour**, and it is **not** health-scaled: a node at 0 health
+  still contributes its full labour demand. The second half is the point of putting staffing on the
+  consumption side, so it is asserted directly rather than inferred from the table.
 * **A dead park is a net labour drain.** Zero amenity contribution and full consumption in the same
   city. This is the behaviour §3 claims staffing buys, so it gets its own test.
-* **`power_plant`, `water_plant` and `residential` still draw no labour.** The non-goal in §3 is a
-  design commitment; without a test, a future table edit erases it silently.
+* **`residential` draws no labour, and produces 5.0.** The sole exemption in §3's rule is a design
+  commitment; without a test, a future table edit erases it silently. The production figure is pinned
+  because `L` is half of the `Lk` integrality constraint (§2).
 
 ### `amenity_marginal_labour`
 
-* **Equals `4k` below the cap and `0.0` above it.**
+* **Equals `Lk` = 5.0 below the cap and `0.0` above it.**
 * **Is the true difference at the boundary.** A city positioned so one more park crosses the cap gets
   a value strictly between 0 and `4k` — the case the "`4k` or zero" shortcut gets wrong, and therefore
   the case that justifies computing a difference.
 
 ### Presentation
 
-* **Park's labour cell renders `+3`, and `−1` when saturated** — both directions, since a hardcoded
+* **Park's labour cell renders `+4`, and `−1` when saturated** — both directions, since a hardcoded
   string satisfies either alone.
-* **`transit_hub`'s labour cell renders `−2`** through the ordinary path.
+* **`transit_hub`'s labour cell renders `−2` and `power_plant`'s `−1`** through the ordinary path.
 * **Other types' em dashes are unaffected.** Positive case first: assert a type still renders `—` for
   a resource it does not touch, so the park special case cannot leak into the general path.
 * **The Metrics amenity line renders two decimals** and moves when parks are placed.
 
 ### Documentation
 
-* **`playing_guide_test.exs` passes with the regenerated blocks**, and `@support_sets` no longer
-  contains a set that yields `none`. The second is worth asserting rather than eyeballing: a `none`
-  row is valid output, so nothing else fails if one is published.
+* **`playing_guide_test.exs` passes with the regenerated blocks**, and no support set yields `none`.
+  Worth asserting rather than eyeballing: a `none` row is valid generator output, so nothing else
+  fails if one is published. It passes today, but it is the assertion that would have caught the first
+  amendment's lost support set.
 
 ### Not needed
 

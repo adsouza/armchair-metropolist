@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `park` worth building by having parks multiply the labour their housing supplies, and staff `transit_hub` and `park` so both draw a small amount of labour.
+**Goal:** Make `park` worth building by having parks multiply the labour their housing supplies, and staff every block except housing so labour becomes the cost of building anything that is not a home.
 
-**Architecture:** Two consumption-table entries (pure data), plus one new step in `SimulationCalculator.total_supply/1` that scales the labour figure by an amenity multiplier derived from effective parks per effective housing block. The multiplier reaches the UI on the `SimulationMetrics` struct, because the boundary graph bars the web layer from `Domain.Services`. Nothing persisted changes shape, so there is no snapshot migration.
+**Architecture:** Five table entries (pure data — four types gain a labour draw, `residential`'s labour output rises 4 → 5), plus one new step in `SimulationCalculator.total_supply/1` that scales the labour figure by an amenity multiplier derived from effective parks per effective housing block. The multiplier reaches the UI on the `SimulationMetrics` struct, because the boundary graph bars the web layer from `Domain.Services`. Nothing persisted changes shape, so there is no snapshot migration.
 
 **Tech Stack:** Elixir 1.20.2 / OTP 29, Phoenix LiveView, ExUnit + StreamData, `boundary` compiler, `mix check`.
 
@@ -15,9 +15,11 @@
 - **The amenity rule is** `1 + k × min(parks / housing, cap)` applied to total labour supply, with `k = 1.0` (`@amenity_per_housing`) and `cap = 1.0` (`@max_amenity_ratio`). Max multiplier ×2.0.
 - **`housing` and `parks` are health-weighted**, not counted: `Σ health / 100` over nodes of that type.
 - **`housing == 0.0` returns `1.0` via an explicit guard.** Erlang does not follow IEEE 754 — `0.0 / 0.0` raises `ArithmeticError`. This is not optional.
-- **Staffing values:** `transit_hub` labour `2.0`, `park` labour `1.0`. Both go in `@consumption_table`, never in `@production_table`.
-- **`power_plant`, `water_plant` and `residential` must continue to draw no labour.**
-- **Every figure in a domain table stays a whole number.** The legend's `signed/1` rounds, so a fractional entry would render a false value.
+- **Staffing values:** `transit_hub` `2.0`, `power_plant` `1.0`, `water_plant` `1.0`, `park` `1.0`. All go in `@consumption_table`, never in `@production_table`, so the demand is never health-scaled.
+- **`residential` draws no labour and produces `5.0` of it.** It is the sole exemption from the staffing rule and the sole source of labour.
+- **`L × k` must stay a whole number**, where `L` is `residential`'s labour output and `k` is `@amenity_per_housing`. At `L = 5, k = 1.0` the gross bonus per park is 5. The legend's `signed/1` rounds, so a fractional product would render a figure the engine does not supply.
+- **Every figure in a domain table stays a whole number**, for the same reason.
+- **Do not edit `PlayingGuide`'s `@support_sets`.** Every documented support set stays viable under these values; a set reading `none` means something else is wrong.
 - **Test discipline (non-negotiable, from `docs/superpowers/2026-07-30-follow-ups.md`):** every new test must be seen to fail before it is trusted — break the code, confirm red, restore. Never write a `refute` without asserting the positive case first.
 - **`mix check` must exit 0** before the final commit. It runs version checks, `format --check-formatted`, `compile --force --warnings-as-errors`, `sobelow`, `deps.audit`, and `test --cover` with a 90% coverage threshold.
 - **Do not restore a file with `git checkout`.** When you mutate code to verify a test fails, restore it with an inverse edit or from a copy you made first. `git checkout` here has destroyed uncommitted work before.
@@ -29,11 +31,12 @@
 
 | File | Responsibility | Task |
 |---|---|---|
-| `lib/armchair_metropolist/domain/entities/node.ex` | Modify: two `@consumption_table` entries | 1 |
+| `lib/armchair_metropolist/domain/entities/node.ex` | Modify: four `@consumption_table` entries + `residential`'s labour output | 1 |
 | `test/armchair_metropolist/domain/entities/node_test.exs` | Modify: the literal table assertions; add a staffing-boundary test | 1 |
-| `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` | Modify: one fixture; add amenity + staffing tests | 1, 2, 3 |
-| `test/support/playing_guide.ex` | Modify: `@support_sets`; add measured amenity constants | 1, 5 |
+| `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` | Modify: **four** hand-derived fixtures re-solved; add amenity + staffing tests | 1, 2, 3 |
+| `test/support/playing_guide.ex` | Modify: add measured amenity constants (**not** `@support_sets`) | 5 |
 | `docs/PLAYING.md` | Regenerate blocks; rewrite three prose passages | 1, 5 |
+| `test/docs/playing_guide_test.exs` | Modify: add a support-set viability test | 1 |
 | `lib/armchair_metropolist/domain/services/simulation_calculator.ex` | Modify: amenity attributes, `total_supply/1`, `metrics/1` | 2, 3 |
 | `lib/armchair_metropolist/domain/entities/simulation_metrics.ex` | Modify: two fields, `build/3` | 3 |
 | `test/armchair_metropolist/domain/entities/simulation_metrics_test.exs` | Modify: add default-field assertions | 3 |
@@ -42,41 +45,55 @@
 
 ---
 
-## Task 1: Staff `transit_hub` and `park`
+## Task 1: Staff every type except housing, and raise housing's output
 
-Two table entries. The fallout is larger than the change: three existing tests fail, and the guide's `capacities` block loses a row because a documented support set stops being viable.
+Five table entries: four consumption tables gain labour, and `residential`'s production rises from 4.0
+to 5.0 to absorb them. The fallout is much larger than the change — **seven** tests fail, and four of
+them are hand-derived fixtures whose exact arithmetic has to be re-solved. Every value below was
+verified by applying this change, running the suite green, and then restoring the tree.
 
 **Files:**
-- Modify: `lib/armchair_metropolist/domain/entities/node.ex:54-62`
-- Modify: `test/armchair_metropolist/domain/entities/node_test.exs:77`, `:99`
-- Modify: `test/armchair_metropolist/domain/services/simulation_calculator_test.exs:274`
-- Modify: `test/support/playing_guide.ex:50`
+- Modify: `lib/armchair_metropolist/domain/entities/node.ex:43-62`
+- Modify: `test/armchair_metropolist/domain/entities/node_test.exs`
+- Modify: `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`
 - Modify: `docs/PLAYING.md` (regenerated)
+- **Not** modified: `test/support/playing_guide.ex`. `@support_sets` needs no edit — every set stays
+  viable. Do not change it.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Node.consumption(:transit_hub)` gains `labour: 2.0`; `Node.consumption(:park)` gains `labour: 1.0`. Task 4 reads `Map.get(Node.consumption(:park), :labour, 0.0)`.
+- Produces: `Node.production(:residential)[:labour] == 5.0`; `Node.consumption/1` gains `labour` for
+  `power_plant` (1.0), `water_plant` (1.0), `transit_hub` (2.0) and `park` (1.0). Task 2's algebra
+  depends on `L = 5.0`; Task 4 reads `Map.get(Node.consumption(:park), :labour, 0.0)`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `test/armchair_metropolist/domain/entities/node_test.exs`, inside the same `describe` block as the existing table test:
+Add to `test/armchair_metropolist/domain/entities/node_test.exs`, in the same describe block as the
+existing table test:
 
 ```elixir
-    test "transit hubs and parks are staffed; utilities and housing are not" do
-      # Positive case first: without this, the refutations below are satisfied by a
+    test "everything but housing is staffed, and housing supplies the staff" do
+      # Positive cases first: without these, the refutation below is satisfied by a
       # consumption table that mentions labour nowhere at all.
-      assert Node.consumption(:transit_hub)[:labour] == 2.0
-      assert Node.consumption(:park)[:labour] == 1.0
       assert Node.consumption(:industrial)[:labour] == 12.0
+      assert Node.consumption(:commercial)[:labour] == 8.0
+      assert Node.consumption(:transit_hub)[:labour] == 2.0
+      assert Node.consumption(:power_plant)[:labour] == 1.0
+      assert Node.consumption(:water_plant)[:labour] == 1.0
+      assert Node.consumption(:park)[:labour] == 1.0
 
-      for type <- [:power_plant, :water_plant, :residential] do
-        refute Map.has_key?(Node.consumption(type), :labour),
-               "#{type} must draw no labour — see the park amenity spec, §3"
-      end
+      # The one exemption, and the whole reason the rule is statable.
+      refute Map.has_key?(Node.consumption(:residential), :labour),
+             "residential is the source of labour, not a consumer — see the park amenity spec, §3"
+
+      # Pinned because `L` is half of the `L x k` integrality constraint the legend
+      # depends on (spec §2): at L = 5 and k = 1.0 the gross bonus per park is 5.
+      assert Node.production(:residential)[:labour] == 5.0
     end
 ```
 
-Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`, in the `resource_stats/1` describe block:
+Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`, in the
+`resource_stats/1` describe block:
 
 ```elixir
     test "staffing demand is not scaled by health" do
@@ -96,194 +113,331 @@ Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs
 mix test test/armchair_metropolist/domain/entities/node_test.exs test/armchair_metropolist/domain/services/simulation_calculator_test.exs
 ```
 
-Expected: both new tests FAIL. The `node_test` one fails on `nil == 2.0`; the calculator one fails on `0.0 == 2.0`.
+Expected: both new tests FAIL — `nil == 2.0` in the first, `0.0 == 2.0` in the second.
 
-- [ ] **Step 3: Add the staffing entries**
+- [ ] **Step 3: Apply the table changes**
 
-In `lib/armchair_metropolist/domain/entities/node.ex`, replace the two `@consumption_table` lines:
+In `lib/armchair_metropolist/domain/entities/node.ex`, one production line:
 
 ```elixir
-    transit_hub: %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0},
+    residential: %{labour: 5.0, money: 1.0},
 ```
 
+and four consumption lines:
+
 ```elixir
+    power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0},
+    water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0, money: 5.0, labour: 1.0},
+    transit_hub: %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0},
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
 ```
 
-- [ ] **Step 4: Run the full suite and see exactly three pre-existing tests fail**
+- [ ] **Step 4: Run the full suite and confirm exactly seven failures**
 
 ```bash
 mix test
 ```
 
-Expected: `Result: 251/254 passed`, with these three failures — all of them correct failures that Steps 5–7 fix:
+Expected: `Result: 249/256 passed` — the 254 baseline plus Step 1's two tests, which now pass. Failing on:
 
-1. `node_test.exs:54` "match the specified supply/demand table" — asserts the tables literally.
-2. `simulation_calculator_test.exs:270` "worst ratio considers only resources the node consumes".
-3. `playing_guide_test.exs:21` — `docs/PLAYING.md` is now out of date.
+1. `node_test.exs` "match the specified supply/demand table" — literal table assertions.
+2. `simulation_calculator_test.exs` "enough housing staffs the industry and stops the decay".
+3. `simulation_calculator_test.exs` "worst ratio considers only resources the node consumes".
+4. `simulation_calculator_test.exs` "excludes a node whose health moves within the same rounded value".
+5. `simulation_calculator_test.exs` "computes resource stats once from the pre-tick map, whatever the node order".
+6. `simulation_calculator_test.exs` "includes a node whose status flips at unchanged rounded health".
+7. `playing_guide_test.exs` — the guide is out of date.
+
+If you get a different count, stop and investigate rather than pressing on. Steps 5–10 fix these
+seven and nothing else.
 
 - [ ] **Step 5: Update the literal table assertions**
 
-In `test/armchair_metropolist/domain/entities/node_test.exs`, two lines:
+In `test/armchair_metropolist/domain/entities/node_test.exs`:
+
+```elixir
+      assert Node.consumption(:power_plant) == %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0}
+```
+
+```elixir
+      assert Node.consumption(:water_plant) == %{
+               power: 25.0,
+               waste: 6.0,
+               traffic: 2.0,
+               money: 5.0,
+               labour: 1.0
+             }
+```
 
 ```elixir
       assert Node.consumption(:transit_hub) == %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0}
 ```
 
 ```elixir
+      assert Node.production(:residential) == %{labour: 5.0, money: 1.0}
+```
+
+```elixir
       assert Node.consumption(:park) == %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
 ```
 
-- [ ] **Step 6: Fix the "worst ratio" fixture**
+- [ ] **Step 6: Fix "enough housing staffs the industry"**
 
-That test starves power and asserts a park is untouched, because a park consumes no power. It used ten `commercial` blocks as power hogs — and `commercial` draws 8 labour each, so with no housing the city's labour satisfaction is now 0.0, the park's worst ratio is 0.0, and it decays for a reason the test is not about.
+Labour demand is now 14.0 — the industrial block's 12 plus 1 each for the power and water plants the
+fixture already contains. Supply is 3 residential x 5.0 = 15.0. Change two lines:
 
-`residential` is the right power hog: it draws power 15 and no labour, and it *produces* the labour the park now needs. In `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`, change one line:
+```elixir
+      assert stats.labour.demanded == 14.0
+      assert stats.labour.supplied == 15.0
+```
+
+`satisfaction == 1.0` still holds (15 >= 14) and needs no change. Update the comment's opening line,
+which is now wrong in both figures:
+
+```elixir
+      # 3 residential supply 15 labour against a demand of 14: the industrial block's
+      # 12, plus 1 each for the power and water plants below. The margin is deliberate
+      # slack — there is no residential count that makes this exact, because housing
+      # comes in units of 5.
+```
+
+- [ ] **Step 7: Fix "worst ratio considers only resources the node consumes"**
+
+This starves power and asserts a park is untouched, because a park consumes no power. It used ten
+`commercial` blocks as power hogs — and `commercial` draws 8 labour each, so with no housing the
+city's labour satisfaction is 0.0, the park's worst ratio is 0.0, and it decays for a reason the test
+is not about. Measured before the fix: the park lands on 74.0 against an asserted `>= 80.0`.
+
+`residential` is the right hog — it draws power 15, draws no labour, and *supplies* the labour the
+park now needs:
 
 ```elixir
       power_hogs = for x <- 1..10, do: Node.new(x, 1, :residential)
 ```
 
-Then update the comment above it so the next reader knows why the type matters:
+Extend the comment so the next reader knows the type is load-bearing:
 
 ```elixir
       # A park consumes water and traffic but no power, so a total blackout
       # must leave it untouched.
       #
       # The hogs are `residential`, not `commercial`: a park draws labour now, and
-      # `commercial` draws 8 each, so a commercial-only city has labour satisfaction
-      # 0.0 and the park would decay on labour rather than being untouched — passing
-      # the blackout premise while testing nothing. `residential` draws power and
-      # supplies the labour instead.
+      # `commercial` draws 8 each, so a commercial-only city has labour satisfaction 0.0
+      # and the park would decay on labour rather than being untouched — passing the
+      # blackout premise while testing nothing. `residential` draws power and supplies
+      # the labour instead.
 ```
 
-- [ ] **Step 6b: Document and pin `sub_rounding_city`'s newly starving parks**
+- [ ] **Step 8: Re-derive the two shared-shape fixtures**
 
-This fixture's test **passes** after staffing, but not because the fixture is unaffected. Measured: its three parks demand 3 labour against a supply of 0 — nothing here houses anyone — so labour satisfaction is `0.0`, each park takes the full `6.0` decay from `100.0` to `94.0`, and the delta grows from `["0:0"]` to `["0:0", "0:3", "1:3", "2:3"]`. The test survives only because its assertions name two node ids and never look at the parks or the delta's size.
+Failures 4 and 5 use the same five-node shape — a water plant, a power plant and three parks. Staffing
+breaks it at the root: the power plant now draws labour, nothing houses anyone, so labour satisfaction
+is 0.0 and the plant takes the full 6.0 decay to 84.0 instead of the 0.30 that put it on 89.7.
 
-It cannot be fixed by adding housing. Labour comes only from `residential`, `residential` draws water 12, and a water demand of exactly `74.0` is what puts the power plant on `89.7`. One residential block takes water satisfaction from `0.95` to `0.817` and destroys what the fixture exists to test.
+Adding one residential block supplies 5 labour against a demand of 5 (power 1 + water 1 + parks 3).
+But it also adds water 12, taking water demand from 74.0 to **86.0** — so the water plant's health must
+be re-solved to restore satisfaction 0.95: `supply = 0.95 x 86.0 = 81.7`, and `supply = 40 + 100h`
+gives `h = 41.7`.
 
-So document it and assert it. Append to the comment above `sub_rounding_city`:
+Verified: the power plant lands on 89.7 exactly as before, and the water plant regenerates 41.7 ->
+42.7, still crossing a rounding boundary (42 -> 43) so the delta is not trivially empty.
+
+In `sub_rounding_city/0`:
 
 ```elixir
-  # Since transit hubs and parks were staffed (2026-08-05) a sixth resource is in play:
-  # the three parks demand 3 labour against a supply of 0, because nothing here houses
-  # anyone. Labour satisfaction is 0.0, so each park takes the full 6.0 decay,
-  # 100.0 -> 94.0, and all three land in the delta.
+  defp sub_rounding_city do
+    map_with([
+      %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
+      %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
+      Node.new(0, 3, :park),
+      Node.new(1, 3, :park),
+      Node.new(2, 3, :park),
+      Node.new(5, 5, :residential)
+    ])
+  end
+```
+
+Replace the stale arithmetic in its comment — the old block derives water demand as 74.0 and describes
+a five-node city:
+
+```elixir
+  # A city where water is only *slightly* short, so the resulting decay is
+  # fractional and stays inside a single rounded health value.
   #
-  # Left that way deliberately, because it cannot be fixed without destroying the
-  # fixture: labour comes only from residential, residential draws water 12, and the
-  # water demand of exactly 74.0 is what puts the power plant on 89.7 — one residential
-  # block moves water satisfaction to 0.817. The decay is inert for what this fixture
-  # tests, since the power plant consumes no labour and its worst ratio is still water's
-  # 0.95, and the test now asserts the parks' presence in the delta so the behaviour is
-  # documented rather than incidental.
-```
-
-And add to the test, immediately after the existing `assert Map.has_key?(delta, "0:0")`:
-
-```elixir
-      # The three parks are in the delta too, and for a different reason than the water
-      # plant: labour satisfaction is 0.0 here, so each takes the full 6.0 decay.
-      # Asserted rather than tolerated, so a future change to park staffing surfaces as
-      # a failure here instead of as a silently different delta.
-      for id <- ["0:3", "1:3", "2:3"] do
-        assert Map.has_key?(delta, id), "a labour-starved park must enter the delta"
-      end
-```
-
-Run `mix test test/armchair_metropolist/domain/services/simulation_calculator_test.exs` and expect PASS. Then mutation-verify by reverting `park`'s `labour: 1.0` — the new loop must fail, proving it is pinned to staffing rather than to something else. Restore.
-
-- [ ] **Step 7: Drop the support set that is no longer viable**
-
-Transit's 2 labour takes the smallest documented set to 22 labour demand, needing 6 residential, while its single water plant caps residential at 5. The band is empty, and `residential_range/5` returns `nil`, which publishes a row of `none none none none`.
-
-In `test/support/playing_guide.ex`, replace `@support_sets` and extend its comment:
-
-```elixir
-  # These are solved, not guessed. {1,1,1,1,1} has NO viable residential count —
-  # industrial and commercial demand 20 labour (r >= 5) while power caps r at 4.
+  #   power    supply 40 + 120*0.900 = 148.0   demand 25 + 15 = 40.0        -> 1.0
+  #   water    supply 40 + 100*0.417 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
+  #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6 + 10 = 28.0    -> 1.0
+  #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
+  #   labour   supply 1*5.0          =   5.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
   #
-  # {2,1,1,1,1} was here until transit hubs were staffed (2026-08-05). Its labour
-  # demand is now 22, needing 6 residential, while its single water plant caps them
-  # at 5 — an empty band, which `residential_range/5` reports as nil and this block
-  # would publish as a row of "none". The smallest viable set now carries a second
-  # water plant.
-  @support_sets [{2, 2, 1, 1, 1}, {3, 3, 2, 2, 2}]
+  # The residential block is not decoration: since everything but housing is staffed
+  # (2026-08-05) this city draws 5 labour, and without a house to supply it labour
+  # satisfaction is 0.0 and *both* plants take the full 6.0 decay — which destroys the
+  # sub-rounding movement this fixture exists to produce. Its water draw of 12 is why the
+  # water plant sits at 41.7 rather than 30.3: water demand is 86.0 now, and 0.95 of that
+  # is 81.7 = 40 baseline + 41.7 health-scaled.
+  #
+  # Money is absent from the table because it is not meant to bind: demand is the water
+  # plant's 5 plus 3 per park = 14, against a supply of 1 from the residential block,
+  # covered as `carried` by `CityMap.new/2`'s default 500.0 grant.
+  #
+  # The power plant consumes water/waste/traffic/labour, so its worst ratio is exactly
+  # 0.95 (86.0 * 0.95 == 81.7) and its delta is -(1 - 0.95) * 6.0 = -0.30, taking it from
+  # 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the status stays :online, so its
+  # display signature does not move.
+  #
+  # The water plant sits at "0:0" and the power plant at "1:0" deliberately. Maps iterate
+  # in key order, so the water plant -- which regenerates from 41.7 to 42.7 this tick --
+  # is processed first. An implementation that recomputed resource stats per node would
+  # then hand the power plant a water supply of 82.7 (satisfaction 0.9616, health 89.77)
+  # instead of 81.7.
 ```
 
-- [ ] **Step 8: Add a test that no support set publishes "none"**
+Failure 5 keeps its own inline copy of the same node list. Apply the identical change there, and
+update its expected water-plant health:
 
-A `none` row is valid generator output, so nothing else fails if one is published. In `test/docs/playing_guide_test.exs`:
+```elixir
+      nodes = [
+        %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
+        %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
+        Node.new(0, 3, :park),
+        Node.new(1, 3, :park),
+        Node.new(2, 3, :park),
+        Node.new(5, 5, :residential)
+      ]
+```
+
+```elixir
+      assert_in_delta CityMap.get_node(forward, 0, 0).health, 42.7, 0.001
+```
+
+Its comment's per-node-recompute figures also move — replace `71.3 (satisfaction 0.9635, delta -0.219,
+health 89.78)` with `82.7 (satisfaction 0.9616, delta -0.230, health 89.77)` and `70.3 (satisfaction
+0.95, delta -0.30, health 89.7)` with `81.7 (satisfaction 0.95, delta -0.30, health 89.7)`.
+
+- [ ] **Step 9: Re-derive the status-flip fixture**
+
+Failure 6 needs the same treatment with a different target. It wants water satisfaction 0.86667 so the
+power plant's delta is -0.8, taking 60.4 to 59.6 — round 60 on both sides, status flipping to
+`:degraded`. With one residential added, water demand is again 86.0, so `supply = 0.86667 x 86.0 =
+74.533` and the water plant's health is `(74.533 - 40) = 34.5333`.
+
+```elixir
+      map =
+        map_with([
+          %Node{Node.new(1, 0, :power_plant) | health: 60.4, status: :online},
+          %Node{Node.new(0, 0, :water_plant) | health: 34.5333, status: :degraded},
+          Node.new(0, 3, :park),
+          Node.new(1, 3, :park),
+          Node.new(2, 3, :park),
+          Node.new(5, 5, :residential)
+        ])
+```
+
+And its comment's arithmetic:
+
+```elixir
+      # Fixture arithmetic. Water demand is the plant's 20, 3 parks at 18, and the
+      # residential block's 12 = 86; supply is the 40 baseline plus the water plant's
+      # health-scaled output. A water plant at 34.5333 gives 74.5333/86 = 0.86667
+      # satisfaction, so the power plant's delta is -(1 - 0.86667) * 6.0 = -0.8, taking
+      # 60.4 to 59.6. Waste, traffic and labour stay fully satisfied, so water is
+      # genuinely its worst — the residential block is what keeps labour at 1.0, since
+      # every type here but housing draws staff.
+```
+
+- [ ] **Step 10: Regenerate the guide**
+
+```bash
+REGENERATE_PLAYING_GUIDE=1 mix test test/docs/playing_guide_test.exs
+git --no-pager diff --no-ext-diff docs/PLAYING.md
+```
+
+Use `--no-ext-diff`: this repo configures difftastic and plain `git diff` is not a unified diff.
+
+Expected: exactly these changes, and **no row lost from the capacities block**:
+
+```
+-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
++| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 6 | **7** | 14 | 0.5 |
+-| `residential` | labour 4, money 1 |
++| `residential` | labour 5, money 1 |
+-| `park` | — | 18 | — | 2 | — | 3 |
+-| `power_plant` | — | 20 | 12 | 3 | — | — |
++| `park` | — | 18 | — | 2 | 1 | 3 |
++| `power_plant` | — | 20 | 12 | 3 | 1 | — |
+-| `transit_hub` | 8 | — | 2 | — | — | 4 |
+-| `water_plant` | 25 | — | 6 | 2 | — | 5 |
++| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
++| `water_plant` | 25 | — | 6 | 2 | 1 | 5 |
+```
+
+If a capacities row reads `none none none none`, a support set has become unviable and something above
+is wrong — do not commit it and do not "fix" it by editing `@support_sets`.
+
+- [ ] **Step 11: Add a test that no support set publishes "none"**
+
+A `none` row is valid generator output, so nothing else fails if one is published. In
+`test/docs/playing_guide_test.exs`:
 
 ```elixir
   test "every documented support set is viable" do
     capacities = PlayingGuide.blocks()["capacities"]
 
-    # Positive case first: a `refute` against "none" is trivially satisfied by an
-    # empty block, so prove the block has real rows before refuting the bad one.
+    # Positive case first: a `refute` against "none" is trivially satisfied by an empty
+    # block, so prove the block has real rows before refuting the bad one.
     assert capacities =~ "residential per tile"
     assert capacities =~ ~r/\| \*\*\d+\*\* \|/, "expected at least one measured row"
 
     refute capacities =~ "none",
-           "a support set has no viable residential count — remove it from @support_sets"
+           "a support set has no viable residential count — its labour demand probably " <>
+             "outgrew what its water plants can house"
   end
 ```
 
-- [ ] **Step 9: Regenerate the guide**
-
-```bash
-REGENERATE_PLAYING_GUIDE=1 mix test test/docs/playing_guide_test.exs
-```
-
-Expected: `docs/PLAYING.md regenerated. Review and commit the diff.`
-
-Review it. It must be exactly these four changes and nothing else:
-
-```
--| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
--| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
--| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
-+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 6 | **7** | 14 | 0.5 |
-+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 11 | **12** | 24 | 0.5 |
-...
--| `park` | — | 18 | — | 2 | — | 3 |
-+| `park` | — | 18 | — | 2 | 1 | 3 |
--| `transit_hub` | 8 | — | 2 | — | — | 4 |
-+| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
-```
-
-Use `git diff --no-ext-diff docs/PLAYING.md` — this repo configures difftastic, and the default `git diff` output is not a unified diff.
-
-- [ ] **Step 10: Run the full suite**
+- [ ] **Step 12: Run the full suite**
 
 ```bash
 mix test
 ```
 
-Expected: `Result: 254 passed (5 properties, 249 tests)`.
+Expected: `Result: 257 passed` — the 254 baseline, plus Step 1's two tests, plus Step 11's viability
+test. (The trial run that verified every value in this task reached 254 with the fixtures fixed and
+none of the three new tests written, so 257 is that figure plus three.)
 
-- [ ] **Step 11: Mutation-verify the two new tests**
+- [ ] **Step 13: Mutation-verify**
 
-For each, break the code, confirm red, restore by inverse edit (**not** `git checkout`):
+Break each, confirm the named test goes red, restore by inverse edit (**never** `git checkout` — it has
+destroyed uncommitted work on this repo before):
 
-1. Change `park`'s `labour: 1.0` to `labour: 2.0` → the `node_test` staffing test fails. Restore.
-2. In `simulation_calculator.ex`, change `total_demand/1` to scale by health — replace `node.type |> Node.consumption()` with `Node.effective_production(node)` temporarily — and confirm "staffing demand is not scaled by health" fails on the dead case. Restore.
+1. `residential` production back to `labour: 4.0` → the node_test staffing test fails, and so does
+   "enough housing staffs the industry" (supply 12 not 15). Two failures is correct.
+2. Add `labour: 1.0` to `residential`'s *consumption* → the `refute` in the staffing test fails.
+3. Remove `power_plant`'s `labour: 1.0` → the re-derived fixtures fail, because their labour demand
+   drops to 4 and the arithmetic no longer matches.
+4. Make `total_demand/1` health-scale consumption → "staffing demand is not scaled by health" fails on
+   the dead case.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
-git add lib/armchair_metropolist/domain/entities/node.ex test/armchair_metropolist/domain/entities/node_test.exs test/armchair_metropolist/domain/services/simulation_calculator_test.exs test/support/playing_guide.ex test/docs/playing_guide_test.exs docs/PLAYING.md
-git commit -m "feat(domain): staff transit hubs and parks with labour
+git add lib/armchair_metropolist/domain/entities/node.ex test/armchair_metropolist/domain/entities/node_test.exs test/armchair_metropolist/domain/services/simulation_calculator_test.exs test/docs/playing_guide_test.exs docs/PLAYING.md
+git commit -m "feat(domain): staff every block except the homes the staff live in
 
-transit_hub draws 2 labour and park draws 1, on the consumption side so the
-demand is never health-scaled — a dead node keeps drawing its staff.
+power_plant and water_plant draw 1 labour, transit_hub 2, park 1, and residential
+rises from 4 to 5 labour to absorb them. Staffing on the consumption side, so the
+demand is never health-scaled: a dead node keeps drawing its staff.
 
-Drops {2,1,1,1,1} from the guide's support sets: its labour demand is now 22,
-needing 6 residential, while its single water plant caps them at 5. The band is
-empty, which would have published a row of \"none\"."
+residential at 5 is what makes this viable rather than destructive. At 4 the
+largest documented support set becomes non-viable and the middle one collapses to
+a single residential count; at 5 the smallest and largest return to exactly their
+original bands and one cell in the whole capacities block moves. @support_sets
+needs no edit.
+
+Four hand-derived fixtures re-solved against the new water demand of 86.0: the
+sub-rounding water plant moves 30.3 -> 41.7 and the status-flip one 24.1333 ->
+34.5333, both keeping their power plants on the same health as before."
 ```
-
 ---
 
 ## Task 2: The amenity multiplier
@@ -335,26 +489,26 @@ Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs
     end
 
     test "no parks leaves labour supply unmultiplied" do
-      assert labour_supplied(housing_and_parks(6, 0)) == 24.0
+      assert labour_supplied(housing_and_parks(6, 0)) == 30.0
     end
 
     test "one park per housing block is the maximum, x2.0" do
-      assert labour_supplied(housing_and_parks(6, 6)) == 48.0
+      assert labour_supplied(housing_and_parks(6, 6)) == 60.0
     end
 
     test "past parity the multiplier is capped" do
-      # Kills a missing `min/2`: uncapped this would be 6 residential x 4 x (1 + 20/6).
-      assert labour_supplied(housing_and_parks(6, 20)) == 48.0
+      # Kills a missing `min/2`: uncapped this would be 6 residential x 5 x (1 + 20/6).
+      assert labour_supplied(housing_and_parks(6, 20)) == 60.0
     end
 
-    test "below the cap each park adds a constant 4k labour, whatever the city size" do
-      # The identity that pins k, the legend's figure and the balance work together.
+    test "below the cap each park adds a constant L*k labour, whatever the city size" do
+      # The identity that pins L, k, the legend's figure and the balance work together.
       # Asserted over several shapes rather than one, because a single pair is also
-      # satisfied by formulas that are not this one.
+      # satisfied by formulas that are not this one. Expect 45.0, 80.0, 75.0, 50.0.
       for {housing, parks} <- [{6, 3}, {12, 4}, {10, 5}, {8, 2}] do
         assert labour_supplied(housing_and_parks(housing, parks)) ==
-                 4.0 * housing + 4.0 * parks,
-               "expected 4H + 4kP for H=#{housing} P=#{parks}"
+                 5.0 * housing + 5.0 * parks,
+               "expected LH + LkP for H=#{housing} P=#{parks}"
       end
     end
 
@@ -366,15 +520,16 @@ Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs
     end
 
     test "the amenity is health-weighted on the park side" do
-      assert labour_supplied(housing_and_parks(8, 4)) == 48.0
-      # 4 parks at half health is 2.0 effective parks against 8 housing: ratio 0.25.
-      assert labour_supplied(housing_and_parks(8, 4, park_health: 50.0)) == 40.0
+      assert labour_supplied(housing_and_parks(8, 4)) == 60.0
+      # 4 parks at half health is 2.0 effective parks against 8 housing: ratio 0.25,
+      # so 40.0 base x 1.25.
+      assert labour_supplied(housing_and_parks(8, 4, park_health: 50.0)) == 50.0
     end
 
     test "the amenity is health-weighted on the housing side" do
-      # 8 blocks at half health supply 16 labour and count as 4.0 effective housing,
+      # 8 blocks at half health supply 20 labour and count as 4.0 effective housing,
       # so 4 parks is parity and the multiplier caps at x2.0.
-      assert labour_supplied(housing_and_parks(8, 4, housing_health: 50.0)) == 32.0
+      assert labour_supplied(housing_and_parks(8, 4, housing_health: 50.0)) == 40.0
     end
   end
 ```
@@ -498,7 +653,7 @@ Expected: 254+ passing, no failures. If `playing_guide_test` fails here, the ame
 Break each, confirm the named test goes red, restore by inverse edit:
 
 1. Drop the `min/2`: `1.0 + @amenity_per_housing * (parks / housing)` → "past parity the multiplier is capped" fails.
-2. Set `@amenity_per_housing 0.5` → "each park adds a constant 4k" and both parity tests fail.
+2. Set `@amenity_per_housing 0.5` → "each park adds a constant L*k" and both parity tests fail.
 3. Replace `effective_count/2`'s health weighting with a plain count (`acc + 1.0`) → both health-weighted tests fail.
 4. Replace the `housing > 0.0` guard with `true` → "no housing means no labour" fails with `ArithmeticError`, confirming the guard is what prevents a crash.
 
@@ -509,7 +664,7 @@ git add lib/armchair_metropolist/domain/services/simulation_calculator.ex test/a
 git commit -m "feat(domain): parks multiply the labour their housing supplies
 
 labour supply x (1 + 1.0 * min(parks/housing, 1.0)), health-weighted on both
-sides. Algebraically 4H + 4kP below the cap, so a park is worth a constant +4
+sides. Algebraically LH + LkP below the cap, so a park is worth a constant +5
 labour gross regardless of city size — but zero when there is no housing, which
 is what an additive labour output could not express.
 
@@ -539,11 +694,11 @@ Add to the `park amenity` describe block in `test/armchair_metropolist/domain/se
 
 ```elixir
     test "metrics carries the multiplier and the labour one more park would add" do
-      # 4 housing, 2 parks: ratio 0.5, so multiplier 1.5 and one more park is worth 4k.
+      # 4 housing, 2 parks: ratio 0.5, so multiplier 1.5 and one more park is worth L*k.
       metrics = Calc.metrics(housing_and_parks(4, 2))
 
       assert metrics.amenity == 1.5
-      assert metrics.amenity_marginal_labour == 4.0
+      assert metrics.amenity_marginal_labour == 5.0
     end
 
     test "the marginal figure is zero once parks have reached housing" do
@@ -553,14 +708,14 @@ Add to the `park amenity` describe block in `test/armchair_metropolist/domain/se
     test "the marginal figure is the true difference where a park crosses the cap" do
       # Three healthy parks plus a half-dead one is 3.5 effective against 4 housing,
       # so ratio 0.875. One more park would reach 1.125 — above the cap — so the gain
-      # is only the 0.125 of ratio that fits underneath it, not the full 4k.
+      # is only the 0.125 of ratio that fits underneath it, not the full L*k of 5.0.
       #
-      # This is the case the "4k, or zero when saturated" shortcut gets wrong, and so
+      # This is the case the "L*k, or zero when saturated" shortcut gets wrong, and so
       # the case that justifies computing an actual difference.
       half_dead = %Node{Node.new(9, 9, :park) | health: 50.0, status: :degraded}
       city = CityMap.put_node(housing_and_parks(4, 3), half_dead)
 
-      assert Calc.metrics(city).amenity_marginal_labour == 2.0
+      assert Calc.metrics(city).amenity_marginal_labour == 2.5
     end
 ```
 
@@ -578,11 +733,11 @@ Add to `test/armchair_metropolist/domain/entities/simulation_metrics_test.exs`:
     metrics =
       SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
         amenity: 1.75,
-        amenity_marginal_labour: 4.0
+        amenity_marginal_labour: 5.0
       })
 
     assert metrics.amenity == 1.75
-    assert metrics.amenity_marginal_labour == 4.0
+    assert metrics.amenity_marginal_labour == 5.0
   end
 ```
 
@@ -720,7 +875,7 @@ Expected: no failures. Every existing `build/2` call site still compiles against
 - [ ] **Step 7: Mutation-verify**
 
 1. In `metrics/1`, pass `%{amenity: 1.0, amenity_marginal_labour: 0.0}` instead of the computed map → "metrics carries the multiplier" fails. This is the test that stops the default silently reaching production. Restore.
-2. Replace `marginal_amenity_labour/1`'s body with `@amenity_per_housing * 4.0` → "the true difference where a park crosses the cap" fails while the other two marginal tests still pass, which is exactly why that test exists. Restore.
+2. Replace `marginal_amenity_labour/1`'s body with the constant `5.0` → "the true difference where a park crosses the cap" fails while the other two marginal tests still pass, which is exactly why that test exists. Restore.
 
 - [ ] **Step 8: Commit**
 
@@ -732,7 +887,7 @@ The web layer cannot reach Domain.Services and SimulationMetrics cannot reach it
 either (Domain has deps: []), so metrics/1 computes the multiplier and the
 marginal labour and passes them into build/3.
 
-amenity_marginal_labour is a real difference rather than the constant 4k, because
+amenity_marginal_labour is a real difference rather than the constant L*k, because
 the two disagree where an added park crosses the ratio cap."
 ```
 
@@ -774,9 +929,9 @@ Then, in the legend describe block:
       place(view, :residential, 2, 1)
       place(view, :park, 3, 1)
 
-      # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds 4k = 4 labour
+      # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
       # and draws 1 of its own.
-      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+3"
+      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
       assert view |> element("#metrics-amenity") |> render() =~ "1.5"
     end
 
@@ -793,12 +948,14 @@ Then, in the legend describe block:
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "-1"
     end
 
-    test "transit hub labour renders through the ordinary consumption path" do
+    test "staffed types other than park render through the ordinary consumption path" do
       {:ok, view, _html} = live(conn, ~p"/")
 
       place(view, :transit_hub, 1, 1)
+      place(view, :power_plant, 2, 1)
 
       assert view |> element(~s{[data-cell="transit_hub-labour"]}) |> render() =~ "-2"
+      assert view |> element(~s{[data-cell="power_plant-labour"]}) |> render() =~ "-1"
     end
 
     test "a type that does not touch a resource still renders an em dash" do
@@ -808,8 +965,9 @@ Then, in the legend describe block:
       # everywhere: power plants do draw water, and that cell is a real number.
       assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
 
-      # The park special case must not leak into the general path.
-      assert view |> element(~s{[data-cell="power_plant-labour"]}) |> render() =~ "—"
+      # The park special case must not leak into the general path. `power_plant` draws
+      # labour now, so pick a genuinely untouched pair: it produces no money.
+      assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
     end
 ```
 
@@ -924,7 +1082,7 @@ Expected: PASS.
 
 - [ ] **Step 7: Mutation-verify**
 
-1. Drop the netting — `signed(amenity_marginal_labour)` → "shows the amenity net of the park's own staffing" fails (`+4`, not `+3`) and "past parity goes negative" fails (`+0`, not `-1`). Both must go red; if only one does, the second test is passing for the wrong reason. Restore.
+1. Drop the netting — `signed(amenity_marginal_labour)` → "shows the amenity net of the park's own staffing" fails (`+5`, not `+4`) and "past parity goes negative" fails (`+0`, not `-1`). Both must go red; if only one does, the second test is passing for the wrong reason. Restore.
 2. Change `Float.round(@metrics.amenity, 2)` to `round(@metrics.amenity)` → the `1.5` assertion fails. Restore.
 3. Delete the `{:park, :labour}` clause → the em dash test still passes and the first two fail, confirming the special case is scoped. Restore.
 
@@ -947,7 +1105,7 @@ git add lib/armchair_metropolist_web/live/simulator_live.ex test/armchair_metrop
 git commit -m "feat(web): show the park amenity in the legend and metrics
 
 Park's labour cell shows what one more park would do — the amenity it adds, net
-of the labour it draws — so +3 below the ratio cap and -1 past it. An em dash
+of the labour it draws — so +4 below the ratio cap and -1 past it. An em dash
 there would have claimed park does not touch labour, which is the opposite of
 true.
 
@@ -972,7 +1130,8 @@ In `test/support/playing_guide.ex`, in the "measured, not copied" section. Deriv
 
 ```elixir
   # Two housing and one park is ratio 0.5 — below the cap — so the fractional gain in
-  # labour supply over the same city with no park is `k * 0.5`. Solve for k.
+  # labour supply over the same city with no park is `k * 0.5`. Solve for k. (Two housing
+  # supply 10.0 unparked and 15.0 with the park, so this reads (1.5 - 1) / 0.5 = 1.0.)
   defp amenity_coefficient do
     base = labour_supplied(city_with(residential: 2))
     parked = labour_supplied(city_with(residential: 2, park: 1))
@@ -1048,7 +1207,7 @@ labour itself — a city with no residential blocks has no workforce for a park 
 amplify — but each one raises the labour your housing supplies, up to **one park per
 residential block**, where the bonus stops at double. Past that ratio a park is pure
 cost: it still drinks 18 water, still needs a groundskeeper, and adds nothing. The
-legend's labour column tells you which side of that line you are on, showing `+3` while
+legend's labour column tells you which side of that line you are on, showing `+4` while
 parks are worth building and `-1` once they are not.
 
 Parks are thirsty, and that is what bounds them. Two is the most the free baseline's 40
@@ -1072,11 +1231,11 @@ with:
 
 ```markdown
 The min residential column exists for the same reason the max one does, just at the other
-end: `industrial`, `commercial`, `transit_hub` and `park` all need workers, and
-residential is the only source of labour, so build the support set with too few
-residential and those blocks starve for staff instead of power or water — the shortfall
-just shows up in a different column. Utilities are the exception: `power_plant` and
-`water_plant` run unstaffed.
+end: **every block needs staff except the homes the staff live in**. Power plants, water
+plants, transit hubs, parks, industry and commerce all draw labour, and residential is the
+only thing that supplies it — so build a support set with too few homes and those blocks
+starve for staff instead of power or water, and the shortfall just shows up in a different
+column.
 ```
 
 - [ ] **Step 6: Add the double-decay note to the rescue section**
@@ -1136,4 +1295,6 @@ notes that amenity decays twice over during a collapse."
 
 **A test passing is not the same as a fixture being unaffected.** Task 1 Step 6b exists because `sub_rounding_city`'s test passes after staffing while three of its five nodes silently change from stable to decaying. It was found by asking why, not by reading the suite result — the suite said `254 passed` both before and after. When a data change touches a resource, check the fixtures that *pass*, not only the ones that fail: a fixture whose assertions name specific node ids will absorb an arbitrary amount of unrelated change.
 
-**Verified rather than assumed.** Task 1's code, its three expected failures, its fixture fix and the exact `docs/PLAYING.md` diff were all produced by applying the change and running `mix test` before this plan was written, then restoring the tree. Task 2's expected arithmetic (`24.0`, `48.0`, `40.0`, `32.0`, `2.0`) was computed from the rule directly. Tasks 3–5 are designed but not trial-run; treat their expected values as predictions to check, not guarantees.
+**Verified rather than assumed.** Task 1's code, its **seven** expected failures, all four fixture re-derivations (including the two re-solved water-plant healths, 41.7 and 34.5333) and the exact `docs/PLAYING.md` diff were produced by applying the whole change, fixing every failure, running the suite green at 254, and then restoring the tree. Tasks 2–5 are designed but not trial-run; their expected values are arithmetically verified against the rule, including that every float equality holds exactly at `L = 5`.
+
+**What the second amendment changed in this plan.** Task 1 grew from two table entries to five and from three failures to seven, `@support_sets` moved from "edit it" to "do not touch it", and every expected value in Tasks 2–4 shifted because `L` went from 4 to 5 — the identity is now `LH + LkP`, the gross bonus per park is 5, and the legend cell reads `+4`. If you find a `4` where a `5` belongs, or an instruction to drop a support set, it is a leftover from the first amendment. Task 2's expected arithmetic (`24.0`, `48.0`, `40.0`, `32.0`, `2.0`) was computed from the rule directly. Tasks 3–5 are designed but not trial-run; treat their expected values as predictions to check, not guarantees.
