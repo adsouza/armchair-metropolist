@@ -29,7 +29,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
   @topic CityEngine.topic(CityEngine.default_city_id())
 
-  setup %{conn: conn} do
+  setup %{conn: conn} = context do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
 
     on_exit(fn ->
@@ -42,7 +42,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     Application.put_env(:armchair_metropolist, :snapshot_repository, StubSnapshotRepository)
 
     start_supervised!(StubSnapshotRepository)
-    StubSnapshotRepository.set_initial({:error, :not_found})
+    StubSnapshotRepository.set_initial(initial_snapshot(context))
     start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
     # Every test but the two-visitor one below shares this session's city id with
@@ -121,6 +121,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
     String.slice(tail, 0, 160)
   end
+
+  # `@tag treasury: n` seeds the balance of the city this test's engine hydrates.
+  # There is no other way to set it: the engine owns the money, the refusal is decided
+  # against the engine's copy, and this file starts its engine in `setup` — before any
+  # test body could seed anything. Untagged tests get `{:error, :not_found}` exactly as
+  # before, so the engine builds a fresh `CityMap` and they see the opening grant.
+  #
+  # The city is seeded *empty*: only the balance is preloaded, so every node in every
+  # test is still placed through the running engine.
+  defp initial_snapshot(%{treasury: money}) do
+    {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
+  end
+
+  defp initial_snapshot(_context), do: {:error, :not_found}
 
   test "two visitors with different sessions get different cities", %{conn: conn} do
     a = Plug.Test.init_test_session(conn, %{"city_id" => "aaaaaaaaaaaaaaaaaaaaaa"})
@@ -274,7 +288,68 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute render(view) =~ ~s{id="7:8"}
   end
 
+  @tag treasury: 79.6
+  test "the treasury renders floored, not rounded", %{conn: conn} do
+    # 79.6 rounding to 80 while an 80-cost build is refused is a cell contradicting
+    # itself. Both halves asserted together, because the defect is precisely the two
+    # disagreeing — and 79.6 is chosen so they *can* disagree: at a whole number
+    # `trunc` and `round` return the same thing and the test could not fail.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert view |> element("#metrics-treasury") |> render() =~ "79"
+    refute view |> element("#metrics-treasury") |> render() =~ "80"
+  end
+
+  @tag treasury: 39.6
+  test "a refused build flashes the cost and the balance", %{conn: conn} do
+    # 39.6 rather than 40.0 for the same reason as above: the flash floors the balance
+    # too, and a whole-number fixture could not tell `trunc` from `round`.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    html = place(view, :power_plant, 1, 1)
+
+    assert html =~ "Not enough money"
+    assert html =~ "power_plant costs 80"
+    assert html =~ "treasury holds 39"
+  end
+
+  test "an affordable build flashes nothing", %{conn: conn} do
+    # The positive case. Without it, the assertions above pass against a page that
+    # flashes on every click. No tag: the untouched 150 grant covers an 80 plant.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    refute place(view, :power_plant, 1, 1) =~ "Not enough money"
+  end
+
+  @tag treasury: 24.6
+  test "a refused demolition flashes the demolition cost", %{conn: conn} do
+    # Seeded at 24.6 and then spent down *by playing*: a park costs 20, leaving 4.6, which
+    # is below the flat 10 demolition fee. No mid-test balance setter needed, and the
+    # path is one a player can actually walk.
+    #
+    # .6 rather than .0 for the same reason as the other two fixtures above: 4.6 is what
+    # lets this test tell `unaffordable_demolition/1`'s own flooring apart from rounding —
+    # `trunc` 4, `round` 5 — where a whole-number balance could not, since `trunc` and
+    # `round` agree on every whole number.
+    {:ok, view, _html} = live(conn, ~p"/")
+    place(view, :park, 2, 2)
+
+    html =
+      view
+      |> element(~s{[phx-click="demolish"][phx-value-x="2"][phx-value-y="2"]})
+      |> render_click()
+
+    assert html =~ "demolishing costs 10"
+    assert html =~ "treasury holds 4"
+  end
+
   describe "legend" do
+    # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
+    # negotiable for this block: the `+120` and `+360` figures two of these tests pin are
+    # power_plant production, so switching to a cheaper type would turn a fixture fix into
+    # a rebalance of the test's own subject. A round balance rather than 160 exactly, so a
+    # change to the construction cost does not break a test that has no opinion about it.
+    @tag treasury: 1_000.0
     test "shows how many of each type are placed, updating as you place", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -334,6 +409,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       refute power =~ "font-semibold"
     end
 
+    # Three power plants at 80 each is 240, past the 150 opening grant.
+    @tag treasury: 1_000.0
     test "placing blocks adds a city total beside the per-block figure", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -519,7 +596,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#metrics-treasury")
-      assert view |> element("#metrics-treasury") |> render() =~ "500"
+      assert view |> element("#metrics-treasury") |> render() =~ "150"
     end
 
     # Per-resource satisfaction otherwise lives only in the totals row, which
@@ -550,22 +627,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are midpoints of measured windows (expanded [1935, 2084], collapsed
-    # [1212, 1337]), not the wrap points themselves. See the comment in `render/1`: an
-    # earlier pair sat on the windows' lower edges and fell out the moment the cells grew
-    # a line. If a legitimate content change moves these, move them to the new *midpoint*.
+    # The values are midpoints of measured windows (expanded [2254, 2415], collapsed
+    # [1415, 1415] — that one is degenerate, so it is the only legal value rather than a
+    # midpoint with slack), not the wrap points themselves. See the comment in `render/1`:
+    # an earlier pair sat on the windows' lower edges and fell out the moment the cells
+    # grew a line. If a legitimate content change moves these, re-measure in the browser
+    # and move them to the new *midpoint* — do not derive them from these plus a guess at
+    # the width of whatever you added.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2010px]:flex-row"
-      refute expanded =~ "max-[1275px]:flex-row"
+      assert expanded =~ "max-[2335px]:flex-row"
+      refute expanded =~ "max-[1415px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
-      assert collapsed =~ "max-[1275px]:flex-row"
-      refute collapsed =~ "max-[2010px]:flex-row"
+      assert collapsed =~ "max-[1415px]:flex-row"
+      refute collapsed =~ "max-[2335px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
@@ -710,6 +790,61 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # labour now, so pick a genuinely untouched pair: it produces no money.
       assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
     end
+
+    test "every legend row shows its construction cost", %{conn: conn} do
+      # Asserted on the cell's *text*, not on `render/1`'s HTML. The HTML includes the
+      # `title` attribute added in this same step, whose value is "costs 80" — so
+      # `render() =~ "80"` would pass even if the cell body rendered the count, or the
+      # demolition cost, or nothing at all. An exact match on trimmed text can fail.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert cost_text(view, :power_plant) == "80"
+      assert cost_text(view, :residential) == "15"
+    end
+
+    test "the cost column survives a collapse, unlike the resource columns", %{conn: conn} do
+      # The type rows are the only way to choose what to place, and choosing now spends
+      # money — so price cannot be detail-only.
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      assert has_element?(view, ~s{[data-cell="power_plant-cost"]})
+      refute has_element?(view, ~s{[data-cell="power_plant-power"]})
+    end
+
+    @tag treasury: 40.0
+    test "unaffordable rows are marked and dimmed, affordable ones are not", %{conn: conn} do
+      # Both directions throughout: a hardcoded "false" would satisfy either alone. 40
+      # sits between residential's 15 and power_plant's 80, so one row must come out each
+      # way.
+      #
+      # 40.0 is load-bearing — do not "tidy" it. `commercial` and `transit_hub` cost
+      # exactly 40, so this fixture is also the only thing pinning `affordable?/2`'s `>=`
+      # against `>`. Under `>` those two rows would dim while
+      # `ManageInfrastructure.place/4` (`money < cost` → `40.0 < 40.0` → false) built them
+      # happily, which is exactly the disagreement the comment above `affordable?/2`
+      # promises cannot happen. Only the `commercial` assertion can catch that mutation;
+      # the power_plant and residential ones hold either way.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#legend-row-power_plant[data-affordable="false"]})
+      assert has_element?(view, ~s{#legend-row-residential[data-affordable="true"]})
+      assert has_element?(view, ~s{#legend-row-commercial[data-affordable="true"]})
+
+      # `data-affordable` is a test hook nobody looks at. These two are what a player
+      # actually gets: the dim, and — since dimming is visual-only — the cost cell's
+      # title carrying the same fact for anyone who cannot see it. Deleting either is
+      # silent otherwise.
+      assert has_element?(view, ~s{#legend-row-power_plant.opacity-40})
+      refute has_element?(view, ~s{#legend-row-residential.opacity-40})
+
+      assert has_element?(
+               view,
+               ~s{[data-cell="power_plant-cost"][title="costs 80 — more than the treasury holds"]}
+             )
+
+      assert has_element?(view, ~s{[data-cell="residential-cost"][title="costs 15"]})
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -788,6 +923,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       satisfaction: satisfaction,
       flow_satisfaction: satisfaction
     }
+  end
+
+  # The cost cell's *text*, with the markup and the attributes stripped off. The cell
+  # carries a `title` that spells the same figure out in prose, so an assertion against
+  # the rendered HTML cannot tell the price apart from its own tooltip.
+  #
+  # `LazyHTML` and not `Floki`: LiveView 1.2 dropped Floki for it, and `mix.exs` carries
+  # `lazy_html` as the test-only HTML dependency. Floki is not available here at all.
+  defp cost_text(view, type) do
+    view
+    |> element(~s{[data-cell="#{type}-cost"]})
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.text()
+    |> String.trim()
   end
 
   # Selects the type once, then places it at one cell — the two-step gesture the UI

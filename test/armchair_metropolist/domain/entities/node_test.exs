@@ -134,6 +134,73 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       # depends on (spec §2): at L = 5 and k = 1.0 the gross bonus per park is 5.
       assert Node.production(:residential)[:labour] == 5.0
     end
+
+    # `docs/PLAYING.md`'s "Running out of money" section tells the player that beside
+    # dead blocks a house's survival "turns on those four alone", that "a shortfall in
+    # labour or money cannot touch it, however severe", and that a house can therefore
+    # sit at full health next to a block that never recovers. Four sentences rest on
+    # this table having exactly these keys and no others: regeneration is per node over
+    # `consumption/1` (`SimulationCalculator.worst_satisfaction/2` folds `min` over it),
+    # so adding `labour` or `money` here makes every one of them false at once, and the
+    # guide's own drift test only checks the generated blocks. Assert the key set, not
+    # just the absence of labour, because `money` would break the same sentences.
+    test "residential draws exactly power, water, waste and traffic" do
+      assert Node.consumption(:residential) |> Map.keys() |> Enum.sort() ==
+               [:power, :traffic, :waste, :water],
+             "residential's consumed resources changed; docs/PLAYING.md's money section " <>
+               "claims a labour or money shortfall cannot touch a house, which is only " <>
+               "true while this table says so"
+    end
+  end
+
+  describe "construction_cost/1 and demolition_cost/0" do
+    test "match the specified construction cost table" do
+      assert Node.construction_cost(:power_plant) == 80.0
+      assert Node.construction_cost(:water_plant) == 70.0
+      assert Node.construction_cost(:industrial) == 60.0
+      assert Node.construction_cost(:transit_hub) == 40.0
+      assert Node.construction_cost(:commercial) == 40.0
+      assert Node.construction_cost(:park) == 20.0
+      assert Node.construction_cost(:residential) == 15.0
+    end
+
+    test "every type has a construction cost" do
+      # Mirrors the `Map.keys(baseline_capacity()) == Node.resources()` gate in
+      # simulation_calculator_test.exs, and for the same reason: construction_cost/1 is a
+      # Map.fetch!, so a type missing from the table raises at runtime instead of failing
+      # a test.
+      for type <- Node.types() do
+        assert is_float(Node.construction_cost(type)), "#{type} has no construction cost"
+      end
+    end
+
+    test "demolition is flat, and cheaper than building anything" do
+      cheapest = Node.types() |> Enum.map(&Node.construction_cost/1) |> Enum.min()
+
+      assert Node.demolition_cost() == 10.0
+
+      assert Node.demolition_cost() < cheapest,
+             "demolition (#{Node.demolition_cost()}) must stay below the cheapest " <>
+               "construction cost (#{cheapest}), or tearing down becomes the expensive option"
+    end
+
+    test "every cost is a whole number" do
+      # Every *display* of a cost truncates it: the legend's cost `<td>`, its
+      # `cost_title/2` tooltip, and the refusal flashes `unaffordable/2` and
+      # `unaffordable_demolition/1`, all in `simulator_live.ex`. A fractional cost would
+      # render a figure the engine does not charge.
+      #
+      # "Display" and not "reader": `affordable?/2` and `ManageInfrastructure` both
+      # compare the cost *raw*, and that is the point — wholeness is what makes the
+      # truncated display agree with the untruncated comparison, so `trunc(money) >= cost`
+      # exactly when `money >= cost`.
+      for type <- Node.types() do
+        cost = Node.construction_cost(type)
+        assert cost == Float.round(cost), "#{type}'s cost #{cost} is not a whole number"
+      end
+
+      assert Node.demolition_cost() == Float.round(Node.demolition_cost())
+    end
   end
 
   describe "status_for/1" do

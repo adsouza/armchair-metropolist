@@ -106,10 +106,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   def handle_event("place", %{"x" => x, "y" => y}, socket) do
     x = String.to_integer(x)
     y = String.to_integer(y)
+    type = socket.assigns.selected_type
 
-    case CityEngine.place(socket.assigns.city_id, x, y, socket.assigns.selected_type) do
-      {:ok, node} -> {:noreply, stream_insert(socket, :nodes, node)}
-      {:error, _reason} -> {:noreply, socket}
+    case CityEngine.place(socket.assigns.city_id, x, y, type) do
+      {:ok, node} ->
+        {:noreply, stream_insert(socket, :nodes, node)}
+
+      {:error, :insufficient_funds} ->
+        {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics.money))}
+
+      {:error, _reason} ->
+        {:noreply, socket}
     end
   end
 
@@ -118,8 +125,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     y = String.to_integer(y)
 
     case CityEngine.demolish(socket.assigns.city_id, x, y) do
-      {:ok, id} -> {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
-      {:error, _reason} -> {:noreply, socket}
+      {:ok, id} ->
+        {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
+
+      {:error, :insufficient_funds} ->
+        {:noreply,
+         put_flash(socket, :error, unaffordable_demolition(socket.assigns.metrics.money))}
+
+      {:error, _reason} ->
+        {:noreply, socket}
     end
   end
 
@@ -150,10 +164,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   @impl true
   # Placing and demolishing are the same gesture — a click on a square — because the
   # node div sits on top of its grid cell and swallows the cell's own click. Nothing on
-  # screen distinguishes them, so both tooltips name the action they will perform;
-  # without that, demolishing is undiscoverable. It also happens to be the only escape
-  # from a death spiral, since a dead node keeps drawing its full demand (see
-  # docs/PLAYING.md).
+  # screen distinguishes them, so both tooltips name the action they will perform —
+  # though *either* may name one the treasury refuses: a placement when the balance is
+  # under the type's cost, a demolition when it is under the flat fee. The dimmed legend
+  # row and the refusal flash cover that instead; without the naming, demolishing is
+  # undiscoverable. It also happens to be the only way to reduce demand,
+  # since a dead node keeps drawing its full demand (see docs/PLAYING.md).
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
@@ -168,7 +184,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             on the real inner div below and resizing the real viewport (not a clone —
             cheaper to validate and immune to a clone's own `fit-content`/`flex-wrap`
             quirks), confirmed at the boundary pixel, the switch happens at viewport
-            1935 expanded and 1212 collapsed — with Metrics stacked. Those are the
+            2254 expanded and 1415 collapsed — with Metrics stacked. Those are the
             lower ends (`W_col`) of the windows the inner thresholds below sit inside.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
@@ -223,7 +239,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               line. Alone on a line below the grid that is the full page width, which
               stretched a 757px matrix across 1681px and pushed Metrics off the end.
               The aside must never be wider than its content; the table's `100%` is then
-              a fixpoint at the matrix's natural width. --%>
+              a fixpoint rather than a runaway.
+
+              But a fixpoint at the aside's **widest child**, which is not the same thing
+              as the matrix's natural width and today is not the matrix at all. Measured
+              2026-08-06, expanded: the totals footnote below is 1198px against the
+              matrix's own 927px, so `100%` resolves to the footnote and stretches the
+              table ~271px past its content. Collapsed it is the re-entry line, at 359px
+              against 173px of matrix. That distinction is the whole subject of the
+              threshold comment on the `max-[Npx]` classes further down — read it before
+              reasoning about this sidebar's width from the table. --%>
         <aside class="min-w-fit">
           <button
             id="toggle-legend-detail"
@@ -243,11 +268,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 intrinsic width is what decides where it wraps, so a side-by-side inner
                 row feeds back into that decision — a row raises the sidebar's own
                 `fit-content` width and, with it, the viewport the sidebar needs to sit
-                beside the grid (`W_row` below is always the larger of the two measured
+                beside the grid (`W_row` below is never the smaller of the two measured
                 windows, for exactly this reason), putting the legend under the grid at
                 every ordinary window size. Keeping the children stacked by default keeps
-                the sidebar's intrinsic width at the matrix's own natural width (878px
-                expanded) and the wrap threshold at the smaller `W_col`.
+                the sidebar's intrinsic width down to its widest single child and the wrap
+                threshold at `W_col` rather than at the never-smaller `W_row` — a real
+                saving expanded, and none at all collapsed, where the two coincide.
 
                 **One threshold per state**, because the sidebar's width is what decides
                 where it wraps and collapsing changes that width. A single constant is
@@ -256,35 +282,55 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 stayed stubbornly alongside it.
 
                 **Each threshold is the midpoint of a window, not a measured edge.** There
-                are two wrap points per state, because the arrangement chosen here feeds
-                back into the sidebar's own width: stacked, the sidebar is as wide as the
-                matrix and fits beside the grid from viewport `W_col`; side by side it is
-                a whole Metrics column wider and needs `W_row`. Any constant strictly
-                inside `[W_col, W_row]` is self-consistent — at or above it the children
-                stack and the sidebar fits beside the grid, below it they sit in a row and
-                the sidebar has already dropped underneath. The window is exactly as wide
-                as Metrics plus the gap.
+                are up to two wrap points per state — two whenever the arrangement chosen
+                here feeds back into the sidebar's own width, one when it does not, which
+                is the collapsed case today: stacked, the sidebar fits beside the grid from
+                viewport `W_col`; side by side it may be a whole Metrics column wider and
+                need `W_row`. Any constant inside `[W_col, W_row]` is self-consistent —
+                at or above it the children stack and the sidebar fits beside the grid,
+                below it they sit in a row and the sidebar has already dropped underneath.
 
                 Measured by binary search on the live page (forcing `flexDirection` on the
                 real inner div and resizing the real viewport, rather than a clone — cheaper
                 to validate and immune to the clone's own `fit-content` quirks), then
-                confirmed at the boundary pixel: expanded `[1935, 2084]`, collapsed
-                `[1212, 1337]`. The midpoints below therefore absorb ±75px and ±63px of
-                content drift before anything misbehaves.
+                confirmed at the boundary pixel: expanded `[2254, 2415]`, collapsed
+                `[1415, 1415]`. So the expanded midpoint below absorbs ±80px of content
+                drift, and **the collapsed one absorbs none at all** — see below.
 
-                Re-measured when four resource columns became six: the collapsed table has
-                no resource columns at all (both header and body cells are `:if={@detail}`),
-                so its window barely moved, but the expanded matrix's two new columns pushed
-                its window up by roughly 100px on both edges. Taking the midpoint is what
-                makes this constant survive ordinary edits; re-measure only if Metrics, the
-                grid, or the resource vocabulary changes size, and move the value to the new
+                **Reload at every candidate width.** Wrapping makes the page taller, which
+                adds a vertical scrollbar, which takes ~15px back off the width and keeps it
+                wrapped; unwrapped the page is short, there is no scrollbar, and that keeps
+                it unwrapped. Both are self-consistent across a band as wide as the
+                scrollbar, so resizing *into* a width answers differently from loading *at*
+                it — 2240px read "fits" when resized down from 2300 and "wrapped" on a fresh
+                load. Every figure here is from a fresh load at 1200px tall.
+
+                **What actually sets these numbers is prose, not the matrix.** Wrapping is
+                decided on the aside's *max-content* width (`min-width: fit-content` can
+                only raise a flex item's hypothetical size, never lower it), and measured
+                here that is the widest unbroken line it contains: expanded, the totals
+                footnote at 1198px against the nine-column matrix's 927px; collapsed, the
+                re-entry sentence at 359px against 173px of matrix. Both edges of both
+                windows moved between the last measurement and this one, and the resource
+                vocabulary was not why — a sentence added to the footnote and a re-entry
+                block added by an unrelated change were. Re-measure when *any* line in the
+                aside grows, not only when the table does, and move the value to the new
                 midpoint rather than to whichever edge you happened to measure.
+
+                Collapsed, `W_col == W_row`: the re-entry sentence is wider than either
+                inner arrangement (173px stacked, 349px in a row), so the arrangement no
+                longer feeds back at all and the window has collapsed to a single legal
+                pixel. Nothing is wrong with 1415 — it is exactly right — but it has no
+                slack, so treat any edit to that block as invalidating it. Note also that
+                the URL line below is measured against the dev host: `break-all` shrinks its
+                *min*-content, not its max-content, and the same line at a production-length
+                host measures 506px, which would displace the sentence as the binding width.
 
                 Tailwind v4 compiles `max-[N]` to `@media (width < N)`, exclusive, so N is
                 the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[2010px]:flex-row", else: "max-[1275px]:flex-row")
+            if(@legend_detail, do: "max-[2335px]:flex-row", else: "max-[1415px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
@@ -308,12 +354,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
                 `break-all` and the two-line split are for the sidebar, not for looks:
                 `<aside>` is `min-w-fit`, so any unbreakable token it contains becomes a
-                floor under the sidebar's width and feeds straight into the wrap
-                thresholds measured above. Measured before adding this: the aside's
-                min-content is ~1020px (the legend matrix sets it) against ~514px for the
-                old one-line copy and ~670px for this URL at the production host, so the
-                line has never been what decides that width and still is not. `break-all`
-                keeps that true for a host longer than today's. --%>
+                floor under the sidebar's width, which is why the URL is allowed to break
+                mid-token and why it is not sharing a line with the sentence above it.
+
+                What `break-all` does *not* do is protect the wrap thresholds measured
+                above. Those are decided on max-content, which is the no-wrap width, and
+                `break-all` only lowers min-content. Re-measured 2026-08-06: this block's
+                first line is 359px, wider than anything the collapsed legend contains, so
+                it is what sets the collapsed threshold today; the URL is 332px at the dev
+                host and 506px at a production-length one, at which point it takes over.
+                An earlier version of this comment claimed the line "has never been what
+                decides that width", comparing the aside's *min*-content (~1020px, set by
+                the expanded matrix) against these figures. That was the wrong box. --%>
           <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
             <p>This city lives in this browser. To open it somewhere else, go to:</p>
             <p>
@@ -362,6 +414,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             <tr>
               <th class="text-left">type</th>
               <th class="text-right">#</th>
+              <th class="text-right">cost</th>
               <th :for={resource <- @resources} :if={@detail} class="text-right">{resource}</th>
             </tr>
           </thead>
@@ -370,7 +423,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               :for={type <- @node_types}
               id={"legend-row-#{type}"}
               data-count={@metrics.by_type[type].count}
-              class={type == @selected_type && "bg-primary/20"}
+              data-affordable={to_string(affordable?(@metrics.money, type))}
+              class={[
+                type == @selected_type && "bg-primary/20",
+                not affordable?(@metrics.money, type) && "opacity-40"
+              ]}
             >
               <td class="text-left">
                 <%!-- A real button, not a clickable <tr>: the row must stay reachable
@@ -387,6 +444,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               </td>
               <td data-cell={"#{type}-count"} class="text-right tabular-nums">
                 {@metrics.by_type[type].count}
+              </td>
+              <td
+                data-cell={"#{type}-cost"}
+                class="text-right tabular-nums"
+                title={cost_title(@metrics.money, type)}
+              >
+                {trunc(Node.construction_cost(type))}
               </td>
               <.resource_cell
                 :for={resource <- @resources}
@@ -408,8 +472,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                     `flow_satisfaction`, which ignores money's carried balance, so
                     the label has to say *when* it is measuring rather than just
                     what — "met" alone would still promise the balance-aware figure
-                    the cell no longer shows. --%>
-              <th class="text-left" colspan="2">supplied/demanded · met this tick</th>
+                    the cell no longer shows.
+
+                    `colspan` counts the always-visible columns to its left — type,
+                    `#` and `cost` — and no test can check it: `data-total={resource}`
+                    stays correct on every cell no matter where the browser lays it
+                    out, so the totals assertions all pass against a footer one cell
+                    short, with money's total sitting under `labour` and the last
+                    resource getting no column at all. Adding an always-visible column
+                    means incrementing this by hand and looking at the table. --%>
+              <th class="text-left" colspan="3">supplied/demanded · met this tick</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -423,9 +495,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       </div>
 
       <%!-- Hidden with the totals row it explains — and not only for tidiness. A long
-            line of prose sets this sidebar's `fit-content`, so left visible it holds the
-            collapsed sidebar at 437px instead of 127px, and collapsing would reclaim
-            almost nothing. Anything added here must stay short or wrappable. --%>
+            line of prose sets this sidebar's width, so left visible it would hold the
+            collapsed sidebar at this paragraph's own 1198px instead of the 359px the
+            re-entry line below already imposes, and collapsing would reclaim almost
+            nothing. Anything added here must stay short or wrappable.
+
+            Re-measured 2026-08-06 (the earlier "437px instead of 127px" predates both
+            the re-entry block and this paragraph's third sentence): expanded, these
+            1198px are not merely a nuisance but the *binding* width of the whole
+            sidebar — wider than the nine-column matrix's own 927px — so this paragraph,
+            not the table, is what sets the expanded wrap threshold in `render/1`. Edit
+            the wording here and that constant needs re-measuring. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 for power, water, waste and traffic, which
         belongs to no type. Labour and money have no free baseline.
@@ -433,6 +513,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       </p>
     </div>
     """
+  end
+
+  # Compared on the raw float, exactly as `ManageInfrastructure.place/4` does, so the
+  # dimming and the refusal can never disagree about a type. The *displayed* treasury is
+  # floored, and because every cost is a whole number `trunc(money) >= cost` exactly when
+  # `money >= cost` — which is what keeps the greyed row and the printed balance
+  # consistent.
+  defp affordable?(money, type), do: money >= Node.construction_cost(type)
+
+  # The row is dimmed, which is a visual-only signal; the title carries the same fact for
+  # anyone who cannot see it. The select button stays enabled deliberately — choosing an
+  # unaffordable type is harmless and is often what a player wants while waiting for
+  # income.
+  defp cost_title(money, type) do
+    cost = trunc(Node.construction_cost(type))
+
+    if affordable?(money, type),
+      do: "costs #{cost}",
+      else: "costs #{cost} — more than the treasury holds"
   end
 
   # Always on screen, in both legend states. Tick, nodes, average health and offline
@@ -451,7 +550,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
-      <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
+      <%!-- `trunc/1`, not `round/1`: this figure is spendable, and rounding it up makes
+            the page contradict itself — a balance of 79.6 would read 80 while an 80-cost
+            build is refused. Because every construction cost is a whole number,
+            `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
+            and the domain's exact comparison agree. --%>
+      <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
       <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
@@ -630,6 +734,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp signed(value) do
     rounded = round(value)
     if rounded > 0, do: "+#{rounded}", else: to_string(rounded)
+  end
+
+  # Both figures named, not just the refusal: the gap is what tells a player how long to
+  # wait. `trunc/1` matches the treasury line's own flooring — a message saying the
+  # treasury holds 80 while an 80-cost build was refused would be the same
+  # self-contradiction in another place.
+  #
+  # The other three placement errors stay silent. `:out_of_bounds` is unreachable from a
+  # grid that renders only in-bounds cells, and `:occupied` is nearly so, since the node
+  # div sits above its cell and turns that click into a demolish. `:unknown_type` is
+  # unreachable too: `type` always comes from `@selected_type`, which only ever changes
+  # via the legend's own `select_type` buttons — one per member of `Node.types/0` — so
+  # only a hand-crafted event bypassing the UI could produce a type this handler does not
+  # recognize, and silence is the right response to that.
+  defp unaffordable(type, money) do
+    "Not enough money: #{type} costs #{trunc(Node.construction_cost(type))}, " <>
+      "treasury holds #{trunc(money)}."
+  end
+
+  defp unaffordable_demolition(money) do
+    "Not enough money: demolishing costs #{trunc(Node.demolition_cost())}, " <>
+      "treasury holds #{trunc(money)}."
   end
 
   defp cell_style(x, y, cell_size) do

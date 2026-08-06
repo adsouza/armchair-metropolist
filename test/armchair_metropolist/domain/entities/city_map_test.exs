@@ -13,6 +13,35 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "opening_grant/0" do
+    test "is the money a new city starts with, from one constant" do
+      # All three paths must agree. They are three because `CityEngine.normalize_city_map/1`
+      # merges a decoded snapshot onto `%CityMap{}` — so the struct default is what an old
+      # city inherits, while `new/2` is what a fresh one gets. Stating the figure twice
+      # (as this module used to) desyncs them on a path only cold loads exercise.
+      assert CityMap.opening_grant() == 150.0
+      assert CityMap.new(40, 30).money == CityMap.opening_grant()
+      assert %CityMap{}.money == CityMap.opening_grant()
+    end
+  end
+
+  describe "debit/2" do
+    test "subtracts from the treasury" do
+      map = %{CityMap.new(40, 30) | money: 100.0}
+
+      assert CityMap.debit(map, 30.0).money == 70.0
+    end
+
+    test "floors at zero rather than going negative" do
+      # Unreachable through `ManageInfrastructure`, which refuses an unaffordable
+      # command — the clamp documents that a balance is never negative regardless of
+      # caller, which is the invariant the money design calls load-bearing.
+      map = %{CityMap.new(40, 30) | money: 5.0}
+
+      assert CityMap.debit(map, 30.0).money == 0.0
+    end
+  end
+
   describe "in_bounds?/3" do
     setup do: {:ok, map: CityMap.new(40, 30)}
 

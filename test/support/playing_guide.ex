@@ -32,8 +32,24 @@ defmodule ArmchairMetropolist.PlayingGuide do
       "production" => production_block(),
       "consumption" => consumption_block(),
       "constants" => constants_block(),
-      "capacities" => capacities_block()
+      "capacities" => capacities_block(),
+      "costs" => costs_block()
     }
+  end
+
+  defp costs_block do
+    rows = for type <- sorted_types(), do: "| `#{type}` | #{num(Node.construction_cost(type))} |"
+
+    Enum.join(
+      ["| type | cost to build |", "|---|---|"] ++
+        rows ++
+        [
+          "",
+          "Demolishing anything costs #{num(Node.demolition_cost())}, whatever it was. " <>
+            "A new city starts with #{num(CityMap.opening_grant())}."
+        ],
+      "\n"
+    )
   end
 
   # The numbers a player actually acts on, so they are worth generating rather than
@@ -301,10 +317,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
         end)
       end)
 
-    # Not the 500.0 grant. Over the 120-tick window a city whose income falls one
+    # Not the 150.0 grant. Over the 120-tick window a city whose income falls one
     # short of its upkeep drains the grant at 1/tick and survives all 120 ticks —
-    # so the guide would certify a city that goes bankrupt on tick 501. Starting
-    # broke measures the steady-state economy: income must cover upkeep every tick.
+    # so the guide would certify a city that goes bankrupt on tick 151. A smaller
+    # grant makes this trap tighter rather than looser: even at 150 a 1/tick
+    # shortfall still outlasts the window. Starting broke measures the
+    # steady-state economy: income must cover upkeep every tick.
     %{city | money: 0.0}
   end
 

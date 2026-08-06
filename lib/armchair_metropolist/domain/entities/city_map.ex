@@ -21,7 +21,19 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # old snapshot yields a struct carrying only the keys it was written with, so
   # the new field must be defaulted on load (see CityEngine.normalize_city_map/1)
   # rather than assumed present.
-  defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: 500.0
+  # The money a new city starts with, stated once. It used to appear twice — here and
+  # again in `new/2` — and `CityEngine.normalize_city_map/1` merges a decoded snapshot
+  # onto `%CityMap{}`, so this default is what an old city inherits while `new/2`'s
+  # literal was what a fresh one got. Changing one and not the other desynced them on a
+  # path only cold loads exercise.
+  #
+  # 150 rather than the original 500: the park amenity lowered the cheapest viable
+  # earning city to 75 — one commercial, one park and one house, measured stable at
+  # +28/tick — so 500 bought the minimum six times over. See the construction-costs
+  # design, §7.
+  @opening_grant 150.0
+
+  defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: @opening_grant
 
   @doc """
   Create a new empty city map with the given dimensions.
@@ -31,9 +43,32 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
       width: width,
       height: height,
       tick: 0,
-      nodes: %{},
-      money: 500.0
+      nodes: %{}
     }
+  end
+
+  @doc """
+  The money a new city starts with.
+
+  Public so tests and the playing-guide generator reference the figure instead of
+  restating it. Six readers across four files pinned the old literal, and one of them
+  pinned it *derived* — an assertion on 502.0, the grant plus two ticks of income, which
+  a search for the grant's own value does not find.
+  """
+  @spec opening_grant() :: float()
+  def opening_grant, do: @opening_grant
+
+  @doc """
+  Subtract `amount` from the city's treasury, flooring at zero.
+
+  A one-line function rather than an inline `%{map | money: …}` so the floor-at-zero rule
+  lives in the entity that owns the field. `ManageInfrastructure` refuses an unaffordable
+  command, so the floor is unreachable through it — and that is the point: the clamp
+  documents that a balance is never negative regardless of caller.
+  """
+  @spec debit(t(), float()) :: t()
+  def debit(map, amount) do
+    %{map | money: max(0.0, map.money - amount)}
   end
 
   @doc """

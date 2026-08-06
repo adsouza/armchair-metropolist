@@ -38,7 +38,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   #
   # Money is absent from the table because it is not meant to bind: demand is the water
   # plant's 5 plus 3 per park = 14, against a supply of 1 from the residential block,
-  # covered as `carried` by `CityMap.new/2`'s default 500.0 grant.
+  # covered as `carried` by `CityMap.new/2`'s default 150.0 grant.
   #
   # The power plant consumes water/waste/traffic/labour, so its worst ratio is exactly
   # 0.95 (86.0 * 0.95 == 81.7) and its delta is -(1 - 0.95) * 6.0 = -0.30, taking it from
@@ -224,6 +224,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.resource_stats(healthy).labour.demanded == 2.0
       assert Calc.resource_stats(dead).labour.demanded == 2.0
     end
+
+    test "a construction charge does not enter money demand" do
+      alias ArmchairMetropolist.UseCases.ManageInfrastructure
+
+      before = map_with([Node.new(0, 0, :park)])
+      {:ok, {after_place, _}} = ManageInfrastructure.place(before, 1, 1, :park)
+
+      # Positive case first: money demand does track upkeep, so this cannot pass by
+      # reading zero out of a broken path. Two parks draw 3 each.
+      #
+      # The second assertion is the whole test. Exact equality on 6.0 means the 20.0
+      # build charge is provably absent — demand is a per-tick flow, the charge is a
+      # withdrawal from a stock, and folding it in would corrupt the legend's totals
+      # cell, which is the defect the money design's amendment exists to fix. A
+      # `refute … == 26.0` alongside it would be decoration: dead the moment the
+      # equality above passes.
+      assert Calc.resource_stats(before).money.demanded == 3.0
+      assert Calc.resource_stats(after_place).money.demanded == 6.0
+    end
   end
 
   describe "park amenity" do
@@ -372,7 +391,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {advanced, _delta} = Calc.advance_tick(sustainable_city())
       # Two residential produce money now (1.0 each) and consume none, so the
       # grant grows rather than staying put.
-      assert advanced.money == 502.0
+      assert advanced.money == 152.0
     end
 
     test "an unpayable upkeep starves the consumer once the treasury is empty" do
