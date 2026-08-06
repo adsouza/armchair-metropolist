@@ -227,11 +227,8 @@ three never do. That makes bulldozing all or nothing. Demolition stays *availabl
 the treasury holds 10, but 10 buys exactly one block, the bill is 10 a block, and nothing
 is earned until the cut is finished — nineteen dead houses cut back to three still earn
 zero over 400 ticks. Nineteen down to two is 170, and 169 is not close: it leaves you three
-houses, 9 in the bank, and nothing the treasury will pay for. Any city with all three of
-these has lost for good: the treasury no longer rising, nothing left healing, and too
-little saved to change either. It does not run backwards, though — a house healing on the
-baseline beside a dead water plant is already finished, because its income will never cover
-that plant's upkeep. The three tell you when a city is lost, never that one is safe.
+houses, 9 in the bank, and nothing the treasury will pay for — no demolition at 10, no
+house at 15, and nothing earning to change that.
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
