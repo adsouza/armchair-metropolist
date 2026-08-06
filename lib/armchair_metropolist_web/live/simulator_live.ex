@@ -394,6 +394,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 type={type}
                 resource={resource}
                 stats={@metrics.by_type[type]}
+                amenity_marginal_labour={@metrics.amenity_marginal_labour}
               />
             </tr>
           </tbody>
@@ -449,6 +450,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
       <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
+      <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """
@@ -484,11 +486,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :type, :atom, required: true
   attr :resource, :atom, required: true
   attr :stats, :map, required: true
+  attr :amenity_marginal_labour, :float, required: true
 
   defp resource_cell(assigns) do
     assigns =
       assigns
-      |> assign(:marginal, marginal_cell(assigns.type, assigns.resource))
+      |> assign(
+        :marginal,
+        marginal_cell(assigns.type, assigns.resource, assigns.amenity_marginal_labour)
+      )
       |> assign(:total, total_cell(assigns.stats, assigns.resource))
 
     ~H"""
@@ -513,8 +519,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # Rated, deliberately. A newly placed node starts at full health, so its contribution
   # *is* its rated figure. Taken from the domain's own tables rather than from `by_type`
-  # because this is a property of the type, fixed, not of the current city.
-  defp marginal_cell(type, resource) do
+  # because this is a property of the type.
+  #
+  # One exception, and it is signposted in the clause itself: `{:park, :labour}` depends
+  # on the current city. The park amenity is a multiplier, so its *magnitude* is fixed at
+  # `4k` by the arithmetic, but whether the city has already reached the ratio cap is
+  # city state — and past the cap the honest figure changes sign.
+
+  # `park`'s labour effect is a multiplier on supply, so it appears in neither table and
+  # the general clause below would render an em dash — "does not interact with this
+  # resource at all", which would be a lie about the one type that drives labour hardest.
+  #
+  # This still answers the question the function promises, "what one more block of this
+  # type would do": the amenity another park would add, net of the labour it would draw.
+  # Past parity that is negative, which is the honest figure — over-provisioning parks
+  # costs labour rather than merely stopping helping.
+  defp marginal_cell(:park, :labour, amenity_marginal_labour) do
+    signed(amenity_marginal_labour - Map.get(Node.consumption(:park), :labour, 0.0))
+  end
+
+  defp marginal_cell(type, resource, _amenity_marginal_labour) do
     produced = Map.get(Node.production(type), resource)
     consumed = Map.get(Node.consumption(type), resource)
 

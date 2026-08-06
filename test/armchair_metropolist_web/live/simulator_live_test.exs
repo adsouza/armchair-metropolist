@@ -611,6 +611,56 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
+
+    test "park's labour cell shows the amenity net of the park's own staffing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :residential, 1, 1)
+      place(view, :residential, 2, 1)
+      place(view, :park, 3, 1)
+
+      # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
+      # and draws 1 of its own.
+      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.5"
+    end
+
+    test "past parity park's labour cell goes negative", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :residential, 1, 1)
+      place(view, :park, 2, 1)
+      place(view, :park, 3, 1)
+
+      # 1 housing, 2 parks: already past the cap, so another park adds no amenity at
+      # all and still draws its 1 labour. Over-provisioning costs rather than merely
+      # failing to help.
+      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "-1"
+    end
+
+    test "staffed types other than park render through the ordinary consumption path", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :transit_hub, 1, 1)
+      place(view, :power_plant, 2, 1)
+
+      assert view |> element(~s{[data-cell="transit_hub-labour"]}) |> render() =~ "-2"
+      assert view |> element(~s{[data-cell="power_plant-labour"]}) |> render() =~ "-1"
+    end
+
+    test "a type that does not touch a resource still renders an em dash", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Positive case first, so this cannot pass against a page rendering em dashes
+      # everywhere: power plants do draw water, and that cell is a real number.
+      assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
+
+      # The park special case must not leak into the general path. `power_plant` draws
+      # labour now, so pick a genuinely untouched pair: it produces no money.
+      assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -689,5 +739,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       satisfaction: satisfaction,
       flow_satisfaction: satisfaction
     }
+  end
+
+  # Selects the type once, then places it at one cell — the two-step gesture the UI
+  # actually requires, wrapped so a test can name the type and the coordinate together.
+  defp place(view, type, x, y) do
+    view
+    |> element(~s{button[phx-click="select_type"][phx-value-type="#{type}"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
+    |> render_click()
   end
 end
