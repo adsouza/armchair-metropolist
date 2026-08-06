@@ -36,13 +36,16 @@
 | `test/armchair_metropolist/domain/entities/node_test.exs` | Modify: cost table assertions, coverage gate, demolition invariant | 1 |
 | `lib/armchair_metropolist/domain/entities/city_map.ex` | Modify: `@opening_grant` + `opening_grant/0` (Task 2); `debit/2` (Task 3) | 2, 3 |
 | `test/armchair_metropolist/domain/entities/city_map_test.exs` | Modify: grant and `debit/2` tests | 2, 3 |
-| `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs` | Modify: one assertion pinning the old grant literal | 2 |
+| `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs` | Modify: grant assertion (Task 2); rich-snapshot seeding for `starve/1` callers, plus two broadcast tests (Task 3) | 2, 3 |
+| `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` | Modify: the `502.0` assertion and a stale comment (Task 2); the charge-not-a-flow test (Task 3) | 2, 3 |
 | `test/support/playing_guide.ex` | Modify: stale grant comment (Task 2); `costs` block (Task 6) | 2, 6 |
+| `README.md` | Modify: the one-off grant figure | 2 |
 | `lib/armchair_metropolist/use_cases/manage_infrastructure.ex` | Modify: the affordability gates and the debits | 3 |
-| `test/armchair_metropolist/use_cases/manage_infrastructure_test.exs` | Modify: gate, debit, ordering and property tests | 3 |
-| `lib/armchair_metropolist_web/live/simulator_live.ex` | Modify: floored treasury + refusal flash (Task 4); cost column + dimming (Task 5) | 4, 5 |
-| `test/armchair_metropolist_web/live/simulator_live_test.exs` | Modify: flash, floored treasury, cost column, affordability | 4, 5 |
-| `docs/PLAYING.md` | Add the `costs` marker and block; rewrite four prose passages | 6 |
+| `test/armchair_metropolist/use_cases/manage_infrastructure_test.exs` | Modify: gate, debit, ordering and property tests; the round-trip test's identity assertion | 3 |
+| `lib/armchair_metropolist/infrastructure/simulation/city_engine.ex` | Modify: `place/4` and `demolish/3` `@spec` error unions only — no behaviour change | 3 |
+| `lib/armchair_metropolist_web/live/simulator_live.ex` | Modify: floored treasury + refusal flash (Task 4); cost column, dimming and the totals-row `colspan` (Task 5) | 4, 5 |
+| `test/armchair_metropolist_web/live/simulator_live_test.exs` | Modify: `setup`'s snapshot seeding + the `treasury` tag (Task 4); grant assertion and the two multi-plant fixtures (Tasks 2, 3); flash, floored treasury, cost column, affordability | 2, 3, 4, 5 |
+| `docs/PLAYING.md` | Add the `costs` marker and block; rewrite six prose passages | 6 |
 
 ---
 
@@ -205,8 +208,10 @@ would let an unknown type be built for free."
 - Modify: `lib/armchair_metropolist/domain/entities/city_map.ex`
 - Modify: `test/armchair_metropolist/domain/entities/city_map_test.exs`
 - Modify: `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
+- Modify: `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` (**a real assertion and a comment** — see Step 4)
+- Modify: `test/armchair_metropolist_web/live/simulator_live_test.exs` (one assertion)
+- Modify: `README.md` (one figure)
 - Modify: `test/support/playing_guide.ex` (a stale comment only — **not** `@support_sets`)
-- Modify: `test/armchair_metropolist/domain/services/simulation_calculator_test.exs` (a stale comment only)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -280,25 +285,35 @@ Add the accessor:
   The money a new city starts with.
 
   Public so tests and the playing-guide generator reference the figure instead of
-  restating it — three readers pinned the old literal.
+  restating it. Six readers across four files pinned the old literal, and one of them
+  pinned it *derived* — an assertion on 502.0, the grant plus two ticks of income, which
+  a search for the grant's own value does not find.
   """
   @spec opening_grant() :: float()
   def opening_grant, do: @opening_grant
 ```
 
-- [ ] **Step 4: Update the three readers that pin the old literal**
+- [ ] **Step 4: Update every reader that pins the old figure**
 
-In `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`, the assertion reading `assert loaded.money == 500.0` becomes:
+There are **six**, in four files. Three are live assertions and three are prose. The list below is complete as of this branch's HEAD; before you start, confirm it with
 
-```elixir
-      assert loaded.money == CityMap.opening_grant()
+```bash
+grep -rn "500\|502\.0" lib test README.md docs/PLAYING.md | grep -v "_build\|deps\|0o500\|error_\|linger\|500ms\|production 500"
 ```
 
-Reference the accessor, not a new literal — that is the whole point of adding it. Check the file already aliases `CityMap`; add the alias if not.
+and report any hit not named here. Note that a plain `500` grep does **not** find the third assertion below — its literal is `502.0`, the grant plus two residential income. Derived figures are the ones that go stale silently.
 
-Two comments name the old figure and must move with it. In `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`, the `sub_rounding_city` comment says money's satisfaction stays at 1.0 only because "`CityMap.new/2`'s default 500.0 grant" covers the demand as `carried`. That is still true at 150 — the fixture's money demand is 14 — but the figure is wrong. Change it to 150.0 and keep the reasoning.
+*Assertions:*
 
-In `test/support/playing_guide.ex`, `city_with/1`'s comment explains why it sets `money: 0.0`: over a 120-tick window a city one short on income drains the grant at 1/tick and survives all 120, so the guide would certify a city that goes bankrupt later. Update the figure, and note that a **smaller** grant makes that trap tighter rather than looser — at 150 a 1/tick shortfall still outlasts the window.
+1. `city_engine_test.exs` — `assert loaded.money == 500.0` becomes `assert loaded.money == CityMap.opening_grant()`. Reference the accessor, not a new literal; that is the whole point of adding it. The file already aliases `CityMap`.
+2. `simulator_live_test.exs` — `assert view |> element("#metrics-treasury") |> render() =~ "500"` becomes `=~ "150"`. Keep the literal here rather than interpolating the accessor: this test is about the *page* printing the balance, and a literal is what fails loudly if the grant moves again. (After Task 4 the treasury is floored, which does not change a whole-number grant.)
+3. `simulation_calculator_test.exs` — `assert advanced.money == 502.0` in "an untouched city keeps its balance across a tick" becomes `152.0`. The comment above it explains the +2 as two residential each producing 1.0; keep that reasoning, it is still correct.
+
+*Prose:*
+
+4. `simulation_calculator_test.exs` — the `sub_rounding_city` comment says money's satisfaction stays at 1.0 only because "`CityMap.new/2`'s default 500.0 grant" covers the demand as `carried`. Still true at 150 — that fixture's money demand is 14 — but the figure is wrong. Change it to 150.0 and keep the reasoning.
+5. `test/support/playing_guide.ex` — `city_with/1`'s comment explains why it sets `money: 0.0`: over a 120-tick window a city one short on income drains the grant at 1/tick and survives all 120, so the guide would certify a city that goes bankrupt later. Update the figure, and note that a **smaller** grant makes that trap tighter rather than looser — at 150 a 1/tick shortfall still outlasts the window.
+6. `README.md` — "a city opens with a one-off 500 in the treasury" becomes 150. This one is a published claim about the game with no test behind it, which is exactly why it is easy to miss.
 
 Do **not** touch `@support_sets`.
 
@@ -308,7 +323,7 @@ Do **not** touch `@support_sets`.
 mix test
 ```
 
-Expected: PASS. If a test fails because a fixture relied on 500 covering a long money deficit, **report it** — do not raise the grant back. The plan's assumption is that no fixture does; a failure here is a real finding about the suite, and the controller needs to see it.
+Expected: PASS — the three assertions above are the only ones that move. If anything *else* fails because a fixture relied on 500 covering a long money deficit, **report it** — do not raise the grant back. Nothing in the suite is believed to depend on the grant's size, only on its exact value in those three places; a failure beyond them is a real finding and the controller needs to see it.
 
 - [ ] **Step 6: Mutation-verify**
 
@@ -318,7 +333,7 @@ Expected: PASS. If a test fails because a fixture relied on 500 covering a long 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/armchair_metropolist/domain/entities/city_map.ex test/armchair_metropolist/domain/entities/city_map_test.exs test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs test/armchair_metropolist/domain/services/simulation_calculator_test.exs test/support/playing_guide.ex
+git add lib/armchair_metropolist/domain/entities/city_map.ex test/ README.md
 git commit -m "feat(domain): state the opening grant once, and drop it to 150
 
 CityMap stated the figure twice, in defstruct and again in new/2, and
@@ -328,7 +343,10 @@ gets. Changing one and not the other desynced them on a path only cold loads
 exercise.
 
 150 rather than 500 because the park amenity lowered the cheapest viable earning
-city to 75, so 500 bought the minimum six times over."
+city to 75, so 500 bought the minimum six times over.
+
+Six readers pinned the old figure across four files. One of them asserted 502.0 —
+the grant plus two residential income — which a grep for 500 does not find."
 ```
 
 ---
@@ -460,15 +478,35 @@ And a test that the charge stays out of the per-tick economy — put it in `test
 
       # Positive case first: money demand does track upkeep, so this cannot pass by
       # reading zero out of a broken path. Two parks draw 3 each.
+      #
+      # The second assertion is the whole test. Exact equality on 6.0 means the 20.0
+      # build charge is provably absent — demand is a per-tick flow, the charge is a
+      # withdrawal from a stock, and folding it in would corrupt the legend's totals
+      # cell, which is the defect the money design's amendment exists to fix. A
+      # `refute … == 26.0` alongside it would be decoration: dead the moment the
+      # equality above passes.
       assert Calc.resource_stats(before).money.demanded == 3.0
       assert Calc.resource_stats(after_place).money.demanded == 6.0
-
-      # And the 20.0 build charge is nowhere in it — demand is a per-tick flow, the
-      # charge is a withdrawal from a stock. Folding it in would corrupt the legend's
-      # totals cell, which is the defect the money design's amendment exists to fix.
-      refute Calc.resource_stats(after_place).money.demanded == 26.0
     end
 ```
+
+Also fix the existing round-trip test in `manage_infrastructure_test.exs`, which asserts an identity that is no longer true:
+
+```elixir
+    test "place then demolish restores the map's nodes, minus what both cost" do
+      # No longer `restored == map`: the round trip costs 60 to build an industrial and
+      # 10 to tear it down, and that 70 does not come back. Asserting on `nodes` keeps
+      # the property the test was written for — teardown leaves no trace on the grid —
+      # while naming the money as a separate, deliberate difference.
+      {:ok, {placed, _}} = ManageInfrastructure.place(map, 5, 5, :industrial)
+      {:ok, {restored, _}} = ManageInfrastructure.demolish(placed, 5, 5)
+
+      assert restored.nodes == map.nodes
+      assert restored.money == map.money - 70.0
+    end
+```
+
+Rename it as shown. Leaving the old name on a test that no longer checks a round trip is worse than either the old test or the new one.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -573,6 +611,49 @@ Replace `place/4` and `demolish/3` in `lib/armchair_metropolist/use_cases/manage
 
 The comparison is exact — `<`, no epsilon. There is no rounding downstream of it, and a tolerance would permit a build that drives the balance below zero.
 
+- [ ] **Step 4b: Widen `CityEngine`'s two `@spec`s**
+
+In `lib/armchair_metropolist/infrastructure/simulation/city_engine.ex`, `place/4` declares `{:error, :out_of_bounds | :occupied | :unknown_type}` and `demolish/3` its own union. Both now pass `:insufficient_funds` through from the use case, and Task 4 matches it in the LiveView. Add the member to both.
+
+No behaviour changes and nothing fails if you skip it — the `check` alias runs no dialyzer. That is precisely why it is a numbered step: an un-checked `@spec` that lies about a public API's error union is how the next reader learns the wrong contract.
+
+- [ ] **Step 4c: The two engine-level tests the spec asks for**
+
+Spec §9 names these and this plan's first draft dropped both. They go in `city_engine_test.exs`, which seeds its snapshot per-test *before* `start_supervised!`, so a balance is easy to set here:
+
+The affordable half must come **first** and pay for itself, so that one engine on one seeded balance exercises both directions. A 0.0 seed cannot do it — there would be no affordable command to compare against.
+
+```elixir
+    test "a refused command broadcasts nothing, but an accepted one does" do
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      start_supervised!({CityEngine, city_id: "refusal"})
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic("refusal"))
+
+      # Affordable: exactly 20 for a park, leaving zero. Broadcast expected.
+      assert {:ok, _node} = CityEngine.place("refusal", 1, 1, :park)
+      assert_receive {:city_metrics, _}
+
+      # Now broke. Refused, and silent.
+      assert {:error, :insufficient_funds} = CityEngine.place("refusal", 2, 2, :park)
+      refute_receive {:city_metrics, _}, 50
+    end
+
+    test "metrics broadcast after a place carry the post-debit balance" do
+      # The treasury line must move on the click, not on the next tick. Nothing else
+      # catches an engine that computes metrics before debiting.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 100.0}}})
+      start_supervised!({CityEngine, city_id: "debited"})
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic("debited"))
+
+      {:ok, _node} = CityEngine.place("debited", 1, 1, :park)
+
+      assert_receive {:city_metrics, metrics}
+      assert metrics.money == 80.0
+    end
+```
+
+Check `city_engine_test.exs`'s existing conventions for subscribing and for the city id it uses — follow them rather than the literal strings above if they differ. If the engine turns out to compute metrics *before* the debit, that is a real defect in Task 3's wiring: fix the order, do not weaken the assertion to 100.0.
+
 - [ ] **Step 5: Add a property test**
 
 In `test/armchair_metropolist/use_cases/manage_infrastructure_test.exs`. Check the file's existing imports; if it does not already `use ExUnitProperties`, add it alongside `use ExUnit.Case`:
@@ -605,7 +686,24 @@ mix test test/armchair_metropolist/domain/entities/city_map_test.exs test/armcha
 mix test
 ```
 
-Expected: the targeted files PASS. **The full suite will have failures**, and they are expected: `simulator_live_test.exs` and `city_engine_test.exs` place nodes freely and will now hit the 150 grant. Report the exact list — do not fix them by raising the grant. Fix them by giving those fixtures enough money (`%{map | money: 10_000.0}` or the engine's stub city), which is the honest fix: the tests are about placement and streaming, not about affordability.
+Expected: the targeted files PASS. **The full suite will have failures, and this step's real work is fixing them.** They are expected: several fixtures place nodes freely against what is now a 150 grant. Do not fix any of them by raising the grant.
+
+Note that **none of these fixtures holds a `CityMap` it can edit** — they all drive a running engine. `%{map | money: 10_000.0}` is not available to them. The mechanism is to seed the *stored snapshot* before the engine starts, since `StubSnapshotRepository.load/1` is what the engine hydrates:
+
+```elixir
+StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 10_000.0}}})
+```
+
+Seeding an **empty** rich city and then placing through the engine preserves the semantics each fixture needs — in particular `starve/1`'s docstring is explicit that its consumers must be *placed* through a running engine rather than seeded into the snapshot, because a seeded deficit is by design already announced and cannot produce the edge the notification tests are about. Seeding money only, with no nodes, does not touch that.
+
+The four sites, with what each needs:
+
+1. **`city_engine_test.exs`, the `starve/1` helper (~line 980) and its five callers (~565, 577, 610, 637, 664).** `starve/1` places ten commercial at 40 each = 400. Each of those five tests already calls `set_initial` before `start_supervised!`; add `money: 10_000.0` to the city it seeds. Because the seeded city stays empty, `starve/1` still places every consumer through the running engine.
+2. **`city_engine_test.exs` ~line 622** — same fix, same reason.
+3. **`simulator_live_test.exs` ~287-290** — places two power plants (160 > 150) and asserts `data-count="2"`. This file starts its engine in a shared `setup`, so it needs the `treasury` tag mechanism that **Task 4 Step 1 introduces**. Two options, and the choice is yours to make and report: either land the tag mechanism here in Task 3 (it is six lines and Task 4 then just uses it), or tag these tests in Task 4 and leave them red across one commit. **Prefer the first** — a red suite between commits is worse than a slightly wider Task 3.
+4. **`simulator_live_test.exs` ~340-347** — places three power plants (240) and asserts `"+360"`. Same fix. Do **not** change the placed type to something cheaper: the `+120`/`+360` figures are power production and would all have to move with it, which turns a fixture fix into a rebalance of the test's subject.
+
+Report the exact failing list before and after. If a fixture fails for a reason not on this list, that is a finding — surface it rather than absorbing it.
 
 - [ ] **Step 7: Mutation-verify**
 
@@ -646,66 +744,92 @@ per-tick flow, and folding it in would corrupt the legend's totals cell."
 
 `Layouts.app` already renders `<.flash_group flash={@flash} />`, so `put_flash/3` needs no new plumbing. Add to `test/armchair_metropolist_web/live/simulator_live_test.exs`:
 
+**First, the mechanism for setting a balance — read this before writing any test.**
+
+`place/4` already exists in this file (~line 795) and already returns the rendered HTML. Do **not** add a second one: a non-adjacent duplicate clause trips "clauses with the same name and arity should be grouped together", and `mix check` compiles with `--warnings-as-errors`.
+
+There is **no** `set_treasury/2` and there must not be one. The refusal is decided by `ManageInfrastructure` against the *engine's* `city_map.money`, so a helper that only broadcasts `{:city_metrics, …}` would change `socket.assigns.metrics` and nothing else — the click would still succeed against the engine's real balance and no flash would appear. Adding a test-only setter to `CityEngine` is also out.
+
+The only mechanism that works is seeding the stored snapshot the engine hydrates, and this file starts its engine in the shared `setup`, before any test body runs. So parameterise the setup with an ExUnit tag (six lines; Task 3 Step 6 may already have landed this, in which case skip to the tests):
+
 ```elixir
-    test "the treasury renders floored, not rounded" do
+    StubSnapshotRepository.set_initial(initial_snapshot(context))
+    start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
+```
+
+with `setup %{conn: conn}` widened to `setup %{conn: conn} = context` and, beside the other helpers:
+
+```elixir
+  # `@tag treasury: n` seeds the balance of the city this test's engine hydrates.
+  # There is no other way to set it: the engine owns the money, the refusal is decided
+  # against the engine's copy, and this file starts its engine in `setup` — before any
+  # test body could seed anything. Untagged tests get `{:error, :not_found}` exactly as
+  # before, so the engine builds a fresh `CityMap` and they see the opening grant.
+  #
+  # The city is seeded *empty*: only the balance is preloaded, so every node in every
+  # test is still placed through the running engine.
+  defp initial_snapshot(%{treasury: money}) do
+    {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
+  end
+
+  defp initial_snapshot(_context), do: {:error, :not_found}
+```
+
+Now the tests:
+
+```elixir
+    @tag treasury: 79.6
+    test "the treasury renders floored, not rounded", %{conn: conn} do
       # 79.6 rounding to 80 while an 80-cost build is refused is a cell contradicting
       # itself. Both halves asserted together, because the defect is precisely the two
-      # disagreeing.
+      # disagreeing — and 79.6 is chosen so they *can* disagree: at a whole number
+      # `trunc` and `round` return the same thing and the test could not fail.
       {:ok, view, _html} = live(conn, ~p"/")
-      set_treasury(view, 79.6)
 
       assert view |> element("#metrics-treasury") |> render() =~ "79"
       refute view |> element("#metrics-treasury") |> render() =~ "80"
     end
 
-    test "a refused build flashes the cost and the balance" do
+    @tag treasury: 39.6
+    test "a refused build flashes the cost and the balance", %{conn: conn} do
+      # 39.6 rather than 40.0 for the same reason as above: the flash floors the balance
+      # too, and a whole-number fixture could not tell `trunc` from `round`.
       {:ok, view, _html} = live(conn, ~p"/")
-      set_treasury(view, 40.0)
 
       html = place(view, :power_plant, 1, 1)
 
       assert html =~ "Not enough money"
       assert html =~ "power_plant costs 80"
-      assert html =~ "treasury holds 40"
+      assert html =~ "treasury holds 39"
     end
 
-    test "an affordable build flashes nothing" do
+    test "an affordable build flashes nothing", %{conn: conn} do
       # The positive case. Without it, the assertions above pass against a page that
-      # flashes on every click.
+      # flashes on every click. No tag: the untouched 150 grant covers an 80 plant.
       {:ok, view, _html} = live(conn, ~p"/")
-      set_treasury(view, 500.0)
 
       refute place(view, :power_plant, 1, 1) =~ "Not enough money"
     end
 
-    test "a refused demolition flashes the demolition cost" do
+    @tag treasury: 24.0
+    test "a refused demolition flashes the demolition cost", %{conn: conn} do
+      # Seeded at 24 and then spent down *by playing*: a park costs 20, leaving 4, which
+      # is below the flat 10 demolition fee. No mid-test balance setter needed, and the
+      # path is one a player can actually walk.
       {:ok, view, _html} = live(conn, ~p"/")
-      set_treasury(view, 500.0)
       place(view, :park, 2, 2)
-      set_treasury(view, 4.0)
 
-      html = view |> element(~s{[phx-click="demolish"][phx-value-x="2"][phx-value-y="2"]}) |> render_click()
+      html =
+        view
+        |> element(~s{[phx-click="demolish"][phx-value-x="2"][phx-value-y="2"]})
+        |> render_click()
 
       assert html =~ "demolishing costs 10"
       assert html =~ "treasury holds 4"
     end
 ```
 
-You need two helpers. `place/4` returns the rendered HTML so the flash is visible:
-
-```elixir
-  defp place(view, type, x, y) do
-    view
-    |> element(~s{button[phx-click="select_type"][phx-value-type="#{type}"]})
-    |> render_click()
-
-    view
-    |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
-    |> render_click()
-  end
-```
-
-`set_treasury/2` must change the *engine's* city, since the view reads metrics from it. This test file already starts its own `CityEngine` against `StubSnapshotRepository` and broadcasts on `@topic`; follow whatever mechanism the existing tests use to seed engine state. If there is no way to set the balance without adding production API, **stop and report it** — do not add a test-only setter to `CityEngine`. A legitimate alternative is to broadcast a `{:city_metrics, metrics}` message built with `SimulationMetrics.build/3` and a city map whose `money` you set, which is how other tests in this file drive the view.
+Check the file's existing tests for whether they take `%{conn: conn}` from the context or rely on the setup's rebinding, and match that.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -803,7 +927,7 @@ Expected: PASS, no failures.
 - [ ] **Step 6: Mutation-verify**
 
 1. `trunc/1` → `round/1` on the treasury line → "the treasury renders floored, not rounded" fails. Restore.
-2. `trunc/1` → `round/1` in `unaffordable/2` → the "treasury holds 40" assertion still passes (40.0 rounds and truncs alike), so **change the fixture** to 39.6 and confirm it then discriminates. A fixture that cannot tell the two apart is not a test.
+2. `trunc/1` → `round/1` in `unaffordable/2` → "a refused build flashes the cost and the balance" fails, because 39.6 rounds to 40 and truncs to 39. Confirm this actually reddens: if it does not, the fixture has been changed to a whole number somewhere and the assertion can no longer fail. That is the whole reason the tag is 39.6 and not 40.0.
 3. Drop the `{:error, :insufficient_funds}` clause (let it fall through to the silent one) → all three flash tests fail. Restore.
 
 - [ ] **Step 7: Commit**
@@ -835,14 +959,18 @@ contradict itself: 79.6 read as 80 while an 80-cost build was refused."
 - [ ] **Step 1: Write the failing tests**
 
 ```elixir
-    test "every legend row shows its construction cost" do
+    test "every legend row shows its construction cost", %{conn: conn} do
+      # Asserted on the cell's *text*, not on `render/1`'s HTML. The HTML includes the
+      # `title` attribute added in this same step, whose value is "costs 80" — so
+      # `render() =~ "80"` would pass even if the cell body rendered the count, or the
+      # demolition cost, or nothing at all. An exact match on trimmed text can fail.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert view |> element(~s{[data-cell="power_plant-cost"]}) |> render() =~ "80"
-      assert view |> element(~s{[data-cell="residential-cost"]}) |> render() =~ "15"
+      assert cost_text(view, :power_plant) == "80"
+      assert cost_text(view, :residential) == "15"
     end
 
-    test "the cost column survives a collapse, unlike the resource columns" do
+    test "the cost column survives a collapse, unlike the resource columns", %{conn: conn} do
       # The type rows are the only way to choose what to place, and choosing now spends
       # money — so price cannot be detail-only.
       {:ok, view, _html} = live(conn, ~p"/")
@@ -852,15 +980,31 @@ contradict itself: 79.6 read as 80 while an 80-cost build was refused."
       refute has_element?(view, ~s{[data-cell="power_plant-power"]})
     end
 
-    test "unaffordable rows are marked, affordable ones are not" do
-      # Both directions: a hardcoded "false" would satisfy either alone.
+    @tag treasury: 40.0
+    test "unaffordable rows are marked, affordable ones are not", %{conn: conn} do
+      # Both directions: a hardcoded "false" would satisfy either alone. 40 sits between
+      # residential's 15 and power_plant's 80, so one row must be marked each way.
       {:ok, view, _html} = live(conn, ~p"/")
-      set_treasury(view, 40.0)
 
       assert has_element?(view, ~s{#legend-row-power_plant[data-affordable="false"]})
       assert has_element?(view, ~s{#legend-row-residential[data-affordable="true"]})
     end
 ```
+
+with the text helper:
+
+```elixir
+  defp cost_text(view, type) do
+    view
+    |> element(~s{[data-cell="#{type}-cost"]})
+    |> render()
+    |> Floki.parse_fragment!()
+    |> Floki.text()
+    |> String.trim()
+  end
+```
+
+`Floki` is already a dependency — `Phoenix.LiveViewTest` requires it. If an existing helper in this file already extracts cell text, use that instead of adding a second one.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -875,6 +1019,14 @@ In the legend's `<thead>`, after the `#` header:
 ```
 
 **Not** `:if={@detail}` — see the test's comment above.
+
+**Then fix the totals row's `colspan`, or every total lands under the wrong resource.** `<tfoot>`'s label cell is currently
+
+```heex
+              <th class="text-left" colspan="2">supplied/demanded · met this tick</th>
+```
+
+spanning the type and count columns. A third always-visible column makes that `colspan="3"`. Miss it and the header and body carry nine columns while the footer carries eight, so money's total renders under `labour`, labour's under `traffic`, and the last resource gets none — **and no test catches it**, because `data-total={resource}` stays correct on each cell regardless of where the browser lays it out. The existing totals assertions all pass against the broken table. Verify this one by eye in the preview during Step 5, and add it to the mutation list below.
 
 In the row, add the attribute and the dimming class:
 
@@ -944,6 +1096,8 @@ Record both measured windows and both chosen midpoints in the comment, replacing
 
 1. Make the cost cell `:if={@detail}` → "the cost column survives a collapse" fails. Restore.
 2. Invert `affordable?/2` → both directions of the affordability test fail. Restore.
+3. Render `{@metrics.by_type[type].count}` in the cost cell instead of the cost → "every legend row shows its construction cost" fails. This is the mutation the `Floki.text` assertion exists for; against `render() =~ "80"` it would have stayed green, because the `title` attribute carries the figure. Restore.
+4. Revert the `colspan` to `2` → **no test fails**. Confirm that, then look at the expanded legend in the preview and confirm the totals are visibly one column out. Record it in your report: this is a defect the suite cannot see, and the next person to touch the column count needs to know that.
 
 - [ ] **Step 7: Commit**
 
@@ -1015,11 +1169,17 @@ git --no-pager diff --no-ext-diff docs/PLAYING.md
 
 `--no-ext-diff` matters: this repo configures difftastic and plain `git diff` is not a unified diff.
 
-Expected: the block fills with seven rows (80, 70, 60, 40, 40, 20, 15 by type, alphabetically) plus the demolition and grant sentence reading `costs 10` and `starts with 150`. If any figure shows a decimal point, a cost is not a whole number and Task 1's guard failed.
+Expected: the block fills with seven rows plus the demolition and grant sentence reading `costs 10` and `starts with 150`. `sorted_types()` is **alphabetical**, so the rows read
 
-- [ ] **Step 4: Rewrite the four affected prose passages**
+```
+commercial 40, industrial 60, park 20, power_plant 80, residential 15, transit_hub 40, water_plant 70
+```
 
-All outside the `<!-- generated:… -->` markers.
+— *not* descending by price. Do not "fix" the generator to produce a descending list; the alphabetical order is the existing convention every other generated block follows. If any figure shows a decimal point, a cost is not a whole number and Task 1's guard failed.
+
+- [ ] **Step 4: Rewrite the six affected prose passages**
+
+All outside the `<!-- generated:… -->` markers. **Every factual claim below has been checked against the merged code or measured.** Two false sentences reached this guide on the park-amenity branch by being plausible and unverified, so if you find yourself wanting to improve any sentence here, verify the replacement the same way — `mix run --no-start` against the domain — and report what you measured.
 
 **(a) "The controls"** — placing can now be refused, and both gestures spend. Add after the three bullets:
 
@@ -1034,26 +1194,49 @@ treasury cannot tear anything down either.
 **(b) "Build a house first"** — it gains a second, independent reason. Append:
 
 ```markdown
-Money gives the same advice for a different reason: `residential` is the cheapest block,
-it is the only one that earns money while spending none, and it is therefore the only
-first placement that leaves the treasury able to grow. Spend the whole grant on things
-that earn nothing and the city cannot recover — see "Running out of money" below.
+Money gives the same advice for a different reason. `residential` is the cheapest block at
+15, it earns without consuming any money, and — alone on the empty grid — it is the only
+block that stays healthy indefinitely, because it supplies its own workers. `commercial`
+earns twelve times as much per tick, but placed by itself it has no workforce and decays
+while it earns, so its income stops. Spend the whole grant on things that cannot earn and
+the city has no way back — see "Running out of money" below.
 ```
 
-**(c) The park paragraph** — it now costs 20 and is worth it. Add one sentence at the end of the first paragraph:
+> Do not shorten this to "the only one that earns money while spending none": `residential`
+> and `commercial` **both** produce money and consume none, so that claim is false about
+> which is unique. What distinguishes `residential` is that it survives alone. Measured: one
+> residential is stable at health 100 over 400 ticks at +1/tick; one commercial earns 265
+> over 200 ticks *while dying* of labour starvation.
+
+**(c) The park paragraph** — it now costs 20. Add at the end of the first paragraph:
 
 ```markdown
-At 20 to build it is also the cheapest way to add workforce, which is why the smallest
-city with a park in it is three blocks rather than a support set.
+At 20 it is the second-cheapest block, but it is not the cheapest workforce: a park adds 5
+workers and consumes 1, so 20 buys 4 — while a house adds 5 and consumes none for 15. Parks
+win on the resources they also fix, not on labour per coin. And the multiplier is capped at
+one park per house, so a park beyond that ratio costs 20 to *lose* you a worker.
 ```
+
+> The draft sentence here read "at 20 to build it is also the cheapest way to add
+> workforce, which is why the smallest city with a park in it is three blocks rather than a
+> support set." Both halves were wrong. Cost per net worker is **5.0** for a park (20 ÷ 4)
+> against **3.0** for a house (15 ÷ 5), so the park is the *dearer* way to add workforce.
+> And the three-block city's shape has nothing to do with prices — the paragraph three lines
+> below already gives the real reason, which predates construction costs entirely: the park
+> needs a house to staff it and a commercial block to cover its upkeep. Do not add a second,
+> contradicting explanation next to it.
 
 **(d) The rescue section** — bulldozing now has a price. Append to approach 1:
 
 ```markdown
-That has a price now: nineteen blocks is 190 in demolition fees, and a city whose money
-producers are all dead earns nothing to pay it with. Start bulldozing while the treasury
-still has something in it.
+That has a price now. Cutting a nineteen-block city back to the two houses the baseline
+supports means seventeen demolitions, which is 170 — and a city whose money producers are
+all dead earns nothing to pay it with. Start bulldozing while the treasury still has
+something in it.
 ```
+
+> 170, not 190: approach 1 keeps two residential standing, so it demolishes seventeen
+> blocks and not nineteen. Read the approach before pricing it.
 
 **(e) A new subsection, after the rescue section:**
 
@@ -1063,17 +1246,32 @@ still has something in it.
 The treasury is the one resource whose surplus survives a tick, and the one you can spend
 to zero with no warning. Two things follow.
 
-**A city with no income cannot be repaired.** Money has no free baseline — the only
-sources are `residential` and `commercial`, and production is scaled by health, so a city
-whose housing and shops are all dead earns exactly nothing, forever. At that point neither
-building nor demolishing is affordable and there is no way back. This is the one
-unrecoverable state in the game.
+**A city with no income and no savings cannot act at all.** Money has no free baseline —
+the only sources are `residential` and `commercial`, and production is scaled by health, so
+a city whose housing and shops are all dead earns exactly nothing, forever. While the
+treasury still holds 10 you can keep demolishing, which is the way out described above.
+Once it reaches zero with nothing earning, every gesture is refused: you cannot build,
+and you cannot tear down to make room. That is the one unrecoverable state in the game,
+and it takes both halves — no income *and* no savings.
 
-**The way to stay out of it is a single house.** `residential` costs 15, needs no support
-on an empty grid, and consumes no money at all, so it earns without bound. Any treasury
-that can afford one can always climb back. Spend your whole opening grant on plants and
-you will not be able to.
+**Getting out is easier the earlier you start.** A house costs 15, needs no support on an
+empty grid, and consumes no money, so on a clear grid one house is enough to start earning
+again. On a crowded one it is not: the dead blocks around it still draw power, water, waste
+and traffic, and a single house cannot satisfy that demand, so it decays too. Demolish
+first, then rebuild — and keep enough in the treasury to do both.
 ```
+
+> Two claims in the draft of this section were false and are corrected above. "At that point
+> neither building nor demolishing is affordable and there is no way back" — false while the
+> treasury still holds 10, which is exactly the situation the rescue section's approach 1
+> addresses; the guide would have contradicted itself two sections apart. And "any treasury
+> that can afford one can always climb back" — measured false: a fresh house added to
+> nineteen dead blocks is itself at health 0 after 300 ticks. The unrecoverable state needs
+> the conjunction, and the rescue needs an *empty enough* grid.
+
+**(f) "The controls", the collapse sentence** — currently "**Show detail / Hide detail** collapses the legend to its type and count columns". Task 5 makes that false: cost is always visible. Change to "collapses the legend to its type, count and cost columns" (or whatever the column set actually is after Task 5 — check the rendered page, do not assume).
+
+**(g) The "only way out" sentence near the top** — currently "Demolishing … is the only way out of a collapse." Spec §6 names this as one of two passages that become *outright false* and must be **rewritten, not amended**: demolishing is now itself something a broke city cannot afford. Replace with a sentence that says demolishing is the way out of a collapse *and costs money*, pointing at "Running out of money". Do not simply insert (a)'s new paragraph above it and leave it standing — the sentence is wrong on its own terms, and a reader who stops at it is misinformed.
 
 - [ ] **Step 5: Verify and run the gate**
 
@@ -1094,16 +1292,24 @@ A generated costs block, read from the domain so a balance patch moves the guide
 plus the demolition fee and the opening grant.
 
 Adds a 'Running out of money' section naming the one unrecoverable state
-plainly: money has no free baseline, so a city whose housing and shops are all
-dead earns nothing and can neither build nor demolish. The way out is not to get
-there — a single 15-cost house earns without bound."
+plainly, and naming both halves of it: money has no free baseline, so a city
+whose housing and shops are all dead earns nothing — but it can still demolish
+while the treasury holds 10. Only no income and no savings together are
+terminal."
 ```
 
 ---
 
 ## Self-Review
 
-**Spec coverage.** §2 the prices → Task 1. §3 where the charge lives, including both load-bearing clause orderings → Task 3. §5's floored treasury → Task 4; its cost column, dimming and re-measured thresholds → Task 5. §6 documentation → Task 6. §7's balance → verified against merged code before this plan was written; no task changes it. §8's accepted consequences → recorded in the spec and surfaced to the player by Task 6(e), which is the mitigation the spec asks for.
+**Spec coverage.** §2 the prices → Task 1. §3 where the charge lives, including both load-bearing clause orderings → Task 3. §5's floored treasury → Task 4; its cost column, dimming and re-measured thresholds → Task 5. §6 documentation → Task 6, all seven passages it names. §7's balance → verified against merged code before this plan was written; no task changes it. §8's accepted consequences → recorded in the spec and surfaced to the player by Task 6(e), which is the mitigation the spec asks for. §9's two engine-level tests — a refused command broadcasting nothing, and post-debit metrics — → Task 3 Step 4c. (The first draft of this plan dropped both while claiming §9 was covered.)
+
+**This plan was reviewed before execution** by an independent Opus 5 pass, which returned sixteen confirmed findings; all sixteen are folded in above. Four would have stopped an executor mid-task, four would have put measured-false sentences into the player guide, and two were assertions that could not fail. The findings worth carrying forward as warnings:
+
+- The suite **cannot see** the totals-row `colspan` defect (Task 5). Column-count changes here need an eye on the page, not a green suite.
+- `render() =~ "<figure>"` on an element whose `title` repeats that figure is not a test (Task 5).
+- A grep for a constant does not find its **derived** readers — `502.0` was the grant plus two ticks of income (Task 2).
+- Fixtures that drive a running engine cannot be handed money directly; the balance is seeded into the stored snapshot before the engine starts (Tasks 3, 4).
 
 **The grant is its own task** (Task 2) rather than folded into Task 3, because it changes a persisted default and breaks a different set of tests. Splitting keeps each reviewable, and Task 3 does not depend on the grant's *value*.
 
@@ -1111,4 +1317,6 @@ there — a single 15-cost house earns without bound."
 
 **Type consistency.** `Node.construction_cost/1` takes a `node_type()` and raises on anything else — relied on by Task 3's clause ordering and never called before the type is validated. `CityMap.debit/2` takes and returns a `CityMap.t()`. `place/4`'s error union gains exactly one member, `:insufficient_funds`, which Task 4 matches by name in both handlers. `CityMap.opening_grant/0` is the only way anything reads the grant after Task 2.
 
-**Known ordering hazard for the executor.** Task 3 will break `simulator_live_test.exs` and `city_engine_test.exs`, because they place nodes freely against what is now a 150 grant. That is expected and its fix is in Task 3 Step 6 — give those fixtures money, do not raise the grant. A plan that did not say so would look like Task 3 had broken the suite.
+**Known ordering hazard for the executor.** Task 3 will break **four sites** — `starve/1` and its five callers plus one more test in `city_engine_test.exs`, and two multi-power-plant fixtures in `simulator_live_test.exs` — because they place nodes freely against what is now a 150 grant. That is expected; Task 3 Step 6 names each site, says what it needs, and explains why "give those fixtures money" is *not* available as written (none of them holds an editable `CityMap`). Do not raise the grant. A plan that did not say so would look like Task 3 had broken the suite.
+
+**One cross-task dependency runs backwards.** Task 3's fix for the two `simulator_live_test.exs` fixtures needs the `treasury` tag that Task 4 Step 1 introduces. Task 3 Step 6 tells the executor to land those six lines early rather than leave the suite red across a commit. If tasks are dispatched to separate agents, the Task 3 agent must be told this; it is the one place where a later task's mechanism is needed earlier.
