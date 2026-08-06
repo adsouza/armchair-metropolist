@@ -178,7 +178,7 @@ one: baseline capacity supports exactly **two** residential blocks, and the thir
 starts a death spiral that cannot be reversed by building more.
 
 The slow one is insolvency. Four resources have a free baseline of 40; labour and
-money have none, and a city opens with a one-off 500 in the treasury. A support set
+money have none, and a city opens with a one-off 150 in the treasury. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
 the whole game while every other resource reads 100% satisfied — commercial is part
 of the ratio, not an optional extra.

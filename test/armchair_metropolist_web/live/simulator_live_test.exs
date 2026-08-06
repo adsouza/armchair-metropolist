@@ -519,7 +519,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#metrics-treasury")
-      assert view |> element("#metrics-treasury") |> render() =~ "500"
+      assert view |> element("#metrics-treasury") |> render() =~ "150"
     end
 
     # Per-resource satisfaction otherwise lives only in the totals row, which

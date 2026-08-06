@@ -178,7 +178,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       round_tripped = :erlang.binary_to_term(:erlang.term_to_binary(legacy), [:safe])
       loaded = CityEngine.normalize_city_map(round_tripped)
 
-      assert loaded.money == 500.0
+      assert loaded.money == CityMap.opening_grant()
       assert loaded.tick == 7
       assert map_size(loaded.nodes) == 1
     end
