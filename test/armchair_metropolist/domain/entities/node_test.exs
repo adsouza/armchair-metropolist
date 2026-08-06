@@ -134,6 +134,48 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       # depends on (spec §2): at L = 5 and k = 1.0 the gross bonus per park is 5.
       assert Node.production(:residential)[:labour] == 5.0
     end
+
+    test "match the specified construction cost table" do
+      assert Node.construction_cost(:power_plant) == 80.0
+      assert Node.construction_cost(:water_plant) == 70.0
+      assert Node.construction_cost(:industrial) == 60.0
+      assert Node.construction_cost(:transit_hub) == 40.0
+      assert Node.construction_cost(:commercial) == 40.0
+      assert Node.construction_cost(:park) == 20.0
+      assert Node.construction_cost(:residential) == 15.0
+    end
+
+    test "every type has a construction cost" do
+      # Mirrors the `Map.keys(baseline_capacity()) == Node.resources()` gate in
+      # simulation_calculator_test.exs, and for the same reason: construction_cost/1 is a
+      # Map.fetch!, so a type missing from the table raises at runtime instead of failing
+      # a test.
+      for type <- Node.types() do
+        assert is_float(Node.construction_cost(type)), "#{type} has no construction cost"
+      end
+    end
+
+    test "demolition is flat, and cheaper than building anything" do
+      cheapest = Node.types() |> Enum.map(&Node.construction_cost/1) |> Enum.min()
+
+      assert Node.demolition_cost() == 10.0
+
+      assert Node.demolition_cost() < cheapest,
+             "demolition (#{Node.demolition_cost()}) must stay below the cheapest " <>
+               "construction cost (#{cheapest}), or tearing down becomes the expensive option"
+    end
+
+    test "every cost is a whole number" do
+      # The legend's `signed/1` and the treasury's display both truncate or round, so a
+      # fractional cost would render a figure the engine does not charge. It is also what
+      # makes `trunc(money) >= cost` agree with `money >= cost` exactly.
+      for type <- Node.types() do
+        cost = Node.construction_cost(type)
+        assert cost == Float.round(cost), "#{type}'s cost #{cost} is not a whole number"
+      end
+
+      assert Node.demolition_cost() == Float.round(Node.demolition_cost())
+    end
   end
 
   describe "status_for/1" do

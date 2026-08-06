@@ -61,6 +61,32 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
   }
 
+  # What each type costs to build. A third table beside production and consumption, so
+  # every price a player pays lives in one module.
+  #
+  # Ordered by the block's weight in the city, so the curve reads as
+  # infrastructure-is-expensive. Whole numbers throughout — see `cost` in the tests: the
+  # legend and the treasury line both truncate, so a fractional cost would render a
+  # figure the engine does not charge.
+  @construction_cost_table %{
+    power_plant: 80.0,
+    water_plant: 70.0,
+    industrial: 60.0,
+    transit_hub: 40.0,
+    commercial: 40.0,
+    park: 20.0,
+    residential: 15.0
+  }
+
+  # Flat across every type, and strictly below the cheapest construction cost. Flat
+  # because teardown does not care what stood there; below the cheapest because putting a
+  # block up is the larger undertaking.
+  #
+  # `node_test.exs` enforces that second property rather than trusting it: without the
+  # test, a later balance patch dropping `residential` to 8 would silently make tearing
+  # down the expensive option and nothing in the suite would notice.
+  @demolition_cost 10.0
+
   @doc """
   Create a new node at the given coordinates with the given type.
   Starts at full health (100.0) and online status.
@@ -99,6 +125,24 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   def consumption(node_type) do
     Map.fetch!(@consumption_table, node_type)
   end
+
+  @doc """
+  What it costs to build one node of `node_type`.
+
+  Raises `KeyError` for an unknown type, deliberately: callers validate the type before
+  reaching here (see `UseCases.ManageInfrastructure.place/4`, where that clause ordering
+  is load-bearing), and a silent default would let an unknown type be built for free.
+  """
+  @spec construction_cost(node_type()) :: float()
+  def construction_cost(node_type) do
+    Map.fetch!(@construction_cost_table, node_type)
+  end
+
+  @doc """
+  What it costs to demolish a node, whatever its type.
+  """
+  @spec demolition_cost() :: float()
+  def demolition_cost, do: @demolition_cost
 
   @doc """
   Determine the status of a node based on its health value.
