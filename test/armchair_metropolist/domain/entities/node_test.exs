@@ -53,7 +53,13 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   describe "production/1 and consumption/1" do
     test "match the specified supply/demand table" do
       assert Node.production(:power_plant) == %{power: 120.0}
-      assert Node.consumption(:power_plant) == %{water: 20.0, waste: 12.0, traffic: 3.0}
+
+      assert Node.consumption(:power_plant) == %{
+               water: 20.0,
+               waste: 12.0,
+               traffic: 3.0,
+               labour: 1.0
+             }
 
       assert Node.production(:water_plant) == %{water: 100.0}
 
@@ -61,7 +67,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                power: 25.0,
                waste: 6.0,
                traffic: 2.0,
-               money: 5.0
+               money: 5.0,
+               labour: 1.0
              }
 
       assert Node.production(:industrial) == %{waste: 90.0}
@@ -74,9 +81,9 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
              }
 
       assert Node.production(:transit_hub) == %{traffic: 60.0}
-      assert Node.consumption(:transit_hub) == %{power: 8.0, waste: 2.0, money: 4.0}
+      assert Node.consumption(:transit_hub) == %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0}
 
-      assert Node.production(:residential) == %{labour: 4.0, money: 1.0}
+      assert Node.production(:residential) == %{labour: 5.0, money: 1.0}
 
       assert Node.consumption(:residential) == %{
                power: 15.0,
@@ -96,7 +103,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
              }
 
       assert Node.production(:park) == %{waste: 8.0}
-      assert Node.consumption(:park) == %{water: 18.0, traffic: 2.0, money: 3.0}
+      assert Node.consumption(:park) == %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
     end
 
     # Guards the invariant SimulationCalculator's decay rule depends on:
@@ -107,6 +114,25 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
         assert map_size(Node.consumption(type)) > 0,
                "#{type} consumes nothing, which would break worst-ratio computation"
       end
+    end
+
+    test "everything but housing is staffed, and housing supplies the staff" do
+      # Positive cases first: without these, the refutation below is satisfied by a
+      # consumption table that mentions labour nowhere at all.
+      assert Node.consumption(:industrial)[:labour] == 12.0
+      assert Node.consumption(:commercial)[:labour] == 8.0
+      assert Node.consumption(:transit_hub)[:labour] == 2.0
+      assert Node.consumption(:power_plant)[:labour] == 1.0
+      assert Node.consumption(:water_plant)[:labour] == 1.0
+      assert Node.consumption(:park)[:labour] == 1.0
+
+      # The one exemption, and the whole reason the rule is statable.
+      refute Map.has_key?(Node.consumption(:residential), :labour),
+             "residential is the source of labour, not a consumer — see the park amenity spec, §3"
+
+      # Pinned because `L` is half of the `L x k` integrality constraint the legend
+      # depends on (spec §2): at L = 5 and k = 1.0 the gross bonus per park is 5.
+      assert Node.production(:residential)[:labour] == 5.0
     end
   end
 

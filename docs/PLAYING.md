@@ -95,7 +95,7 @@ health:
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
 | 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 6 | **7** | 14 | 0.5 |
 | 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
 <!-- /generated:capacities -->
 
@@ -188,7 +188,7 @@ Production is scaled by the node's health, so a plant at 50% health supplies hal
 | `industrial` | waste 90 |
 | `park` | waste 8 |
 | `power_plant` | power 120 |
-| `residential` | labour 4, money 1 |
+| `residential` | labour 5, money 1 |
 | `transit_hub` | traffic 60 |
 | `water_plant` | water 100 |
 
@@ -205,11 +205,11 @@ spiral.
 |---|---|---|---|---|---|---|
 | `commercial` | 22 | 8 | 14 | 9 | 8 | — |
 | `industrial` | 40 | 25 | — | 8 | 12 | — |
-| `park` | — | 18 | — | 2 | — | 3 |
-| `power_plant` | — | 20 | 12 | 3 | — | — |
+| `park` | — | 18 | — | 2 | 1 | 3 |
+| `power_plant` | — | 20 | 12 | 3 | 1 | — |
 | `residential` | 15 | 12 | 10 | 6 | — | — |
-| `transit_hub` | 8 | — | 2 | — | — | 4 |
-| `water_plant` | 25 | — | 6 | 2 | — | 5 |
+| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
+| `water_plant` | 25 | — | 6 | 2 | 1 | 5 |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
