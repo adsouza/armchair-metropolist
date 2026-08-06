@@ -237,7 +237,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               line. Alone on a line below the grid that is the full page width, which
               stretched a 757px matrix across 1681px and pushed Metrics off the end.
               The aside must never be wider than its content; the table's `100%` is then
-              a fixpoint at the matrix's natural width. --%>
+              a fixpoint rather than a runaway.
+
+              But a fixpoint at the aside's **widest child**, which is not the same thing
+              as the matrix's natural width and today is not the matrix at all. Measured
+              2026-08-06, expanded: the totals footnote below is 1198px against the
+              matrix's own 927px, so `100%` resolves to the footnote and stretches the
+              table ~271px past its content. Collapsed it is the re-entry line, at 359px
+              against 173px of matrix. That distinction is the whole subject of the
+              threshold comment on the `max-[Npx]` classes further down — read it before
+              reasoning about this sidebar's width from the table. --%>
         <aside class="min-w-fit">
           <button
             id="toggle-legend-detail"
@@ -261,7 +270,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 windows, for exactly this reason), putting the legend under the grid at
                 every ordinary window size. Keeping the children stacked by default keeps
                 the sidebar's intrinsic width down to its widest single child and the wrap
-                threshold at the smaller `W_col`.
+                threshold at `W_col` rather than at the never-smaller `W_row` — a real
+                saving expanded, and none at all collapsed, where the two coincide.
 
                 **One threshold per state**, because the sidebar's width is what decides
                 where it wraps and collapsing changes that width. A single constant is
@@ -270,10 +280,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 stayed stubbornly alongside it.
 
                 **Each threshold is the midpoint of a window, not a measured edge.** There
-                are two wrap points per state, because the arrangement chosen here can feed
-                back into the sidebar's own width: stacked, the sidebar fits beside the grid
-                from viewport `W_col`; side by side it may be a whole Metrics column wider
-                and need `W_row`. Any constant inside `[W_col, W_row]` is self-consistent —
+                are up to two wrap points per state — two whenever the arrangement chosen
+                here feeds back into the sidebar's own width, one when it does not, which
+                is the collapsed case today: stacked, the sidebar fits beside the grid from
+                viewport `W_col`; side by side it may be a whole Metrics column wider and
+                need `W_row`. Any constant inside `[W_col, W_row]` is self-consistent —
                 at or above it the children stack and the sidebar fits beside the grid,
                 below it they sit in a row and the sidebar has already dropped underneath.
 
@@ -482,9 +493,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       </div>
 
       <%!-- Hidden with the totals row it explains — and not only for tidiness. A long
-            line of prose sets this sidebar's `fit-content`, so left visible it holds the
-            collapsed sidebar at 437px instead of 127px, and collapsing would reclaim
-            almost nothing. Anything added here must stay short or wrappable. --%>
+            line of prose sets this sidebar's width, so left visible it would hold the
+            collapsed sidebar at this paragraph's own 1198px instead of the 359px the
+            re-entry line below already imposes, and collapsing would reclaim almost
+            nothing. Anything added here must stay short or wrappable.
+
+            Re-measured 2026-08-06 (the earlier "437px instead of 127px" predates both
+            the re-entry block and this paragraph's third sentence): expanded, these
+            1198px are not merely a nuisance but the *binding* width of the whole
+            sidebar — wider than the nine-column matrix's own 927px — so this paragraph,
+            not the table, is what sets the expanded wrap threshold in `render/1`. Edit
+            the wording here and that constant needs re-measuring. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 for power, water, waste and traffic, which
         belongs to no type. Labour and money have no free baseline.
