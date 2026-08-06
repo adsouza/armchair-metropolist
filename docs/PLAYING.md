@@ -158,16 +158,17 @@ column.
 
 ## Rescuing a city that is already dying
 
-**A city whose housing has died cannot be rescued by building on top of it.** Once every
-residential block is dead (health 0), it produces zero labour — production is
-health-scaled, same as everything else — and `industrial` and `commercial` both need
-labour to hold their own health. Simulated against 19 dead residential blocks: adding
-5 power, 4 water, 3 industrial and 3 transit hubs — a combination that reaches full
-satisfaction on power, water, waste and traffic simultaneously — still fails. The fresh
-`industrial` block starves for workers from the very first tick, decays, and its
-falling waste output drags the rest of the city down before the dead residential can
-recover on power and water alone. Measured: every node's health is still 0.0 after 150
-ticks.
+**Dead housing supplies no labour, and every type but `residential` draws some — so a
+staffed block added to a city whose housing has died starves from its first tick, and
+cannot regain a point of health until some housing has.** Once every residential block is
+dead (health 0), it produces zero labour — production is health-scaled, same as everything
+else — and `industrial` and `commercial` both need labour to hold their own health.
+Simulated against 19 dead residential blocks: adding 5 power, 4 water, 3 industrial and 3
+transit hubs — a combination that reaches full satisfaction on power, water, waste and
+traffic simultaneously — still fails. The fresh `industrial` block starves for workers
+from the very first tick, decays, and its falling waste output drags the rest of the city
+down before the dead residential can recover on power and water alone. Measured: every
+node's health is still 0.0 after 150 ticks.
 
 The trap is the labour dependency, not the upkeep: `industrial` and `commercial`
 need living residential to staff them, and dead residential cannot staff anything, no
@@ -175,7 +176,7 @@ matter how much power and water arrives on the same tick. Prices make that rescu
 rather than better — those fifteen blocks cost 980 to build, and a city whose housing and
 shops are all dead earns nothing to put towards it.
 
-Two approaches still work, because neither waits on labour to recover first:
+Two approaches work without waiting on labour to recover:
 
 1. **Bulldoze back to what the baseline supports** (two residential, no `industrial` in
    the mix) and let them heal on power, water, waste and traffic alone — none of which
@@ -185,12 +186,13 @@ Two approaches still work, because neither waits on labour to recover first:
    That has a price now. Cutting a nineteen-block city back to the two houses the baseline
    supports means seventeen demolitions, which is 170 — and a city whose money producers
    are all dead earns nothing to pay it with. Start bulldozing while the treasury can cover
-   the whole cut: stopping part way earns nothing back, because nothing heals while the
-   demand still standing outruns what is supplied.
+   the whole cut: stopping part way earns nothing back, because a house regains health only
+   when all four of the resources it draws are fully supplied, and every house you have not
+   removed yet is still drawing its full share of them.
 2. **Never let residential fully die in the first place.** Add support while some
    residential is still alive — this is the "build producers first" advice above,
    and it is the only way to keep labour (and, once a commercial block exists, income)
-   flowing through a rescue.
+   flowing rather than having to restart it from zero.
 
 **Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on the parks costs more.** The
 multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
@@ -211,35 +213,42 @@ to zero with no warning. Two things follow.
 **Dead is not the same as unrecoverable — but the way back has a fixed price.** Money has
 no free baseline: the only sources are `residential` and `commercial`, and production is
 scaled by health, so a city whose housing and shops are all dead earns nothing *while they
-stay dead*. They stay dead as long as the demand still standing outruns what is supplied.
-Cut back until it fits inside the free baseline and dead housing heals itself, with an empty
-treasury and no further help — measured, two dead houses and 0 in the bank are at full
+stay dead*. A block regains health only when every resource *it* draws is fully supplied, so
+each stays dead while anything on its own list is short. Housing's list is power, water,
+waste and traffic — every one of which has a free baseline — so cut back until what the
+houses still standing draw fits inside it, and dead housing heals itself with an empty
+treasury and no further help: measured, two dead houses and 0 in the bank are at full
 health in 100 ticks, having earned 99 on the way. That is approach 1 above, finished.
 
 The cliff is arithmetic, and it is the one that killed your first city: a house draws 15
 power against a baseline of 40, and dead blocks draw in full, so two dead houses heal and
-three never do. That makes the escape all or nothing. Demolition stays *available* while
+three never do. That makes bulldozing all or nothing. Demolition stays *available* while
 the treasury holds 10, but 10 buys exactly one block, the bill is 10 a block, and nothing
-is earned until the last one is gone — nineteen dead houses cut back to three still earn
+is earned until the cut is finished — nineteen dead houses cut back to three still earn
 zero over 400 ticks. Nineteen down to two is 170, and 169 is not close: it leaves you three
-houses, 9 in the bank, and nothing the treasury will pay for. That is the only way to lose
-for good — nothing earning, nothing healing, and too little saved to change either.
+houses, 9 in the bank, and nothing the treasury will pay for. That is how you lose for good,
+and it takes all three: the treasury no longer rising, nothing left healing, and too little
+saved to change either.
 
 **Getting out is easier the earlier you start.** A house costs 15, needs no support on an
 empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. Beside dead blocks it turns on one question: with the new house's own 15 power added,
-does the demand still standing outrun what is supplied? The free baseline is one pool spread
-across everything standing, and a house supplies none of what dead houses draw — no number
-of houses would. So the house either fits, and survives, or it does not, and dies with them:
-two dead houses heal on their own, and a third placed beside them leaves all three dead.
+again. Beside dead blocks it is two sums, not one, because each block regains health only
+when everything *it* draws is fully supplied. The house's own list is power, water, waste
+and traffic, so whether it survives turns on those four alone — its own share on top of
+everything else still standing, against one shared pool. A shortfall in labour or money
+cannot touch it, however severe, which is why a house can sit at full health beside a block
+that never recovers. Whether *that* block recovers is the other sum, over what it draws: a
+house supplies labour and money, and none of the four that dead housing goes short of, so no
+number of houses adds a drop of what dead housing needs.
 
-So where the demand still outruns supply, demolish first and then rebuild — and keep
-enough in the treasury to do both. That order is not universal, though, because what a
-dead block starves for may be exactly what a house supplies. A dead power plant is short
-of one unit of labour and nothing else the baseline cannot cover, so building the house
-first heals both and starts earning, while demolishing first spends 10 that does nothing
-toward the house. Read what the dead blocks draw — and what the house you would add draws
-— before choosing which gesture to spend on.
+The two sums can disagree, so there is no single order. Two dead houses heal on their own,
+and a third placed beside them leaves all three dead, because housing draws the same four
+resources the baseline is already carrying for the dead ones — so where the house would
+not fit, demolish first and then rebuild, and keep enough in the treasury to do both. A
+dead power plant goes the other way: it is short of one unit of labour and nothing else the
+baseline cannot cover, so building the house first heals both and starts earning, while
+demolishing first spends 10 that does nothing toward the house. Read what the dead blocks
+draw — and what the house you would add draws — before choosing what to spend on.
 
 ## How long you have to react
 
