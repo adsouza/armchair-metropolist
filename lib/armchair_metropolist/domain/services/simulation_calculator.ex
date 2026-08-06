@@ -157,7 +157,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   """
   @spec metrics(CityMap.t()) :: SimulationMetrics.t()
   def metrics(city_map) do
-    SimulationMetrics.build(city_map, resource_stats(city_map))
+    nodes = CityMap.nodes(city_map)
+
+    amenity = %{
+      amenity: labour_multiplier(nodes),
+      amenity_marginal_labour: marginal_amenity_labour(nodes)
+    }
+
+    SimulationMetrics.build(city_map, resource_stats(city_map), amenity)
   end
 
   # Baseline capacity plus health-scaled production from every node, with labour then
@@ -196,6 +203,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       1.0
     end
   end
+
+  # What one more park would add to labour supply, computed as an actual difference
+  # rather than as the constant `4k` the algebra predicts. The two agree everywhere
+  # except where the extra park takes the ratio across the cap, and there only the
+  # difference is right.
+  #
+  # The probe park's coordinates are arbitrary. `total_supply/1` reduces over a list and
+  # never reads position or identity, so a duplicate id cannot collide here — but this
+  # list must not be put back into a CityMap.
+  defp marginal_amenity_labour(nodes) do
+    labour_supply([Node.new(0, 0, :park) | nodes]) - labour_supply(nodes)
+  end
+
+  defp labour_supply(nodes), do: nodes |> total_supply() |> Map.fetch!(:labour)
 
   # Counted by health rather than by node: a park at 40% health is 0.4 of a park.
   defp effective_count(nodes, type) do

@@ -296,6 +296,31 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # so 4 parks is parity and the multiplier caps at x2.0.
       assert labour_supplied(housing_and_parks(8, 4, housing_health: 50.0)) == 40.0
     end
+
+    test "metrics carries the multiplier and the labour one more park would add" do
+      # 4 housing, 2 parks: ratio 0.5, so multiplier 1.5 and one more park is worth L*k.
+      metrics = Calc.metrics(housing_and_parks(4, 2))
+
+      assert metrics.amenity == 1.5
+      assert metrics.amenity_marginal_labour == 5.0
+    end
+
+    test "the marginal figure is zero once parks have reached housing" do
+      assert Calc.metrics(housing_and_parks(4, 4)).amenity_marginal_labour == 0.0
+    end
+
+    test "the marginal figure is the true difference where a park crosses the cap" do
+      # Three healthy parks plus a half-dead one is 3.5 effective against 4 housing,
+      # so ratio 0.875. One more park would reach 1.125 — above the cap — so the gain
+      # is only the 0.125 of ratio that fits underneath it, not the full L*k of 5.0.
+      #
+      # This is the case the "L*k, or zero when saturated" shortcut gets wrong, and so
+      # the case that justifies computing an actual difference.
+      half_dead = %Node{Node.new(9, 9, :park) | health: 50.0, status: :degraded}
+      city = CityMap.put_node(housing_and_parks(4, 3), half_dead)
+
+      assert Calc.metrics(city).amenity_marginal_labour == 2.5
+    end
   end
 
   describe "advance_tick/1 health arithmetic" do

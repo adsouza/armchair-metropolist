@@ -42,8 +42,17 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           avg_health: float(),
           offline_count: non_neg_integer(),
           by_type: %{Node.node_type() => type_stats()},
-          money: float()
+          money: float(),
+          amenity: float(),
+          amenity_marginal_labour: float()
         }
+
+  # A city with no parks has no amenity, so the identity multiplier and a zero marginal
+  # are the correct values rather than filler. The default exists because `build/2` has
+  # a dozen call sites in tests; the one production caller,
+  # `Domain.Services.SimulationCalculator.metrics/1`, always passes real figures, and a
+  # test on that wiring is what stops this default reaching a player.
+  @default_amenity %{amenity: 1.0, amenity_marginal_labour: 0.0}
 
   defstruct tick: 0,
             resources: %{},
@@ -51,15 +60,20 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             avg_health: 0.0,
             offline_count: 0,
             by_type: %{},
-            money: 0.0
+            money: 0.0,
+            amenity: 1.0,
+            amenity_marginal_labour: 0.0
 
   @doc """
-  Build a SimulationMetrics struct from a city map and resource statistics.
+  Build a SimulationMetrics struct from a city map, resource statistics and the city's
+  park amenity.
 
-  Aggregates node-level figures: count, average health, and offline count.
-  Resource statistics are passed through unchanged.
+  `amenity` carries `:amenity` (the multiplier on labour supply) and
+  `:amenity_marginal_labour` (what one more park would add to it). Both are computed by
+  `Domain.Services.SimulationCalculator`, which this module cannot call — `Domain` has
+  `deps: []` — so they arrive as an argument rather than being derived here.
   """
-  def build(city_map, resources) do
+  def build(city_map, resources, amenity \\ @default_amenity) do
     nodes = CityMap.nodes(city_map)
     node_count = length(nodes)
 
@@ -73,7 +87,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       avg_health: avg_health,
       offline_count: offline_count,
       by_type: build_by_type(nodes),
-      money: city_map.money
+      money: city_map.money,
+      amenity: Map.fetch!(amenity, :amenity),
+      amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour)
     }
   end
 

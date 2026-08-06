@@ -38,6 +38,24 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.offline_count == 0
   end
 
+  test "defaults to no amenity when none is supplied" do
+    metrics = SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+    assert metrics.amenity == 1.0
+    assert metrics.amenity_marginal_labour == 0.0
+  end
+
+  test "carries the amenity figures it is given" do
+    metrics =
+      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
+        amenity: 1.75,
+        amenity_marginal_labour: 5.0
+      })
+
+    assert metrics.amenity == 1.75
+    assert metrics.amenity_marginal_labour == 5.0
+  end
+
   describe "by_type" do
     test "counts each type and includes types that are absent" do
       map =
