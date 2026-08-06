@@ -658,7 +658,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # The other three placement errors stay silent. `:out_of_bounds` is unreachable from a
   # grid that renders only in-bounds cells, and `:occupied` is nearly so, since the node
-  # div sits above its cell and turns that click into a demolish.
+  # div sits above its cell and turns that click into a demolish. `:unknown_type` is
+  # unreachable too: `type` always comes from `@selected_type`, which only ever changes
+  # via the legend's own `select_type` buttons — one per member of `Node.types/0` — so
+  # only a hand-crafted event bypassing the UI could produce a type this handler does not
+  # recognize, and silence is the right response to that.
   defp unaffordable(type, money) do
     "Not enough money: #{type} costs #{trunc(Node.construction_cost(type))}, " <>
       "treasury holds #{trunc(money)}."

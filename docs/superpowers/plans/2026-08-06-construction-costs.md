@@ -856,11 +856,17 @@ Now the tests:
       refute place(view, :power_plant, 1, 1) =~ "Not enough money"
     end
 
-    @tag treasury: 24.0
+    @tag treasury: 24.6
     test "a refused demolition flashes the demolition cost", %{conn: conn} do
-      # Seeded at 24 and then spent down *by playing*: a park costs 20, leaving 4, which
-      # is below the flat 10 demolition fee. No mid-test balance setter needed, and the
-      # path is one a player can actually walk.
+      # Seeded at 24.6 and then spent down *by playing*: a park costs 20, leaving 4.6,
+      # which is below the flat 10 demolition fee. No mid-test balance setter needed, and
+      # the path is one a player can actually walk.
+      #
+      # Fractional for the same reason as the two tests above, and this one was nearly
+      # got wrong: an earlier draft seeded 24.0, leaving exactly 4.0 — where `trunc` and
+      # `round` agree, so the assertion could not tell them apart and
+      # `unaffordable_demolition/1`'s flooring was unverified by anything in the suite.
+      # 4.6 truncs to 4 and rounds to 5.
       {:ok, view, _html} = live(conn, ~p"/")
       place(view, :park, 2, 2)
 
@@ -973,7 +979,9 @@ Expected: PASS, no failures.
 
 1. `trunc/1` → `round/1` on the treasury line → "the treasury renders floored, not rounded" fails. Restore.
 2. `trunc/1` → `round/1` in `unaffordable/2` → "a refused build flashes the cost and the balance" fails, because 39.6 rounds to 40 and truncs to 39. Confirm this actually reddens: if it does not, the fixture has been changed to a whole number somewhere and the assertion can no longer fail. That is the whole reason the tag is 39.6 and not 40.0.
-3. Drop the `{:error, :insufficient_funds}` clause (let it fall through to the silent one) → all three flash tests fail. Restore.
+3. Drop the `{:error, :insufficient_funds}` clause (let it fall through to the silent one) → **the two refusal flash tests fail; "an affordable build flashes nothing" does not**, because it never reaches that branch. Restore.
+4. `trunc/1` → `round/1` in `unaffordable_demolition/1` **only** → "a refused demolition flashes the demolition cost" fails. This is a separate mutation from #2: that one exercises `unaffordable/2`, and neither function's flooring is covered by the other's test. Restore.
+5. Make the `{:ok, node}` branch also `put_flash(socket, :error, …)` → "an affordable build flashes nothing" fails. Without this, that test is never seen to fail at all — it passes trivially from the start, since nothing flashed before this task. Restore.
 
 - [ ] **Step 7: Commit**
 

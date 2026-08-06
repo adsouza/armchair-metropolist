@@ -321,11 +321,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute place(view, :power_plant, 1, 1) =~ "Not enough money"
   end
 
-  @tag treasury: 24.0
+  @tag treasury: 24.6
   test "a refused demolition flashes the demolition cost", %{conn: conn} do
-    # Seeded at 24 and then spent down *by playing*: a park costs 20, leaving 4, which
+    # Seeded at 24.6 and then spent down *by playing*: a park costs 20, leaving 4.6, which
     # is below the flat 10 demolition fee. No mid-test balance setter needed, and the
     # path is one a player can actually walk.
+    #
+    # .6 rather than .0 for the same reason as the other two fixtures above: 4.6 is what
+    # lets this test tell `unaffordable_demolition/1`'s own flooring apart from rounding —
+    # `trunc` 4, `round` 5 — where a whole-number balance could not, since `trunc` and
+    # `round` agree on every whole number.
     {:ok, view, _html} = live(conn, ~p"/")
     place(view, :park, 2, 2)
 
