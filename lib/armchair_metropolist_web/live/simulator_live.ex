@@ -164,10 +164,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   @impl true
   # Placing and demolishing are the same gesture — a click on a square — because the
   # node div sits on top of its grid cell and swallows the cell's own click. Nothing on
-  # screen distinguishes them, so both tooltips name the action they will perform;
-  # without that, demolishing is undiscoverable. It also happens to be the only escape
-  # from a death spiral, since a dead node keeps drawing its full demand (see
-  # docs/PLAYING.md).
+  # screen distinguishes them, so both tooltips name the action they will perform —
+  # though the grid cell's tooltip names a placement the treasury may refuse, which the
+  # dimmed legend row and the refusal flash cover instead; without that naming,
+  # demolishing is undiscoverable. It also happens to be the only way to reduce demand,
+  # since a dead node keeps drawing its full demand (see docs/PLAYING.md).
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>

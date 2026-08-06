@@ -151,7 +151,9 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                "claims a labour or money shortfall cannot touch a house, which is only " <>
                "true while this table says so"
     end
+  end
 
+  describe "construction_cost/1 and demolition_cost/0" do
     test "match the specified construction cost table" do
       assert Node.construction_cost(:power_plant) == 80.0
       assert Node.construction_cost(:water_plant) == 70.0
@@ -183,7 +185,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
 
     test "every cost is a whole number" do
-      # The legend's `signed/1` and the treasury's display both truncate or round, so a
+      # Every reader of a cost truncates it: the legend's cost `<td>`, its `cost_title/2`
+      # tooltip and the refusal flash's `unaffordable/2`, all in `simulator_live.ex`. A
       # fractional cost would render a figure the engine does not charge. It is also what
       # makes `trunc(money) >= cost` agree with `money >= cost` exactly.
       for type <- Node.types() do

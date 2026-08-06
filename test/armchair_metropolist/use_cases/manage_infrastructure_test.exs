@@ -102,7 +102,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :unknown_type} = ManageInfrastructure.place(broke, 1, 1, :airport)
     end
 
-    property "place/4 either succeeds and debits exactly the cost, or fails and changes nothing" do
+    property "place/4 either succeeds and debits exactly the cost, or fails and reports why" do
       check all(
               type <- StreamData.member_of(Node.types()),
               money <- StreamData.float(min: 0.0, max: 200.0)

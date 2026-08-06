@@ -173,15 +173,20 @@ release rather than merely labelling it.
 
 ## Actually playing it
 
-There are two ways to lose, and your first city will almost certainly find the fast
-one: baseline capacity supports exactly **two** residential blocks, and the third
-starts a death spiral that cannot be reversed by building more.
+Your first city will almost certainly find the fast way to lose: baseline capacity
+supports exactly **two** residential blocks, and the third starts a death spiral that
+cannot be reversed by building more.
 
 The slow one is insolvency. Four resources have a free baseline of 40; labour and
 money have none, and a city opens with a one-off 150 in the treasury. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
 the whole game while every other resource reads 100% satisfied — commercial is part
 of the ratio, not an optional extra.
+
+Upkeep is not the only call on the treasury: placing a block charges its price (15 for
+a house, up to 80 for a power plant) and demolishing charges a flat 10, and either
+gesture is refused outright when the balance will not cover it. Below 10, neither is
+possible at all.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and

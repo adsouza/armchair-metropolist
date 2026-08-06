@@ -813,13 +813,37 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     end
 
     @tag treasury: 40.0
-    test "unaffordable rows are marked, affordable ones are not", %{conn: conn} do
-      # Both directions: a hardcoded "false" would satisfy either alone. 40 sits between
-      # residential's 15 and power_plant's 80, so one row must be marked each way.
+    test "unaffordable rows are marked and dimmed, affordable ones are not", %{conn: conn} do
+      # Both directions throughout: a hardcoded "false" would satisfy either alone. 40
+      # sits between residential's 15 and power_plant's 80, so one row must come out each
+      # way.
+      #
+      # 40.0 is load-bearing — do not "tidy" it. `commercial` and `transit_hub` cost
+      # exactly 40, so this fixture is also the only thing pinning `affordable?/2`'s `>=`
+      # against `>`. Under `>` those two rows would dim while
+      # `ManageInfrastructure.place/4` (`money < cost` → `40.0 < 40.0` → false) built them
+      # happily, which is exactly the disagreement the comment above `affordable?/2`
+      # promises cannot happen. Only the `commercial` assertion can catch that mutation;
+      # the power_plant and residential ones hold either way.
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, ~s{#legend-row-power_plant[data-affordable="false"]})
       assert has_element?(view, ~s{#legend-row-residential[data-affordable="true"]})
+      assert has_element?(view, ~s{#legend-row-commercial[data-affordable="true"]})
+
+      # `data-affordable` is a test hook nobody looks at. These two are what a player
+      # actually gets: the dim, and — since dimming is visual-only — the cost cell's
+      # title carrying the same fact for anyone who cannot see it. Deleting either is
+      # silent otherwise.
+      assert has_element?(view, ~s{#legend-row-power_plant.opacity-40})
+      refute has_element?(view, ~s{#legend-row-residential.opacity-40})
+
+      assert has_element?(
+               view,
+               ~s{[data-cell="power_plant-cost"][title="costs 80 — more than the treasury holds"]}
+             )
+
+      assert has_element?(view, ~s{[data-cell="residential-cost"][title="costs 15"]})
     end
   end
 

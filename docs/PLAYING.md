@@ -20,7 +20,9 @@ and a refused click says what it wanted and what you have. Demolishing charges a
 fee, which is less than the cheapest block but is not nothing: a city with an empty
 treasury cannot tear anything down either.
 
-Hover either grid square and the tooltip names the action it will perform. Demolishing
+Hover either grid square and the tooltip names the action it will perform — though an
+empty square still offers a placement you may not be able to afford, which the dimmed
+legend row and the refused click tell you about instead. Demolishing
 matters more than it looks: it is the only way to reduce demand, so it is how you get out
 of a collapse — but at the fee above, which means the escape has to be bought while there
 is still something to buy it with. See "Running out of money" below.
