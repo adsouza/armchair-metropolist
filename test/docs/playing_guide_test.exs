@@ -51,6 +51,19 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
     end
   end
 
+  test "every documented support set is viable" do
+    capacities = PlayingGuide.blocks()["capacities"]
+
+    # Positive case first: a `refute` against "none" is trivially satisfied by an empty
+    # block, so prove the block has real rows before refuting the bad one.
+    assert capacities =~ "residential per tile"
+    assert capacities =~ ~r/\| \*\*\d+\*\* \|/, "expected at least one measured row"
+
+    refute capacities =~ "none",
+           "a support set has no viable residential count — its labour demand probably " <>
+             "outgrew what its water plants can house"
+  end
+
   test "the markers the generator writes into actually exist" do
     guide = File.read!(@guide)
 

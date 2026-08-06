@@ -17,37 +17,47 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # A city where water is only *slightly* short, so the resulting decay is
   # fractional and stays inside a single rounded health value.
   #
-  #   power    supply 40 + 120*0.900 = 148.0   demand 25.0             -> 1.0
-  #   water    supply 40 + 100*0.303 =  70.3   demand 20 + 3*18 = 74.0 -> 0.95
-  #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6    = 18.0 -> 1.0
-  #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 = 11.0 -> 1.0
+  #   power    supply 40 + 120*0.900 = 148.0   demand 25 + 15 = 40.0        -> 1.0
+  #   water    supply 40 + 100*0.417 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
+  #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6 + 10 = 28.0    -> 1.0
+  #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
+  #   labour   supply 1*5.0 * 2.0    =  10.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
   #
-  # Money is not in that table because it is not meant to bind here: the water plant
-  # consumes money 5 and each park consumes money 3, for a demand of 14 against a
-  # supply of 0 (nothing here produces it). That would starve the water plant too
-  # (it consumes money, so its own worst ratio would fold money's satisfaction in)
-  # were it not for `CityMap.new/2`'s default 500.0 grant, which covers the 14 as
-  # `carried` and keeps money's satisfaction at 1.0. This fixture is only clean
-  # arithmetic over four resources because the fifth is quietly paid for by that
-  # default; it is not modelling a city with no income.
+  # The ×2.0 on labour is the park amenity at its cap: 3 parks to 1 residential is a ratio
+  # of 3.0, clamped to @max_amenity_ratio = 1.0, so the multiplier is 1 + k*1.0 = 2.0.
+  # Supply is 10.0, not 5.0 — do not "correct" this back to a knife-edge 5.0/5.0 margin.
+  # Nothing downstream can catch that error, because satisfaction saturates at 1.0 either
+  # way.
   #
-  # The power plant consumes water/waste/traffic, so its worst ratio is exactly
-  # 0.95 (74.0 * 0.95 == 70.3) and its delta is -(1 - 0.95) * 6.0 = -0.30,
-  # taking it from 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the
-  # status stays :online, so its display signature does not move.
+  # The residential block is not decoration: since everything but housing is staffed
+  # (2026-08-05) this city draws 5 labour, and without a house to supply it labour
+  # satisfaction is 0.0 and *both* plants take the full 6.0 decay — which destroys the
+  # sub-rounding movement this fixture exists to produce. Its water draw of 12 is why the
+  # water plant sits at 41.7 rather than 30.3: water demand is 86.0 now, and 0.95 of that
+  # is 81.7 = 40 baseline + 41.7 health-scaled.
   #
-  # The water plant sits at "0:0" and the power plant at "1:0" deliberately.
-  # Maps iterate in key order, so the water plant -- which regenerates from
-  # 30.3 to 31.3 this tick -- is processed first. An implementation that
-  # recomputed resource stats per node would then hand the power plant a water
-  # supply of 71.3 (satisfaction 0.9635, health 89.78) instead of 70.3.
+  # Money is absent from the table because it is not meant to bind: demand is the water
+  # plant's 5 plus 3 per park = 14, against a supply of 1 from the residential block,
+  # covered as `carried` by `CityMap.new/2`'s default 500.0 grant.
+  #
+  # The power plant consumes water/waste/traffic/labour, so its worst ratio is exactly
+  # 0.95 (86.0 * 0.95 == 81.7) and its delta is -(1 - 0.95) * 6.0 = -0.30, taking it from
+  # 90.0 to 89.7. round(90.0) == round(89.7) == 90 and the status stays :online, so its
+  # display signature does not move.
+  #
+  # The water plant sits at "0:0" and the power plant at "1:0" deliberately. Maps iterate
+  # in key order, so the water plant -- which regenerates from 41.7 to 42.7 this tick --
+  # is processed first. An implementation that recomputed resource stats per node would
+  # then hand the power plant a water supply of 82.7 (satisfaction 0.9616, health 89.77)
+  # instead of 81.7.
   defp sub_rounding_city do
     map_with([
-      %Node{Node.new(0, 0, :water_plant) | health: 30.3, status: :degraded},
+      %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
       %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
       Node.new(0, 3, :park),
       Node.new(1, 3, :park),
-      Node.new(2, 3, :park)
+      Node.new(2, 3, :park),
+      Node.new(5, 5, :residential)
     ])
   end
 
@@ -141,7 +151,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "enough housing staffs the industry and stops the decay" do
-      # 3 residential supply 12 labour, exactly the industrial block's demand.
+      # 3 residential supply 15 labour against a demand of 14: the industrial block's
+      # 12, plus 1 each for the power and water plants below. The margin is deliberate
+      # slack — there is no residential count that makes this exact, because housing
+      # comes in units of 5.
       #
       # A bare industrial block plus 3 residential also draws more power and
       # water than baseline alone covers (industrial 40 + 3*15 = 85 power vs.
@@ -164,8 +177,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # zero demand as automatically satisfied, so a mutated industrial labour
       # demand of 0.0 would still report satisfaction 1.0 here unless demanded
       # is checked directly.
-      assert stats.labour.demanded == 12.0
-      assert stats.labour.supplied == 12.0
+      assert stats.labour.demanded == 14.0
+      assert stats.labour.supplied == 15.0
       assert stats.labour.satisfaction == 1.0
 
       {advanced, _delta} = Calc.advance_tick(map)
@@ -200,6 +213,152 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
         entry = Map.fetch!(stats, resource)
         assert entry.flow_satisfaction == entry.satisfaction
       end
+    end
+
+    test "staffing demand is not scaled by health" do
+      healthy = map_with([Node.new(0, 0, :transit_hub)])
+      dead = map_with([%Node{Node.new(0, 0, :transit_hub) | health: 0.0, status: :offline}])
+
+      # Asserted in both states deliberately. Only the dead case can fail if staffing
+      # were health-scaled, and only the healthy case proves the figure is 2.0 at all.
+      assert Calc.resource_stats(healthy).labour.demanded == 2.0
+      assert Calc.resource_stats(dead).labour.demanded == 2.0
+    end
+  end
+
+  describe "park amenity" do
+    defp labour_supplied(city) do
+      city |> Calc.resource_stats() |> Map.fetch!(:labour) |> Map.fetch!(:supplied)
+    end
+
+    # `housing` residential blocks and `parks` parks, all at full health unless
+    # overridden. Coordinates are irrelevant to the simulation and only need to be
+    # distinct, so the two types sit on separate rows.
+    defp housing_and_parks(housing, parks, opts \\ []) do
+      housing_health = Keyword.get(opts, :housing_health, 100.0)
+      park_health = Keyword.get(opts, :park_health, 100.0)
+
+      residential =
+        for i <- 1..housing//1 do
+          %Node{
+            Node.new(i, 0, :residential)
+            | health: housing_health,
+              status: Node.status_for(housing_health)
+          }
+        end
+
+      park_nodes =
+        for i <- 1..parks//1 do
+          %Node{
+            Node.new(i, 1, :park)
+            | health: park_health,
+              status: Node.status_for(park_health)
+          }
+        end
+
+      map_with(residential ++ park_nodes)
+    end
+
+    test "no parks leaves labour supply unmultiplied" do
+      assert labour_supplied(housing_and_parks(6, 0)) == 30.0
+    end
+
+    test "one park per housing block is the maximum, x2.0" do
+      assert labour_supplied(housing_and_parks(6, 6)) == 60.0
+    end
+
+    test "past parity the multiplier is capped" do
+      # Kills a missing `min/2`: uncapped this would be 6 residential x 5 x (1 + 20/6).
+      assert labour_supplied(housing_and_parks(6, 20)) == 60.0
+    end
+
+    test "below the cap each park adds a constant L*k labour, whatever the city size" do
+      # The identity that pins L, k, the legend's figure and the balance work together.
+      # Asserted over several shapes rather than one, because a single pair is also
+      # satisfied by formulas that are not this one. Expect 45.0, 80.0, 75.0, 50.0.
+      for {housing, parks} <- [{6, 3}, {12, 4}, {10, 5}, {8, 2}] do
+        assert labour_supplied(housing_and_parks(housing, parks)) ==
+                 5.0 * housing + 5.0 * parks,
+               "expected LH + LkP for H=#{housing} P=#{parks}"
+      end
+    end
+
+    test "no housing means no labour, whatever the park count, and does not raise" do
+      # Two claims: the design property, and that the zero-housing branch is guarded.
+      # Erlang raises ArithmeticError on 0.0/0.0, so an unguarded division fails here
+      # rather than returning a wrong number.
+      assert labour_supplied(housing_and_parks(0, 8)) == 0.0
+    end
+
+    test "the amenity is health-weighted on the park side" do
+      assert labour_supplied(housing_and_parks(8, 4)) == 60.0
+      # 4 parks at half health is 2.0 effective parks against 8 housing: ratio 0.25,
+      # so 40.0 base x 1.25.
+      assert labour_supplied(housing_and_parks(8, 4, park_health: 50.0)) == 50.0
+    end
+
+    test "the amenity is health-weighted on the housing side" do
+      # 8 blocks at half health supply 20 labour and count as 4.0 effective housing,
+      # so 4 parks is parity and the multiplier caps at x2.0.
+      assert labour_supplied(housing_and_parks(8, 4, housing_health: 50.0)) == 40.0
+    end
+
+    test "metrics carries the multiplier and the labour one more park would add" do
+      # 4 housing, 2 parks: ratio 0.5, so multiplier 1.5 and one more park is worth L*k.
+      metrics = Calc.metrics(housing_and_parks(4, 2))
+
+      assert metrics.amenity == 1.5
+      assert metrics.amenity_marginal_labour == 5.0
+    end
+
+    test "the marginal figure is zero once parks have reached housing" do
+      assert Calc.metrics(housing_and_parks(4, 4)).amenity_marginal_labour == 0.0
+    end
+
+    test "the marginal figure is the true difference where a park crosses the cap" do
+      # Three healthy parks plus a half-dead one is 3.5 effective against 4 housing,
+      # so ratio 0.875. One more park would reach 1.125 — above the cap — so the gain
+      # is only the 0.125 of ratio that fits underneath it, not the full L*k of 5.0.
+      #
+      # This is the case the "L*k, or zero when saturated" shortcut gets wrong, and so
+      # the case that justifies computing an actual difference.
+      half_dead = %Node{Node.new(9, 9, :park) | health: 50.0, status: :degraded}
+      city = CityMap.put_node(housing_and_parks(4, 3), half_dead)
+
+      assert Calc.metrics(city).amenity_marginal_labour == 2.5
+    end
+
+    test "metrics carries what the placed parks contribute, which is not the marginal" do
+      # 4 housing, 3 parks: ratio 0.75, below the cap, so the placed parks are worth
+      # L*k each. Labour supply is 35.0 with them and 20.0 without.
+      metrics = Calc.metrics(housing_and_parks(4, 3))
+
+      assert metrics.amenity_labour == 15.0
+
+      # The two figures answer different questions and must not be conflated: below the
+      # cap the marginal is one park's worth while the total is three parks' worth.
+      assert metrics.amenity_marginal_labour == 5.0
+    end
+
+    test "the placed-parks figure is bounded by the housing once past the cap" do
+      # 2 housing, 3 parks: ratio 1.5, clamped to 1.0, so the amenity is L*k*housing = 10
+      # rather than L*k*parks = 15. Labour supply is 20.0 with the parks and 10.0 without.
+      # This is the case a `L*k*parks` shortcut gets wrong, so it is why the figure is
+      # computed as a real difference.
+      metrics = Calc.metrics(housing_and_parks(2, 3))
+
+      assert metrics.amenity_labour == 10.0
+
+      # And here the marginal is zero while the total is at its largest — the clearest
+      # demonstration that one cannot be derived from the other.
+      assert metrics.amenity_marginal_labour == 0.0
+    end
+
+    test "no parks means the placed-parks figure is zero, not the whole labour supply" do
+      # Guards the subtraction's second term: with no parks to remove, both sides of the
+      # difference are the same city, so a sign slip or a swapped operand shows up here as
+      # the full 20.0 of housing supply being attributed to an amenity that is absent.
+      assert Calc.metrics(housing_and_parks(4, 0)).amenity_labour == 0.0
     end
   end
 
@@ -270,8 +429,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     test "worst ratio considers only resources the node consumes" do
       # A park consumes water and traffic but no power, so a total blackout
       # must leave it untouched.
+      #
+      # The hogs are `residential`, not `commercial`: a park draws labour now, and
+      # `commercial` draws 8 each, so a commercial-only city has labour satisfaction 0.0
+      # and the park would decay on labour rather than being untouched — passing the
+      # blackout premise while testing nothing. `residential` draws power and supplies
+      # the labour instead.
       park = %Node{Node.new(0, 0, :park) | health: 80.0, status: :online}
-      power_hogs = for x <- 1..10, do: Node.new(x, 1, :commercial)
+      power_hogs = for x <- 1..10, do: Node.new(x, 1, :residential)
       # Add water and traffic capacity so only power is short.
       supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :transit_hub)]
       map = map_with([park | power_hogs] ++ supply)
@@ -297,11 +462,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # Insertion order must not matter: every node within a tick has to see
       # the same city-wide conditions.
       nodes = [
-        %Node{Node.new(0, 0, :water_plant) | health: 30.3, status: :degraded},
+        %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
         %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
         Node.new(0, 3, :park),
         Node.new(1, 3, :park),
-        Node.new(2, 3, :park)
+        Node.new(2, 3, :park),
+        Node.new(5, 5, :residential)
       ]
 
       {forward, _} = Calc.advance_tick(map_with(nodes))
@@ -309,11 +475,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert forward.nodes == reverse.nodes
 
       # And the figures must come from the *pre-tick* map. The water plant is
-      # iterated before the power plant and regenerates 30.3 -> 31.3 on this
+      # iterated before the power plant and regenerates 41.7 -> 42.7 on this
       # tick. Recomputing stats per node would give the power plant water
-      # supply 71.3 (satisfaction 0.9635, delta -0.219, health 89.78) rather
-      # than the pre-tick 70.3 (satisfaction 0.95, delta -0.30, health 89.7).
-      assert_in_delta CityMap.get_node(forward, 0, 0).health, 31.3, 0.001
+      # supply 82.7 (satisfaction 0.9616, delta -0.230, health 89.77) rather
+      # than the pre-tick 81.7 (satisfaction 0.95, delta -0.30, health 89.7).
+      assert_in_delta CityMap.get_node(forward, 0, 0).health, 42.7, 0.001
       assert_in_delta CityMap.get_node(forward, 1, 0).health, 89.7, 0.001
     end
 
@@ -420,7 +586,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       refute Map.has_key?(delta, "1:0"),
              "sub-rounding health movement must be excluded from the delta"
 
-      # The water plant crosses a rounding boundary (30.3 -> 31.3) in the same
+      # The water plant crosses a rounding boundary (41.7 -> 42.7) in the same
       # tick, so the delta is not trivially empty and the exclusion above is
       # a real filter rather than a no-op.
       assert Map.has_key?(delta, "0:0")
@@ -432,18 +598,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # of its health is 60 on *both* sides, so only the status half of the
       # signature moves — and that alone must put it in the delta.
       #
-      # Fixture arithmetic. Water demand is the plant's 20 plus 3 parks at 18 = 74;
-      # supply is the 40 baseline plus the water plant's health-scaled output. A
-      # water plant at 24.1333 gives 64.1333/74 = 0.86667 satisfaction, so the
-      # power plant's delta is -(1 - 0.86667) * 6.0 = -0.8, taking 60.4 to 59.6.
-      # Waste and traffic stay fully satisfied, so water is genuinely its worst.
+      # Fixture arithmetic. Water demand is the plant's 20, 3 parks at 18, and the
+      # residential block's 12 = 86; supply is the 40 baseline plus the water plant's
+      # health-scaled output. A water plant at 34.5333 gives 74.5333/86 = 0.86667
+      # satisfaction, so the power plant's delta is -(1 - 0.86667) * 6.0 = -0.8, taking
+      # 60.4 to 59.6. Waste, traffic and labour stay fully satisfied, so water is
+      # genuinely its worst — the residential block is what keeps labour at 1.0, since
+      # every type here but housing draws staff.
       map =
         map_with([
           %Node{Node.new(1, 0, :power_plant) | health: 60.4, status: :online},
-          %Node{Node.new(0, 0, :water_plant) | health: 24.1333, status: :degraded},
+          %Node{Node.new(0, 0, :water_plant) | health: 34.5333, status: :degraded},
           Node.new(0, 3, :park),
           Node.new(1, 3, :park),
-          Node.new(2, 3, :park)
+          Node.new(2, 3, :park),
+          Node.new(5, 5, :residential)
         ])
 
       before = CityMap.get_node(map, 1, 0)

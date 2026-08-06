@@ -611,6 +611,105 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
+
+    test "park's labour cell shows the amenity net of the park's own staffing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :residential, 1, 1)
+      place(view, :residential, 2, 1)
+      place(view, :park, 3, 1)
+
+      # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
+      # and draws 1 of its own.
+      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.5"
+    end
+
+    # ×1.5 does not pin the precision: `Float.round(1.5, 1)` and `Float.round(1.5, 2)` both
+    # render "1.5", so the assertion above passes at either. A ratio that is not a tenth
+    # discriminates them — 1 park to 3 housing is 1 + 1/3 = ×1.33 at two decimals and
+    # ×1.3 at one.
+    test "the Workforce multiplier is rendered to two decimals", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..3, do: place(view, :residential, x, 1)
+      place(view, :park, 1, 2)
+
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.33"
+    end
+
+    # The bold half of the cell, which is the figure a player's eye lands on. It answers a
+    # different question from the marginal line above it — "what are the parks I have
+    # already placed contributing" — and before `amenity_labour` existed it fell through
+    # to the general `is_nil(produced)` branch and reported the pure staffing draw, wrong
+    # by the entire amenity and wrong in sign.
+    #
+    # Targeted on `.font-semibold` rather than on the cell, because the cell's text
+    # contains the marginal figure too and "+12" would happily match nothing while "+4"
+    # matched the wrong line.
+    test "park's labour total reports the placed parks' amenity, net of their staffing",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..4, do: place(view, :residential, x, 1)
+      for x <- 1..3, do: place(view, :park, x, 2)
+
+      # 4 housing, 3 parks is ratio 0.75, below the cap. Measured: labour supply is 35.0
+      # with the parks and 20.0 without, so they contribute +15 gross, less the 3 labour
+      # they draw between them.
+      assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+12"
+    end
+
+    test "at the cap park's labour total is bounded by the housing, not the park count",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..2, do: place(view, :residential, x, 1)
+      for x <- 1..3, do: place(view, :park, x, 2)
+
+      # 2 housing, 3 parks is ratio 1.5, clamped to the cap of 1.0. Past the cap the
+      # amenity is `L * k * housing`, not `L * k * parks`: measured, labour supply is 20.0
+      # with the parks and 10.0 without, so +10 gross less the 3 they draw. The third park
+      # is paying its staffing for nothing, and this figure is where that shows.
+      assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+7"
+    end
+
+    test "past parity park's labour cell goes negative", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :residential, 1, 1)
+      place(view, :park, 2, 1)
+      place(view, :park, 3, 1)
+
+      # 1 housing, 2 parks: already past the cap, so another park adds no amenity at
+      # all and still draws its 1 labour. Over-provisioning costs rather than merely
+      # failing to help.
+      assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "-1"
+    end
+
+    test "staffed types other than park render through the ordinary consumption path", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :transit_hub, 1, 1)
+      place(view, :power_plant, 2, 1)
+
+      assert view |> element(~s{[data-cell="transit_hub-labour"]}) |> render() =~ "-2"
+      assert view |> element(~s{[data-cell="power_plant-labour"]}) |> render() =~ "-1"
+    end
+
+    test "a type that does not touch a resource still renders an em dash", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Positive case first, so this cannot pass against a page rendering em dashes
+      # everywhere: power plants do draw water, and that cell is a real number.
+      assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
+
+      # The park special case must not leak into the general path. `power_plant` draws
+      # labour now, so pick a genuinely untouched pair: it produces no money.
+      assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -689,5 +788,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       satisfaction: satisfaction,
       flow_satisfaction: satisfaction
     }
+  end
+
+  # Selects the type once, then places it at one cell — the two-step gesture the UI
+  # actually requires, wrapped so a test can name the type and the coordinate together.
+  defp place(view, type, x, y) do
+    view
+    |> element(~s{button[phx-click="select_type"][phx-value-type="#{type}"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
+    |> render_click()
   end
 end

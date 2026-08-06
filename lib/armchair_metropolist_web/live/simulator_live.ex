@@ -394,6 +394,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 type={type}
                 resource={resource}
                 stats={@metrics.by_type[type]}
+                amenity_marginal_labour={@metrics.amenity_marginal_labour}
+                amenity_labour={@metrics.amenity_labour}
               />
             </tr>
           </tbody>
@@ -427,6 +429,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 for power, water, waste and traffic, which
         belongs to no type. Labour and money have no free baseline.
+        Labour's total also includes the park amenity; park's own row carries it.
       </p>
     </div>
     """
@@ -449,6 +452,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
       <p id="metrics-treasury">Treasury: {round(@metrics.money)}</p>
+      <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """
@@ -484,12 +488,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :type, :atom, required: true
   attr :resource, :atom, required: true
   attr :stats, :map, required: true
+  attr :amenity_marginal_labour, :float, required: true
+  attr :amenity_labour, :float, required: true
 
   defp resource_cell(assigns) do
     assigns =
       assigns
-      |> assign(:marginal, marginal_cell(assigns.type, assigns.resource))
-      |> assign(:total, total_cell(assigns.stats, assigns.resource))
+      |> assign(
+        :marginal,
+        marginal_cell(assigns.type, assigns.resource, assigns.amenity_marginal_labour)
+      )
+      |> assign(
+        :total,
+        total_cell(assigns.type, assigns.resource, assigns.stats, assigns.amenity_labour)
+      )
 
     ~H"""
     <td data-cell={"#{@type}-#{@resource}"} class="text-right tabular-nums">
@@ -513,8 +525,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # Rated, deliberately. A newly placed node starts at full health, so its contribution
   # *is* its rated figure. Taken from the domain's own tables rather than from `by_type`
-  # because this is a property of the type, fixed, not of the current city.
-  defp marginal_cell(type, resource) do
+  # because this is a property of the type.
+  #
+  # One exception, and it is signposted in the clause itself: `{:park, :labour}` depends
+  # on the current city. The park amenity is a multiplier, so its *magnitude* is fixed at
+  # `L × k` (= 5.0) by the arithmetic, but whether the city has already reached the ratio
+  # cap is city state — and past the cap the honest figure changes sign.
+
+  # `park`'s labour effect is a multiplier on supply, so it appears in neither table and
+  # the general clause below would render an em dash — "does not interact with this
+  # resource at all", which would be a lie about the one type that drives labour hardest.
+  #
+  # This still answers the question the function promises, "what one more block of this
+  # type would do": the amenity another park would add, net of the labour it would draw.
+  # Past parity that is negative, which is the honest figure — over-provisioning parks
+  # costs labour rather than merely stopping helping.
+  defp marginal_cell(:park, :labour, amenity_marginal_labour) do
+    signed(amenity_marginal_labour - Map.get(Node.consumption(:park), :labour, 0.0))
+  end
+
+  defp marginal_cell(type, resource, _amenity_marginal_labour) do
     produced = Map.get(Node.production(type), resource)
     consumed = Map.get(Node.consumption(type), resource)
 
@@ -533,9 +563,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # `nil` rather than a string when nothing is placed: the total of nothing is zero and
   # saying so is noise, and the per-block line above already carries the row's meaning.
-  defp total_cell(%{count: 0}, _resource), do: nil
+  defp total_cell(_type, _resource, %{count: 0}, _amenity_labour), do: nil
 
-  defp total_cell(stats, resource) do
+  # The mirror of `marginal_cell/3`'s park clause, and needed for the same reason: park's
+  # labour effect is in neither production table nor consumption table, so the general
+  # clause below would take its `is_nil(produced)` branch and render the bare staffing draw
+  # — `-3` for three parks whose amenity is worth +15. Bolder than the line above it, so
+  # that was the wrong figure in the more prominent position.
+  #
+  # `amenity_labour` is what the placed parks actually contribute to supply, which is the
+  # question a *total* asks; `marginal_cell/3` answers "one more" from a different figure.
+  # It cannot be derived from this one — below the cap they coincide per park, at the cap
+  # the marginal is 0.0 while the total is still large.
+  #
+  # `consumption` is already scaled by count in `build_by_type/1`, so this nets whole-row
+  # against whole-row.
+  defp total_cell(:park, :labour, stats, amenity_labour) do
+    signed(amenity_labour - Map.get(stats.consumption, :labour, 0.0))
+  end
+
+  defp total_cell(_type, resource, stats, _amenity_labour) do
     produced = Map.get(stats.rated_production, resource)
     actual = Map.get(stats.actual_production, resource)
     consumed = Map.get(stats.consumption, resource)

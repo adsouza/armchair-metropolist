@@ -206,6 +206,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
         "|---|---|",
         "| health regained per tick when every consumed resource is fully supplied | **+#{num(regen_rate())}** |",
         "| health lost per tick, per unit of shortfall | **−#{num(decay_rate())} × (1 − satisfaction)** |",
+        "| labour supply, multiplied per park per housing block | **+#{num(amenity_coefficient())} × (parks ÷ housing)** |",
+        "| that multiplier's ceiling, at #{num(amenity_cap_ratio())} park per housing block | **×#{num(amenity_ceiling())}** |",
         "| `:online` at | health ≥ #{num(online)} |",
         "| `:degraded` at | health ≥ #{num(degraded)} |",
         "| `:offline` below | health #{num(degraded)} |",
@@ -240,6 +242,40 @@ defmodule ArmchairMetropolist.PlayingGuide do
     lost = before - health_of(advanced)
 
     Float.round(lost / (1.0 - satisfaction), 4)
+  end
+
+  # Two housing and one park is ratio 0.5 — below the cap — so the fractional gain in
+  # labour supply over the same city with no park is `k * 0.5`. Solve for k. (Two housing
+  # supply 10.0 unparked and 15.0 with the park, so this reads (1.5 - 1) / 0.5 = 1.0.)
+  defp amenity_coefficient do
+    base = labour_supplied(city_with(residential: 2))
+    parked = labour_supplied(city_with(residential: 2, park: 1))
+
+    Float.round((parked / base - 1.0) / 0.5, 4)
+  end
+
+  # The ratio at which more parks stop adding labour. Scanned rather than restated, so
+  # a change to the cap moves the guide.
+  defp amenity_cap_ratio do
+    housing = 4
+
+    Enum.find_value(1..40, fn parks ->
+      here = labour_supplied(city_with(residential: housing, park: parks))
+      next = labour_supplied(city_with(residential: housing, park: parks + 1))
+
+      if here == next, do: Float.round(parks / housing, 4)
+    end)
+  end
+
+  # Far past the cap, so this is the ceiling itself rather than a point on the way up.
+  defp amenity_ceiling do
+    base = labour_supplied(city_with(residential: 2))
+
+    Float.round(labour_supplied(city_with(residential: 2, park: 20)) / base, 4)
+  end
+
+  defp labour_supplied(city) do
+    city |> Calc.resource_stats() |> Map.fetch!(:labour) |> Map.fetch!(:supplied)
   end
 
   # Scanned rather than restated, so a change to `status_for/1` moves the guide.

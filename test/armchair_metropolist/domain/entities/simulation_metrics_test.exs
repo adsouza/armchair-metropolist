@@ -38,6 +38,39 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.offline_count == 0
   end
 
+  test "defaults to no amenity when none is supplied" do
+    metrics = SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+    assert metrics.amenity == 1.0
+    assert metrics.amenity_marginal_labour == 0.0
+    assert metrics.amenity_labour == 0.0
+  end
+
+  test "carries the amenity figures it is given" do
+    metrics =
+      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
+        amenity: 1.75,
+        amenity_marginal_labour: 5.0,
+        amenity_labour: 15.0
+      })
+
+    assert metrics.amenity == 1.75
+    assert metrics.amenity_marginal_labour == 5.0
+    assert metrics.amenity_labour == 15.0
+  end
+
+  # A partial amenity map is a programming error, not a request for defaults: the default
+  # applies to the argument as a whole, so silently filling one missing key would let a
+  # caller that computed two figures out of three ship an amenity-free labour total.
+  test "raises rather than defaulting when the amenity map is missing a figure" do
+    assert_raise KeyError, fn ->
+      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
+        amenity: 1.75,
+        amenity_marginal_labour: 5.0
+      })
+    end
+  end
+
   describe "by_type" do
     test "counts each type and includes types that are absent" do
       map =

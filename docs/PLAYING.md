@@ -33,6 +33,21 @@ Collapsing never takes away the type list, so you can still choose what to place
 never hides the metrics. The satisfaction figures go with the resource columns, so while
 collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
 
+### Build a house first
+
+**Every block needs staff except the homes the staff live in.** Power plants, water
+plants, transit hubs, parks, industry and commerce all draw labour; `residential` is the
+only thing that supplies it. So a city with no housing cannot run *any* infrastructure —
+measured, a lone power plant is offline in 14 ticks and dead in 17, and so is a lone
+anything-else.
+
+Place one residential block before anything else. It needs no support at all on an empty
+grid, and it is the only block that will still be standing in a minute if you walk away.
+
+This qualifies the "build producers first" rule below rather than replacing it: demand
+still arrives instantly and in full, so a consumer placed before its support still does
+damage. The order is **one house, then producers, then the rest.**
+
 ### Position does not matter
 
 **Blocks do not need to be adjacent, or anywhere near each other.** Resources are
@@ -95,14 +110,16 @@ health:
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
 | 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 5 | **7** | 14 | 0.5 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 6 | **7** | 14 | 0.5 |
 | 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
 <!-- /generated:capacities -->
 
 About 0.5 residential per tile is the ceiling. Two practical consequences:
 
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
-before its support starts doing damage on the very next tick.
+before its support starts doing damage on the very next tick. This is subordinate to
+housing, though: a producer placed on an empty grid has no staff and dies in 17 ticks.
+See "Build a house first" above.
 
 **Place one node at a time and watch the panel.** Because the six resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
@@ -119,9 +136,11 @@ insolvent — the treasury drains over the game's lifetime even while every othe
 reads 100% satisfied.
 
 The min residential column exists for the same reason the max one does, just at the other
-end: `industrial` and `commercial` need workers, and residential is the only source of
-labour, so build the support set with too few residential and those blocks starve for
-staff instead of power or water — the shortfall just shows up in a different column.
+end: **every block needs staff except the homes the staff live in**. Power plants, water
+plants, transit hubs, parks, industry and commerce all draw labour, and residential is the
+only thing that supplies it — so build a support set with too few homes and those blocks
+starve for staff instead of power or water, and the shortfall just shows up in a different
+column.
 
 ## Rescuing a city that is already dying
 
@@ -150,6 +169,14 @@ Two approaches still work, because neither waits on labour to recover first:
    residential is still alive — this is the "build producers first" advice above,
    and it is the only way to keep labour (and, once a commercial block exists, income)
    flowing through a rescue.
+
+**Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on the parks costs more.** The
+multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
+on housing and parks cancels out — the workforce shrinks in step with the housing, no
+faster. What moves the multiplier is *uneven* damage: let the parks rot while the housing
+holds and the bonus shrinks, and the labour column falls faster than the block count
+suggests. Read the *Workforce* line in the metrics rather than counting parks on the grid,
+because it is the ratio that matters, not the total.
 
 Health returns at a flat rate once conditions are met, so a node at zero is back to
 full in 100 ticks.
@@ -188,7 +215,7 @@ Production is scaled by the node's health, so a plant at 50% health supplies hal
 | `industrial` | waste 90 |
 | `park` | waste 8 |
 | `power_plant` | power 120 |
-| `residential` | labour 4, money 1 |
+| `residential` | labour 5, money 1 |
 | `transit_hub` | traffic 60 |
 | `water_plant` | water 100 |
 
@@ -205,19 +232,30 @@ spiral.
 |---|---|---|---|---|---|---|
 | `commercial` | 22 | 8 | 14 | 9 | 8 | — |
 | `industrial` | 40 | 25 | — | 8 | 12 | — |
-| `park` | — | 18 | — | 2 | — | 3 |
-| `power_plant` | — | 20 | 12 | 3 | — | — |
+| `park` | — | 18 | — | 2 | 1 | 3 |
+| `power_plant` | — | 20 | 12 | 3 | 1 | — |
 | `residential` | 15 | 12 | 10 | 6 | — | — |
-| `transit_hub` | 8 | — | 2 | — | — | 4 |
-| `water_plant` | 25 | — | 6 | 2 | — | 5 |
+| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
+| `water_plant` | 25 | — | 6 | 2 | 1 | 5 |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
 `transit_hub` supplies transit capacity, which residential and commercial then consume.
 
-`park` is usually a trap — it trades a lot of water for a little waste capacity, so it
-only pays when you have spare water and are waste-limited, which is rare given how much
-`industrial` supplies.
+`park` is how you get more workers out of the housing you already have. It produces no
+labour itself — a city with no residential blocks has no workforce for a park to
+amplify — but each one raises the labour your housing supplies, up to **one park per
+residential block**, where the bonus stops at double. Past that ratio a park is pure
+cost: it still drinks 18 water, still needs a groundskeeper, and adds nothing. The
+legend's labour column tells you which side of that line you are on, showing `+4` while
+parks are worth building and `-1` once they are not.
+
+Parks are thirsty, and that is what bounds them. On the free baseline's 40 water exactly
+one park fits — and it needs a house to staff it and a commercial block to cover its
+upkeep, so the smallest city with a park in it is three blocks. Measured: water 38/40,
+income +28 per tick, stable indefinitely. A second park needs a water plant, which needs
+power. A neglected park is worse than none: amenity is scaled by health, its staffing and
+water draw are not, so a dead park amplifies nothing while still costing everything.
 
 ### Health and timing
 
@@ -226,6 +264,8 @@ only pays when you have spare water and are waste-limited, which is rare given h
 |---|---|
 | health regained per tick when every consumed resource is fully supplied | **+1** |
 | health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
+| labour supply, multiplied per park per housing block | **+1 × (parks ÷ housing)** |
+| that multiplier's ceiling, at 1 park per housing block | **×2** |
 | `:online` at | health ≥ 60 |
 | `:degraded` at | health ≥ 20 |
 | `:offline` below | health 20 |
