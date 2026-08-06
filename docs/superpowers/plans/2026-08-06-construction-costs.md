@@ -407,15 +407,16 @@ Add to `test/armchair_metropolist/use_cases/manage_infrastructure_test.exs`, ins
       assert map.money == 0.0
     end
 
-    test "refuses an unaffordable build and changes nothing at all" do
+    test "refuses an unaffordable build" do
+      # Only the error tuple is assertable here. `map` is bound before the call and
+      # Elixir cannot mutate it, so `assert map.money == 19.0` would be a tautology
+      # rather than a guard — no implementation of `place/4` could make it fail. The
+      # refusal also returns no map, so "changes nothing" is structurally guaranteed by
+      # the return shape at this layer. The observable version of that property lives in
+      # `city_engine_test.exs`, where the engine holds state across the refused call.
       map = %{CityMap.new(40, 30) | money: 19.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.place(map, 1, 1, :park)
-
-      # Both halves asserted: an implementation that debits and *then* refuses would
-      # satisfy the error tuple alone.
-      assert map.money == 19.0
-      assert map.nodes == %{}
     end
 
     test "reports occupancy before affordability" do
@@ -451,13 +452,25 @@ and inside `describe "demolish/3"`:
       assert map.money == 90.0
     end
 
-    test "refuses an unaffordable demolition and leaves the node standing" do
+    test "refuses an unaffordable demolition" do
+      # Same as the place/4 refusal above: only the error tuple is assertable. `map` is
+      # bound before the call, and the node was put there by this test, so asserting
+      # either back would be asserting the test's own setup.
       {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
       map = %{map | money: 9.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.demolish(map, 1, 1)
-      assert map.money == 9.0
-      refute CityMap.get_node(map, 1, 1) == nil
+    end
+
+    test "a balance exactly equal to the demolition cost succeeds and leaves zero" do
+      # The test that kills `<` flipped to `<=` on the demolish gate. `place/4` has the
+      # symmetric test; without this one, no fixture in the suite ever holds exactly
+      # 10.0 before a demolish, so that mutation would survive.
+      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      map = %{map | money: 10.0}
+
+      assert {:ok, {map, _id}} = ManageInfrastructure.demolish(map, 1, 1)
+      assert map.money == 0.0
     end
 
     test "reports an empty cell before affordability" do
@@ -466,6 +479,37 @@ and inside `describe "demolish/3"`:
       assert {:error, :empty} = ManageInfrastructure.demolish(broke, 5, 5)
     end
 ```
+
+And in `city_engine_test.exs`, the engine-level version of the property the two use-case tests above cannot express — the engine holds state across a refused call, so a debit-then-refuse implementation is observable here and nowhere else:
+
+```elixir
+    test "a refused command leaves the engine's balance untouched", %{city_id: city_id} do
+      # Seed 20.0, spend 15.0 on a residential, leaving 5.0 — then refuse a park (20) and
+      # a demolition (10) against it. Every figure asserted below is 5.0, and a premature
+      # debit would read 0.0 for either refusal after the floor, so no assertion here can
+      # be satisfied by an accidental zero.
+      #
+      # The *affordable* place is the discriminator that actually kills the
+      # debit-before-the-gate mutation: 20.0 only just covers 15.0, so an implementation
+      # that debits before comparing sees 5.0 against a cost of 15.0 and refuses a command
+      # that must succeed.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, _node} = CityEngine.place(city_id, 1, 1, :residential)
+      assert {:ok, %{city_map: %{money: 5.0}}} = CityEngine.snapshot(city_id)
+
+      assert {:error, :insufficient_funds} = CityEngine.place(city_id, 2, 2, :park)
+      assert {:ok, %{city_map: %{money: 5.0}}} = CityEngine.snapshot(city_id)
+
+      assert {:error, :insufficient_funds} = CityEngine.demolish(city_id, 1, 1)
+      assert {:ok, %{city_map: %{money: 5.0}}} = CityEngine.snapshot(city_id)
+    end
+```
+
+`snapshot/1` returns `{:ok, %{city_map: …, metrics: …}}` — **not** a bare map, so `snapshot(id).money` does not compile. Read the balance back through that shape; do not add production API to observe it.
+
+**Be precise about what this test does and does not kill.** `CityEngine`'s error arm is `{:error, reason} -> {:reply, {:error, reason}, state}`, so the debited map never leaves the use case on a refusal and *no* single-edit mutation there can move the engine's balance. The two post-refusal balance assertions are therefore a **shape guard** — they would catch a use case that grew `{:error, reason, map}`, or a later task that debited in the engine itself — not the kill. The kill comes from the affordable place. Claim the guard, not the kill.
 
 And a test that the charge stays out of the per-tick economy — put it in `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`:
 
@@ -708,7 +752,8 @@ Report the exact failing list before and after. If a fixture fails for a reason 
 - [ ] **Step 7: Mutation-verify**
 
 1. `<` → `<=` in `place/4` → "a balance exactly equal to the cost succeeds and leaves zero" fails. Nothing else catches this. Restore.
-2. Debit before the gate (move `CityMap.debit/2` above the `cond`) → "refuses an unaffordable build and changes nothing at all" fails on the money assertion. Restore.
+1b. `<` → `<=` in `demolish/3` → "a balance exactly equal to the demolition cost succeeds and leaves zero" fails, and nothing else does.
+2. Debit before the gate (move `CityMap.debit/2` above the `cond`, removing it from the success branch) → **"a refused command leaves the engine's balance untouched" fails.** Note carefully what this mutation does *not* redden: no assertion in `manage_infrastructure_test.exs` can catch it, because the caller's `map` is immutable and the refusal returns no map. An earlier draft of this plan claimed the use-case refusal test would fail here; it cannot. The engine test is the only guard. Restore.
 3. Move the `insufficient_funds` clause above `occupied?` → "reports occupancy before affordability" fails. Restore.
 4. Move it above the `type not in Node.types()` clause → "reports an unknown type before affordability, and does not raise" fails with `KeyError`, which is the crash that ordering prevents. Restore.
 
