@@ -4,11 +4,19 @@
 **Status:** designed, not yet implemented
 **Depends on:** the park amenity design, which is implemented and merged first — see §4
 
-**Amended 2026-08-05, before implementation.** The first draft buffed `park` here, by giving it money
-production. Rejected on review: a public park earning revenue does not describe anything a park does,
-and the mechanic chosen instead (an amenity multiplier on labour) changes how supply is computed
-rather than what a table contains, so it needs its own design. §4 records the sequencing and the two
-measured findings that came out of the rejected attempt.
+**Amended twice on 2026-08-05, both before implementation.**
+
+*First amendment.* The original draft buffed `park` here, by giving it money production. Rejected on
+review: a public park earning revenue does not describe anything a park does, and the mechanic chosen
+instead — an amenity multiplier on labour — changes how supply is computed rather than what a table
+contains, so it needs its own design. §4 records the sequencing.
+
+*Second amendment.* §7 was re-derived against the park design's final tables, at the request to do
+that before implementing anything. **The opening grant drops from 500 to 150.** The park amenity
+lowers the cheapest viable earning city from 445 to **75** — a three-tile city — so 500 bought the
+minimum six times over rather than "one working city and nothing spare". This also corrects the first
+amendment, which predicted the grant would be overshot *upward*; the truth was the opposite direction
+and a factor of six.
 
 ## 1. Problem
 
@@ -143,6 +151,31 @@ spec's 2026-08-02 amendment exists to fix — a cell reading `13/23 · 100%`, wh
 is not derivable from the two numbers beside it. A test asserts that after a placement,
 `resource_stats(:money).demanded` reflects upkeep only.
 
+### The grant lives in two places, and both must change
+
+`CityMap` states 150.0 twice — once as the `defstruct` default and once explicitly in `new/2`:
+
+```elixir
+defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: 150.0
+
+def new(width, height) do
+  %__MODULE__{width: width, height: height, tick: 0, nodes: %{}, money: 150.0}
+end
+```
+
+The duplication predates this change and is a live trap: `new/2` overrides the default with the same
+literal, so changing only one leaves new cities and decoded-then-normalised cities disagreeing about
+the grant — and `CityEngine.normalize_city_map/1` merges onto `%CityMap{}`, so the *defstruct* default
+is the one an old snapshot inherits while `new/2`'s is the one a fresh city gets. Change both, and
+prefer deleting `new/2`'s redundant `money:` key so the constant has one home.
+
+Three readers pin the old value and must move with it: `city_engine_test.exs`'s
+`assert loaded.money == 500.0`, and comments in `simulation_calculator_test.exs` and
+`test/support/playing_guide.ex` that both name "the 500.0 grant" while explaining fixtures that depend
+on it. The `playing_guide.ex` one matters most — `city_with/1` deliberately zeroes money so the
+capacities table measures steady-state solvency, and its comment explains why the grant must *not* be
+in play there.
+
 ### No snapshot migration
 
 Unlike the money-and-labour change, this one adds no persisted field:
@@ -175,21 +208,20 @@ belong in a spec about money.
 
 Two consequences for this document:
 
-* **`park`'s 20.0 in §2 is provisional.** It is priced for a type whose value is not yet designed,
-  so it is re-derived once the park design settles, in that branch or this one, whichever lands
-  second.
+* **`park`'s 20.0 in §2 stays, and is now measured rather than provisional.** Searched across park
+  prices of 10, 20, 30, 40 and 60 against the park design's final tables: the best-income city is
+  identical from 20 upward — three parks, income 74. A park's labour value exceeds even 60, so its
+  price changes only the up-front outlay and never the decision. 20 is therefore as defensible as any
+  higher figure, and it keeps the cheapest viable city cheap, which §7 depends on.
 * **§7's opening analysis excludes `park` entirely.** Every figure there is measured against types
   whose tables this change does not touch. `park`'s place in an opening is an open question until
   the park design answers it.
-* **§7's smallest viable city is invalidated by that design, and so is the 500 grant.** The park
-  design also staffs `transit_hub` (labour 2.0), which makes the set §7 costs at 445 — 2 power, 1
-  water, 1 industrial, 1 transit, 1 commercial, 5 residential — **non-viable**: labour demand reaches
-  22, needing 6 residential, while its single water plant caps residential at 5. Measured by
-  regenerating the guide's `capacities` block. The smallest viable set becomes 2 power, **2** water, 1
-  industrial, 1 transit, 1 commercial and 6 residential, at **530** — which overshoots the 500 grant
-  by 30. So either the grant rises or the cost table comes down, and §7's "buys exactly one working
-  city" claim has to be re-derived rather than adjusted. Deferred to whichever branch lands second,
-  which by §4's sequencing is this one.
+* **§7 has been re-derived against the park design's final tables (second amendment).** The
+  prediction here — that staffing would make the 445 set non-viable and push the smallest viable city
+  to 530, above the grant — was true only of an intermediate version of that design. Its final form
+  raises `residential` labour to 5.0, which restores every documented support set, and the amenity
+  then lowers the floor for a viable city to **75**. §7 carries the measured figures and the grant is
+  now 150.
 
 ### Measured findings, recorded for the park design
 
@@ -299,7 +331,7 @@ node div sits above its cell and turns that click into a demolish.
 `test/docs/playing_guide_test.exs`, so the doc cannot be updated by hand alone.
 
 **A new `<!-- generated:costs -->` block** joins `PlayingGuide.blocks/0`, listing each type's
-construction cost, the flat demolition cost, and the opening grant of 500 — which currently appears
+construction cost, the flat demolition cost, and the opening grant of 150 — which currently appears
 in no generated block and so lives only in a spec. Read out of `Node` and `CityMap`, so it cannot
 drift.
 
@@ -323,26 +355,37 @@ sets contain.
 
 ## 7. Balance
 
-**The opening grant buys one working city and nothing spare.** The smallest viable support set the
-guide documents — 2 power, 1 water, 1 industrial, 1 transit, 1 commercial, 5 residential — costs
-**445** of the 500, leaving 55: not enough for a second power plant, and one misplaced 80 puts the
-first city out of reach until income accumulates.
+**The opening grant is 150**, replacing `CityMap`'s current 500.0. Every figure below is measured
+against the park design's final tables — its four staffed types, `residential` at labour 5.0, and the
+amenity multiplier — because those land first.
 
-> **This whole section is measured against today's tables and does not survive the park design.**
-> That design staffs `transit_hub`, which makes the 445 set non-viable outright and moves the smallest
-> viable city to 530 — above the grant. Every figure below is therefore a *pre-park* baseline, kept
-> because the reasoning transfers, and re-derived during implementation. See §4.
+| city | build cost | net money/tick | note |
+|---|---|---|---|
+| 1 residential | 15 | +1 | the bootstrap floor: stable on bare baseline, draws no money |
+| 2 residential | 30 | +2 | |
+| **1 commercial, 1 park, 1 residential** | **75** | **+28** | **the cheapest viable earning city** |
+| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial, 5 residential | 445 | +26 | the guide's smallest documented support set |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial, 12 residential | 910 | +49 | |
 
-| set | build cost | net money/tick once running |
-|---|---|---|
-| 2 residential (baseline only) | 30 | +2 |
-| 2 park (baseline only) | 40 | −6 — see §4, park's value is designed separately |
-| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial, 5 residential | 445 | +26 |
-| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial, 12 residential | 910 | +49 |
+**The three-tile city is the finding that sets the grant.** One commercial block, one park and one
+house are stable on free baseline capacity alone and net +28/tick. It works because the amenity
+doubles the single house's labour from 5 to 10, and 10 is exactly what one commercial block's 8 needs.
+Searched exhaustively: with parks forbidden the cheapest earning city is **445**, and with the amenity
+switched off but staffing left in it is **295**. So the park design lowers the floor by a factor of
+six, and it is what makes a 150 grant a real constraint rather than a punitive one.
 
-Every figure in the right-hand column is measured, not derived on paper: each set was built and run
-through `SimulationCalculator` for 500 ticks, and all four hold at health 100 throughout. The build
-costs are sums of §2.
+**150 buys the minimum city and one spare block.** 75 leaves 75 — a second park and a house, or a
+transit hub — so a player who spends well has room to grow and a player who spends badly does not.
+At 500 the grant bought the minimum six times over, which is the claim the second amendment corrects.
+
+**The game stays winnable from any state that can afford one house.** A single `residential` costs 15,
+sits inside the baseline on all four flow resources, consumes no money at all, and nets +1/tick
+without bound. So the recovery floor is 15, not 75: from any balance at or above it, income is
+positive and the treasury grows forever.
+
+**`park`'s price is not a balance lever.** Measured at 10, 20, 30, 40 and 60, the best-income city is
+identical from 20 upward. Park's labour value exceeds even 60, so its price changes the up-front
+outlay and nothing else.
 
 **The game stays winnable from any state that still has a living money producer.** Two residential
 blocks cost 30, sit inside the free baseline on all four flow resources, consume no money at all,
@@ -362,6 +405,20 @@ fades as the city succeeds. It is recorded here so nobody later reads this spec 
 permanent budget constraint and "fixes" it by inflating prices.
 
 ## 8. Accepted consequences
+
+**A 150 grant makes an unrecoverable city reachable in two clicks, and this is the sharpest
+consequence in the document.** `power_plant` (80) plus `water_plant` (70) is *exactly* 150. Neither
+produces money, the water plant *consumes* 5/tick, and at a balance of 0 neither the cheapest build
+(`residential`, 15) nor a demolition (10) is affordable. The city is dead on the second placement, with
+no in-app recovery.
+
+This is the same dead end §8 already accepted, not a new one — at 500 it takes six or seven placements
+instead of two. But two is a plausible opening for a player who has not read the guide, and "build
+producers first" is exactly the advice `docs/PLAYING.md` gives. Recorded rather than mitigated, because
+the mitigations all sit outside this spec: a money baseline (rejected by the money design as
+load-bearing), free demolition (rejected), or a reset control (below). **The evidence for promoting the
+reset control from a deferred idea to a real requirement is now much stronger than when it was
+deferred**, and whoever implements this should read that as a recommendation rather than a note.
 
 **A fully collapsed city is permanently unrecoverable.** Chosen deliberately over the alternatives.
 Two existing facts combine: `@baseline_capacity` gives money `0.0` — no free income, which the money
