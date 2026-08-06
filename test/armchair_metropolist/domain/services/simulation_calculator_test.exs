@@ -21,7 +21,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   #   water    supply 40 + 100*0.417 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
   #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6 + 10 = 28.0    -> 1.0
   #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
-  #   labour   supply 1*5.0          =   5.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
+  #   labour   supply 1*5.0 * 2.0    =  10.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
+  #
+  # The ×2.0 on labour is the park amenity at its cap: 3 parks to 1 residential is a ratio
+  # of 3.0, clamped to @max_amenity_ratio = 1.0, so the multiplier is 1 + k*1.0 = 2.0.
+  # Supply is 10.0, not 5.0 — do not "correct" this back to a knife-edge 5.0/5.0 margin.
+  # Nothing downstream can catch that error, because satisfaction saturates at 1.0 either
+  # way.
   #
   # The residential block is not decoration: since everything but housing is staffed
   # (2026-08-05) this city draws 5 labour, and without a house to supply it labour
@@ -321,6 +327,39 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       assert Calc.metrics(city).amenity_marginal_labour == 2.5
     end
+
+    test "metrics carries what the placed parks contribute, which is not the marginal" do
+      # 4 housing, 3 parks: ratio 0.75, below the cap, so the placed parks are worth
+      # L*k each. Labour supply is 35.0 with them and 20.0 without.
+      metrics = Calc.metrics(housing_and_parks(4, 3))
+
+      assert metrics.amenity_labour == 15.0
+
+      # The two figures answer different questions and must not be conflated: below the
+      # cap the marginal is one park's worth while the total is three parks' worth.
+      assert metrics.amenity_marginal_labour == 5.0
+    end
+
+    test "the placed-parks figure is bounded by the housing once past the cap" do
+      # 2 housing, 3 parks: ratio 1.5, clamped to 1.0, so the amenity is L*k*housing = 10
+      # rather than L*k*parks = 15. Labour supply is 20.0 with the parks and 10.0 without.
+      # This is the case a `L*k*parks` shortcut gets wrong, so it is why the figure is
+      # computed as a real difference.
+      metrics = Calc.metrics(housing_and_parks(2, 3))
+
+      assert metrics.amenity_labour == 10.0
+
+      # And here the marginal is zero while the total is at its largest — the clearest
+      # demonstration that one cannot be derived from the other.
+      assert metrics.amenity_marginal_labour == 0.0
+    end
+
+    test "no parks means the placed-parks figure is zero, not the whole labour supply" do
+      # Guards the subtraction's second term: with no parks to remove, both sides of the
+      # difference are the same city, so a sign slip or a swapped operand shows up here as
+      # the full 20.0 of housing supply being attributed to an amenity that is absent.
+      assert Calc.metrics(housing_and_parks(4, 0)).amenity_labour == 0.0
+    end
   end
 
   describe "advance_tick/1 health arithmetic" do
@@ -547,7 +586,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       refute Map.has_key?(delta, "1:0"),
              "sub-rounding health movement must be excluded from the delta"
 
-      # The water plant crosses a rounding boundary (30.3 -> 31.3) in the same
+      # The water plant crosses a rounding boundary (41.7 -> 42.7) in the same
       # tick, so the delta is not trivially empty and the exclusion above is
       # a real filter rather than a no-op.
       assert Map.has_key?(delta, "0:0")

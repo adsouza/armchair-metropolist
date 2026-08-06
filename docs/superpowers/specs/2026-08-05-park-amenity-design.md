@@ -281,17 +281,28 @@ code at all.
 
 The LiveView receives metrics and never the city map, and the boundary graph bars
 `ArmchairMetropolistWeb` from `Domain.Services` — its `deps` names `Domain`, which exports only
-`Entities.*` and `Ports.*`. So both figures the UI needs travel on the metrics struct:
+`Entities.*` and `Ports.*`. So every figure the UI needs travels on the metrics struct:
 
 ```elixir
-amenity: float(),                  # the multiplier, for the Metrics line
-amenity_marginal_labour: float()   # supply-side effect of one more park, for the legend
+amenity: float(),                   # the multiplier, for the Metrics line
+amenity_marginal_labour: float(),   # supply-side effect of one more park, for the legend
+amenity_labour: float()             # what the placed parks contribute, for the legend
 ```
 
+**`amenity_labour` was added during implementation, and the omission was a shipped bug.** This
+section originally specified two fields, on the assumption that the legend's park/labour cell needed
+only the marginal figure. It does not: the cell stacks *two* figures, and the lower, bolder one is a
+total. With no total to render it fell through to `total_cell/2`'s `is_nil(produced)` branch and
+reported park's bare staffing draw — at 4 housing and 3 parks, a bold `−3` where the honest figure is
+`+12`. A marginal cannot stand in for a total here: below the cap they differ by the park count, and
+at the cap the marginal is `0.0` while the total is at its largest. Like the marginal, it is computed
+as a real difference — `labour_supply(nodes) − labour_supply(nodes without parks)` — because below
+the cap it equals `Lk × parks` but at the cap it equals `Lk × housing`.
+
 `amenity_marginal_labour` is the **supply-side delta only**, computed as an actual difference —
-`labour_supply(nodes ++ [fresh park]) − labour_supply(nodes)` — rather than as "`4k`, or `0.0` when
+`labour_supply(nodes ++ [fresh park]) − labour_supply(nodes)` — rather than as "`Lk`, or `0.0` when
 saturated". The two agree everywhere except at the boundary, where a park that takes the ratio from
-below the cap to above it contributes only part of `4k`; the difference is exactly right there and the
+below the cap to above it contributes only part of `Lk`; the difference is exactly right there and the
 shortcut is not. Park's own labour consumption is *not* netted in here — §6 nets it in the
 presentation layer, where `produced − consumed` already lives.
 
@@ -421,10 +432,16 @@ power.
 alone will not find the amenity rule. Mitigated by the legend cell and the guide's constants block,
 not by anything in the table.
 
-**Collapse deepens.** Amenity is health-weighted on both sides, so a failing city loses labour twice
-over: dying residential produces less, and dying parks multiply what remains by less — while still
-drawing their staffing. Consistent with every other mechanic here, and the guide's rescue section must
-say it, because labour will recover more slowly than the housing count suggests.
+**Collapse does *not* deepen — corrected during implementation, after measurement.** The draft of
+this section claimed a failing city loses labour twice over, because amenity is health-weighted on
+both sides. That is wrong, and the arithmetic says so: the multiplier is `1 + k × min(P_eff/H_eff,
+cap)`, and health scales *numerator and denominator alike*, so damage falling evenly on housing and
+parks **cancels in the ratio**. Measured, 4 housing + 2 parks: at 100 health, ×1.5 and 30.0 labour;
+at 50 health, still ×1.5 and 15.0 labour — a *linear* fall, tracking the housing. Worse for the
+draft's story, uneven damage can move the ratio the other way: housing at 50 with parks at 100 gives
+ratio 1.0, ×2.0, and **20.0** labour, more than the uniformly damaged city's 15.0. Only the
+parks-more-damaged-than-housing case loses labour faster than the block count suggests, and that is
+what the guide's rescue section says. Do not re-derive the "twice over" version.
 
 ## 9. Documentation
 
@@ -512,19 +529,36 @@ covered.
 
 * **Equals `Lk` = 5.0 below the cap and `0.0` above it.**
 * **Is the true difference at the boundary.** A city positioned so one more park crosses the cap gets
-  a value strictly between 0 and `4k` — the case the "`4k` or zero" shortcut gets wrong, and therefore
+  a value strictly between 0 and `Lk` — the case the "`Lk` or zero" shortcut gets wrong, and therefore
   the case that justifies computing a difference.
+
+### `amenity_labour`
+
+* **Equals `Lk × parks` below the cap** — 4 housing and 3 parks gives 15.0, from a labour supply of
+  35.0 against 20.0 with the parks removed.
+* **Equals `Lk × housing` at or past the cap** — 2 housing and 3 parks gives 10.0, not 15.0. This is
+  the case a `Lk × parks` shortcut gets wrong, and so the case that justifies the difference.
+* **Is `0.0` with no parks**, rather than the whole labour supply. Guards the subtraction's second
+  term against a swapped operand, which would otherwise attribute all of housing's output to an
+  amenity that is absent.
 
 ### Presentation
 
-* **Park's labour cell renders `+4`, and `−1` when saturated** — both directions, since a hardcoded
-  string satisfies either alone.
+* **Park's labour cell renders `+4` on its marginal line, and `−1` when saturated** — both
+  directions, since a hardcoded string satisfies either alone.
+* **Park's labour *total* line renders `+12` at 4 housing and 3 parks, and `+7` at 2 housing and 3
+  parks.** Asserted on `.font-semibold` inside the cell rather than on the cell, because the cell's
+  text also contains the marginal figure and a cell-level assertion silently matches the wrong line.
+  Both figures are net of park's own staffing. The second case is at the cap, where the total is
+  bounded by the housing — so a total derived from the marginal, or from the park count, fails it.
 * **`transit_hub`'s labour cell renders `−2` and `power_plant`'s `−1`** through the ordinary path.
 * **Other types' em dashes are unaffected.** Positive case first: assert a type still renders `—` for
   a resource it does not touch, so the park special case cannot leak into the general path.
 * **The Metrics workforce line renders two decimals** and moves when parks are placed. Asserted on
   `#metrics-workforce`, and on the label reading "Workforce" — the player-facing word is a decision, so
-  a rename should fail a test rather than pass silently.
+  a rename should fail a test rather than pass silently. The precision needs a ratio that is not a
+  tenth to pin it at all: ×1.5 renders identically at one decimal and two, so 3 housing and 1 park
+  (×1.33 against ×1.3) is the case that discriminates them.
 
 ### Documentation
 

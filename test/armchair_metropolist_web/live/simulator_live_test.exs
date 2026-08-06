@@ -625,6 +625,55 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.5"
     end
 
+    # ×1.5 does not pin the precision: `Float.round(1.5, 1)` and `Float.round(1.5, 2)` both
+    # render "1.5", so the assertion above passes at either. A ratio that is not a tenth
+    # discriminates them — 1 park to 3 housing is 1 + 1/3 = ×1.33 at two decimals and
+    # ×1.3 at one.
+    test "the Workforce multiplier is rendered to two decimals", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..3, do: place(view, :residential, x, 1)
+      place(view, :park, 1, 2)
+
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.33"
+    end
+
+    # The bold half of the cell, which is the figure a player's eye lands on. It answers a
+    # different question from the marginal line above it — "what are the parks I have
+    # already placed contributing" — and before `amenity_labour` existed it fell through
+    # to the general `is_nil(produced)` branch and reported the pure staffing draw, wrong
+    # by the entire amenity and wrong in sign.
+    #
+    # Targeted on `.font-semibold` rather than on the cell, because the cell's text
+    # contains the marginal figure too and "+12" would happily match nothing while "+4"
+    # matched the wrong line.
+    test "park's labour total reports the placed parks' amenity, net of their staffing",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..4, do: place(view, :residential, x, 1)
+      for x <- 1..3, do: place(view, :park, x, 2)
+
+      # 4 housing, 3 parks is ratio 0.75, below the cap. Measured: labour supply is 35.0
+      # with the parks and 20.0 without, so they contribute +15 gross, less the 3 labour
+      # they draw between them.
+      assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+12"
+    end
+
+    test "at the cap park's labour total is bounded by the housing, not the park count",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..2, do: place(view, :residential, x, 1)
+      for x <- 1..3, do: place(view, :park, x, 2)
+
+      # 2 housing, 3 parks is ratio 1.5, clamped to the cap of 1.0. Past the cap the
+      # amenity is `L * k * housing`, not `L * k * parks`: measured, labour supply is 20.0
+      # with the parks and 10.0 without, so +10 gross less the 3 they draw. The third park
+      # is paying its staffing for nothing, and this figure is where that shows.
+      assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+7"
+    end
+
     test "past parity park's labour cell goes negative", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

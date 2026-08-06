@@ -62,10 +62,16 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
   # §4.
   #
-  # `k` below 1.0 makes the whole mechanic a no-op, because a park draws 1 labour of its
-  # own and so nets `4k - 1`: at k = 0.5 the net is +1, and the optimal city is
-  # identical to one with no amenity at all. The cap is the ratio past which more parks
-  # add nothing; it is inert in small cities and binds gently in large ones.
+  # A park draws 1 labour of its own, so its net contribution is `L × k - 1`, where `L` is
+  # residential's labour production of 5.0. `k = 1.0` is the value for two reasons. It
+  # clears the measured threshold: at k = 0.5 the net is only +1.5 and the optimal city is
+  # byte-identical to one with no amenity at all, so the mechanic would ship as a no-op.
+  # And it is the smallest such value keeping the gross bonus `L × k` a whole number —
+  # k = 0.75 reaches the same optimum but makes it 3.75, which the legend's `signed/1`
+  # would round to a figure the domain does not supply.
+  #
+  # The cap is the ratio past which more parks add nothing; it is inert in small cities and
+  # binds gently in large ones.
   @amenity_per_housing 1.0
   @max_amenity_ratio 1.0
 
@@ -161,7 +167,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     amenity = %{
       amenity: labour_multiplier(nodes),
-      amenity_marginal_labour: marginal_amenity_labour(nodes)
+      amenity_marginal_labour: marginal_amenity_labour(nodes),
+      amenity_labour: placed_amenity_labour(nodes)
     }
 
     SimulationMetrics.build(city_map, resource_stats(city_map), amenity)
@@ -205,15 +212,31 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   # What one more park would add to labour supply, computed as an actual difference
-  # rather than as the constant `4k` the algebra predicts. The two agree everywhere
-  # except where the extra park takes the ratio across the cap, and there only the
-  # difference is right.
+  # rather than as the constant `L × k` (= 5.0) the algebra predicts. The two agree
+  # everywhere except where the extra park takes the ratio across the cap, and there only
+  # the difference is right.
   #
   # The probe park's coordinates are arbitrary. `total_supply/1` reduces over a list and
   # never reads position or identity, so a duplicate id cannot collide here — but this
   # list must not be put back into a CityMap.
   defp marginal_amenity_labour(nodes) do
     labour_supply([Node.new(0, 0, :park) | nodes]) - labour_supply(nodes)
+  end
+
+  # What the parks *already placed* are contributing to labour supply — the counterpart to
+  # `marginal_amenity_labour/1`, which asks about one more. The legend stacks both, and
+  # conflating them is what made park's labour total report a bare staffing draw.
+  #
+  # Computed as a real difference against the same city with its parks removed rather than
+  # from the algebra, for the same reason as the marginal figure: below the cap this equals
+  # `L × k × parks`, but at the cap it equals `L × k × housing`, and only the difference is
+  # right on both sides of that boundary without a case split.
+  #
+  # Removing the parks changes nothing else about labour. Parks produce no labour, and
+  # `total_supply/1` derives the multiplier from the nodes it is given, so the second term
+  # is exactly the unamplified housing supply.
+  defp placed_amenity_labour(nodes) do
+    labour_supply(nodes) - labour_supply(Enum.reject(nodes, &(&1.type == :park)))
   end
 
   defp labour_supply(nodes), do: nodes |> total_supply() |> Map.fetch!(:labour)

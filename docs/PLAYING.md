@@ -170,12 +170,13 @@ Two approaches still work, because neither waits on labour to recover first:
    and it is the only way to keep labour (and, once a commercial block exists, income)
    flowing through a rescue.
 
-**Labour comes back more slowly than the housing count suggests.** Amenity is scaled by
-health on both sides, so a damaged city loses workforce twice over: its residential
-blocks produce less labour, *and* its parks multiply what remains by less — while both
-keep drawing their full demand. Expect the labour column to lag the others during a
-rescue, and read the *Amenity* line in the metrics rather than counting parks on the
-grid.
+**Neglecting parks shrinks the workforce; damage spread evenly does not.** The
+multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
+on housing and parks cancels out — the workforce shrinks in step with the housing, no
+faster. What moves the multiplier is *uneven* damage: let the parks rot while the housing
+holds and the bonus shrinks, and the labour column falls faster than the block count
+suggests. Read the *Workforce* line in the metrics rather than counting parks on the grid,
+because it is the ratio that matters, not the total.
 
 Health returns at a flat rate once conditions are met, so a node at zero is back to
 full in 100 ticks.

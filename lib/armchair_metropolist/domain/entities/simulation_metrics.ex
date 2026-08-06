@@ -44,15 +44,16 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           by_type: %{Node.node_type() => type_stats()},
           money: float(),
           amenity: float(),
-          amenity_marginal_labour: float()
+          amenity_marginal_labour: float(),
+          amenity_labour: float()
         }
 
-  # A city with no parks has no amenity, so the identity multiplier and a zero marginal
+  # A city with no parks has no amenity, so the identity multiplier and zero labour from it
   # are the correct values rather than filler. The default exists because `build/2` has
   # a dozen call sites in tests; the one production caller,
   # `Domain.Services.SimulationCalculator.metrics/1`, always passes real figures, and a
   # test on that wiring is what stops this default reaching a player.
-  @default_amenity %{amenity: 1.0, amenity_marginal_labour: 0.0}
+  @default_amenity %{amenity: 1.0, amenity_marginal_labour: 0.0, amenity_labour: 0.0}
 
   defstruct tick: 0,
             resources: %{},
@@ -62,16 +63,19 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             by_type: %{},
             money: 0.0,
             amenity: 1.0,
-            amenity_marginal_labour: 0.0
+            amenity_marginal_labour: 0.0,
+            amenity_labour: 0.0
 
   @doc """
   Build a SimulationMetrics struct from a city map, resource statistics and the city's
   park amenity.
 
-  `amenity` carries `:amenity` (the multiplier on labour supply) and
-  `:amenity_marginal_labour` (what one more park would add to it). Both are computed by
-  `Domain.Services.SimulationCalculator`, which this module cannot call — `Domain` has
-  `deps: []` — so they arrive as an argument rather than being derived here.
+  `amenity` carries `:amenity` (the multiplier on labour supply), `:amenity_marginal_labour`
+  (what one more park would add to it) and `:amenity_labour` (what the *already placed*
+  parks are contributing to it). The last two answer different questions and the legend
+  shows both, stacked. All three are computed by `Domain.Services.SimulationCalculator`,
+  which this module cannot call — `Domain` has `deps: []` — so they arrive as an argument
+  rather than being derived here.
   """
   def build(city_map, resources, amenity \\ @default_amenity) do
     nodes = CityMap.nodes(city_map)
@@ -89,7 +93,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       by_type: build_by_type(nodes),
       money: city_map.money,
       amenity: Map.fetch!(amenity, :amenity),
-      amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour)
+      amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour),
+      amenity_labour: Map.fetch!(amenity, :amenity_labour)
     }
   end
 
