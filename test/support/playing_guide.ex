@@ -32,8 +32,24 @@ defmodule ArmchairMetropolist.PlayingGuide do
       "production" => production_block(),
       "consumption" => consumption_block(),
       "constants" => constants_block(),
-      "capacities" => capacities_block()
+      "capacities" => capacities_block(),
+      "costs" => costs_block()
     }
+  end
+
+  defp costs_block do
+    rows = for type <- sorted_types(), do: "| `#{type}` | #{num(Node.construction_cost(type))} |"
+
+    Enum.join(
+      ["| type | cost to build |", "|---|---|"] ++
+        rows ++
+        [
+          "",
+          "Demolishing anything costs #{num(Node.demolition_cost())}, whatever it was. " <>
+            "A new city starts with #{num(CityMap.opening_grant())}."
+        ],
+      "\n"
+    )
   end
 
   # The numbers a player actually acts on, so they are worth generating rather than

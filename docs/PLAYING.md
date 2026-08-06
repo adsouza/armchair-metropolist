@@ -14,24 +14,31 @@ square — worth knowing, because nothing on screen separates them:
 * **click an empty cell** — places the currently selected type;
 * **click a placed block** — demolishes it.
 
+Both of those last two spend money. Placing charges the block's price and is refused
+outright if the treasury will not cover it — the legend dims the rows you cannot afford,
+and a refused click says what it wanted and what you have. Demolishing charges a flat
+fee, which is less than the cheapest block but is not nothing: a city with an empty
+treasury cannot tear anything down either.
+
 Hover either grid square and the tooltip names the action it will perform. Demolishing
-matters more than it looks: it is the only way to reduce demand, and therefore the only
-way out of a collapse.
+matters more than it looks: it is the only way to reduce demand, so it is how you get out
+of a collapse — but at the fee above, which means the escape has to be bought while there
+is still something to buy it with. See "Running out of money" below.
 
 The legend — to the right of the grid on a wide enough window, stacked below it
-otherwise — lists every type with how many you have placed and its net effect on each
-resource. Where a type produces a resource and its buildings are damaged, the cell shows
-both figures — `+360 → +210` means 360 rated, 210 actually supplied at current health. A
-dash means the type does not touch that resource at all, which is different from
-netting to zero. The totals row gives city-wide supply, demand and satisfaction,
-per tick. Four of the six resources have a free baseline of 40 built into that supply;
-labour and money have none, deliberately — see below.
+otherwise — lists every type with how many you have placed, what it costs to build, and
+its net effect on each resource. Where a type produces a resource and its buildings are
+damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
+supplied at current health. A dash means the type does not touch that resource at all,
+which is different from netting to zero. The totals row gives city-wide supply, demand and
+satisfaction, per tick. Four of the six resources have a free baseline of 40 built into
+that supply; labour and money have none, deliberately — see below.
 
-**Show detail / Hide detail** collapses the legend to its type and count columns, which
-is how you make the window narrower — the six resource columns are most of its width.
-Collapsing never takes away the type list, so you can still choose what to place, and it
-never hides the metrics. The satisfaction figures go with the resource columns, so while
-collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
+**Show detail / Hide detail** collapses the legend to its type, count and cost columns,
+which is how you make the window narrower — the six resource columns are most of its
+width. Collapsing never takes away the type list, so you can still choose what to place,
+and it never hides the metrics. The satisfaction figures go with the resource columns, so
+while collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
 
 ### Build a house first
 
@@ -47,6 +54,13 @@ grid, and it is the only block that will still be standing in a minute if you wa
 This qualifies the "build producers first" rule below rather than replacing it: demand
 still arrives instantly and in full, so a consumer placed before its support still does
 damage. The order is **one house, then producers, then the rest.**
+
+Money gives the same advice for a different reason. `residential` is the cheapest block at
+15, it earns without consuming any money, and — alone on the empty grid — it is the only
+block that stays healthy indefinitely, because it supplies its own workers. `commercial`
+earns thirty times as much per tick, but placed by itself it has no workforce and decays
+while it earns, so its income stops. Spend the whole grant on things that cannot earn and
+the city has no way back — see "Running out of money" below.
 
 ### Position does not matter
 
@@ -155,9 +169,11 @@ falling waste output drags the rest of the city down before the dead residential
 recover on power and water alone. Measured: every node's health is still 0.0 after 150
 ticks.
 
-The trap is the labour dependency, not the money one: `industrial` and `commercial`
+The trap is the labour dependency, not the upkeep: `industrial` and `commercial`
 need living residential to staff them, and dead residential cannot staff anything, no
-matter how much power and water arrives on the same tick.
+matter how much power and water arrives on the same tick. Prices make that rescue worse
+rather than better — those fifteen blocks cost 980 to build, and a city whose housing and
+shops are all dead earns nothing to put towards it.
 
 Two approaches still work, because neither waits on labour to recover first:
 
@@ -165,6 +181,11 @@ Two approaches still work, because neither waits on labour to recover first:
    the mix) and let them heal on power, water, waste and traffic alone — none of which
    residential needs labour or money for. Verified: both nodes return to 100 health
    within 100 ticks.
+
+   That has a price now. Cutting a nineteen-block city back to the two houses the baseline
+   supports means seventeen demolitions, which is 170 — and a city whose money producers
+   are all dead earns nothing to pay it with. Start bulldozing while the treasury still has
+   something in it.
 2. **Never let residential fully die in the first place.** Add support while some
    residential is still alive — this is the "build producers first" advice above,
    and it is the only way to keep labour (and, once a commercial block exists, income)
@@ -180,6 +201,25 @@ because it is the ratio that matters, not the total.
 
 Health returns at a flat rate once conditions are met, so a node at zero is back to
 full in 100 ticks.
+
+## Running out of money
+
+The treasury is the one resource whose surplus survives a tick, and the one you can spend
+to zero with no warning. Two things follow.
+
+**A city with no income and no savings cannot act at all.** Money has no free baseline —
+the only sources are `residential` and `commercial`, and production is scaled by health, so
+a city whose housing and shops are all dead earns exactly nothing, forever. While the
+treasury still holds 10 you can keep demolishing, which is the way out described above.
+Once it reaches zero with nothing earning, every gesture is refused: you cannot build,
+and you cannot tear down to make room. That is the one unrecoverable state in the game,
+and it takes both halves — no income *and* no savings.
+
+**Getting out is easier the earlier you start.** A house costs 15, needs no support on an
+empty grid, and consumes no money, so on a clear grid one house is enough to start earning
+again. On a crowded one it is not: the dead blocks around it still draw power, water, waste
+and traffic, and a single house cannot satisfy that demand, so it decays too. Demolish
+first, then rebuild — and keep enough in the treasury to do both.
 
 ## How long you have to react
 
@@ -248,7 +288,11 @@ amplify — but each one raises the labour your housing supplies, up to **one pa
 residential block**, where the bonus stops at double. Past that ratio a park is pure
 cost: it still drinks 18 water, still needs a groundskeeper, and adds nothing. The
 legend's labour column tells you which side of that line you are on, showing `+4` while
-parks are worth building and `-1` once they are not.
+parks are worth building and `-1` once they are not. At 20 a park is the second-cheapest
+block, but it is not the cheapest workforce: a park adds 5 workers and consumes 1, so 20
+buys 4 — while a house adds 5 and consumes none for 15. Parks win on the resources they
+also fix, not on labour per coin. And past the cap the price is worse than wasted: 20 to
+*lose* you a worker.
 
 Parks are thirsty, and that is what bounds them. On the free baseline's 40 water exactly
 one park fits — and it needs a house to staff it and a commercial block to cover its
@@ -256,6 +300,22 @@ upkeep, so the smallest city with a park in it is three blocks. Measured: water 
 income +28 per tick, stable indefinitely. A second park needs a water plant, which needs
 power. A neglected park is worse than none: amenity is scaled by health, its staffing and
 water draw are not, so a dead park amplifies nothing while still costing everything.
+
+### What each type costs
+
+<!-- generated:costs -->
+| type | cost to build |
+|---|---|
+| `commercial` | 40 |
+| `industrial` | 60 |
+| `park` | 20 |
+| `power_plant` | 80 |
+| `residential` | 15 |
+| `transit_hub` | 40 |
+| `water_plant` | 70 |
+
+Demolishing anything costs 10, whatever it was. A new city starts with 150.
+<!-- /generated:costs -->
 
 ### Health and timing
 
