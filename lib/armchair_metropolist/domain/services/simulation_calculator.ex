@@ -164,14 +164,16 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec metrics(CityMap.t()) :: SimulationMetrics.t()
   def metrics(city_map) do
     nodes = CityMap.nodes(city_map)
+    stats = resource_stats(city_map)
 
-    amenity = %{
+    derived = %{
       amenity: labour_multiplier(nodes),
       amenity_marginal_labour: marginal_amenity_labour(nodes),
-      amenity_labour: placed_amenity_labour(nodes)
+      amenity_labour: placed_amenity_labour(nodes),
+      stalled: stalled?(nodes, stats)
     }
 
-    SimulationMetrics.build(city_map, resource_stats(city_map), amenity)
+    SimulationMetrics.build(city_map, stats, derived)
   end
 
   # Baseline capacity plus health-scaled production from every node, with labour then
@@ -288,6 +290,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     |> Node.consumption()
     |> Enum.reduce(1.0, fn {resource, _amount}, acc ->
       min(acc, Map.fetch!(stats, resource).satisfaction)
+    end)
+  end
+
+  # The city has reached a fixpoint in health: every node is on the floor and every
+  # node is still short of something, so `health_delta/1` is negative for all of them,
+  # the clamp holds them at zero, and demand — which is not health-scaled — does not
+  # move. The next tick is therefore identical in every node.
+  #
+  # Both clauses are load-bearing. Without the empty-list clause an untouched grid is
+  # "stalled", because `Enum.all?/2` over nothing is true. Without the satisfaction
+  # test, one or two dead houses are called stalled the tick before they heal: they
+  # draw 30 power against the free baseline of 40, so they are fully supplied at zero
+  # health and regenerate. The cliff is `15n <= 40`.
+  #
+  # Written per-node rather than against `avg_health`: health is clamped non-negative,
+  # so "every node at 0.0" and "the average is 0.0 over a non-empty set" say the same
+  # thing, and this form has no float sum in it to reason about.
+  defp stalled?([], _stats), do: false
+
+  defp stalled?(nodes, stats) do
+    Enum.all?(nodes, fn node ->
+      node.health == @min_health and worst_satisfaction(node, stats) < 1.0
     end)
   end
 

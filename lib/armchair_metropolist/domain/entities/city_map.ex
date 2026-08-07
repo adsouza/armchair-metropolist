@@ -48,6 +48,20 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   end
 
   @doc """
+  Discard this city and start a new one on the same grid.
+
+  Tick 0, no nodes, and the treasury back to `opening_grant/0` — delegating to `new/2`
+  rather than resetting fields by hand, so there is exactly one definition of what a new
+  city is and this cannot drift from it.
+
+  The grant has to come back. A collapsed city's treasury has drained to zero and the
+  cheapest block costs 15, so a wipe that cleared the grid and left the balance alone
+  would trade one dead end for another: an empty grid earns nothing, forever.
+  """
+  @spec reset(t()) :: t()
+  def reset(map), do: new(map.width, map.height)
+
+  @doc """
   The money a new city starts with.
 
   Public so tests and the playing-guide generator reference the figure instead of

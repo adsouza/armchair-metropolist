@@ -173,6 +173,12 @@ from the very first tick, decays, and its falling waste output drags the rest of
 down before the dead residential can recover on power and water alone. Measured: every
 node's health is still 0.0 after 150 ticks.
 
+That measurement drove `SimulationCalculator` directly for the full 150 ticks, to make the
+point stick. A player never watches that happen: every block sitting at zero health with
+every one of them still short is exactly the condition the engine stops on, so the game
+freezes on the frozen board well before tick 150, not 150 more ticks of decay arriving on
+screen. See "When the city stops" below.
+
 The trap is the labour dependency, not the upkeep: `industrial` and `commercial`
 need living residential to staff them, and dead residential cannot staff anything, no
 matter how much power and water arrives on the same tick. Prices make that rescue worse
@@ -274,6 +280,49 @@ survivable while large ones are not.
 | 0.98         | 0.12                 | ~14 minutes  |
 | 0.90         | 0.60                 | ~3 minutes   |
 | 0.68         | 1.94                 | ~52 seconds  |
+
+## When the city stops
+
+A city **stalls** when every block sits at zero health with at least one of its inputs
+short. At that point nothing changes on its own: production scales with health and so is
+zero, consumption does not scale and so is unchanged, and each tick recomputes the same
+result. The simulation stops advancing, and the tick counter stops with it.
+
+Stalling is not the same as being beyond help, and the difference is the treasury. A
+frozen city's balance is frozen too — it no longer drains to the upkeep of water plants,
+transit hubs and parks — so whatever was in the bank when the city stalled is still there.
+
+**Building anything restarts the clock; demolishing restarts it if it leaves at least one
+surviving node fully supplied, or if it leaves nothing at all.** A new block goes up at
+full health, and "every block at zero" is what the stall is, so one placement of any type
+is enough to start the ticks again — though the new block is then subject to the same
+shortage that killed the rest, and a city that is still short will stall again once it
+dies. The empty-grid case is the edge of the same rule: an empty grid has no block at
+zero health, so it is never stalled — demolishing the very last dead block always
+restarts the clock, with nothing left in the city to run. Short of that, the rest of the
+city is free to stay dead forever. Houses crowding each other out under the free baseline
+are the common case:
+tear one house out of three and the remaining two are supplied and heal, tear one out of
+five and the remaining four are still over the line and nothing moves. It is not the only
+case: three dead houses beside one dead transit hub are stalled the same way, and
+demolishing a house is still the fix, even though the transit hub is untouched — measured,
+the two houses left recover to 100 health within 100 ticks while the transit hub, short of
+labour and money, neither of which has a free baseline, sits at zero forever.
+
+Not every dead-looking city is stalled. One or two houses alone recover from zero health
+with an empty treasury: each draws 15 power against the free baseline of 40, so at `15n ≤
+40` they are fully supplied even while dead, and they regenerate. Three do not — 45 against
+40 — and that is the cliff.
+
+**Game over** is the narrower case: the city has stalled *and* holds less than 10. The
+cheapest thing you can do is demolish, at 10, and the cheapest thing you can build is a
+house, at 15, so below 10 no command is affordable — and because the clock has stopped, the
+balance will never rise again. Nothing in the city can change on its own. See "Running out
+of money" above: the escape has to be bought while there is still something to buy it with.
+
+Both states put a **Reset** button in the page header, beside the theme toggle. It clears
+every block, returns the treasury to the opening grant, sets the tick back to zero and
+discards the stored city. There is no confirmation and no undo.
 
 ## Reference
 

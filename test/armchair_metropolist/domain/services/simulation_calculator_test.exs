@@ -8,6 +8,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
   end
 
+  # Helpers — added beside `map_with/1`. `map_with/1` is not reused: these need
+  # per-node health and status set, and threading that through it would change a
+  # helper five other fixtures depend on.
+  defp houses(count, health) do
+    Enum.reduce(0..(count - 1)//1, CityMap.new(40, 30), fn x, map ->
+      CityMap.put_node(map, %Node{
+        Node.new(x, 0, :residential)
+        | health: health,
+          status: Node.status_for(health)
+      })
+    end)
+  end
+
+  defp dead_houses(count), do: %{houses(count, 0.0) | money: 0.0}
+
   # Two residential blocks are sustainable on baseline capacity alone
   # (spec 4.2): power 30 <= 40, water 24 <= 40, waste 20 <= 40, traffic 12 <= 40.
   defp sustainable_city do
@@ -662,6 +677,49 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert metrics.tick == 4
       assert metrics.node_count == 2
       assert metrics.resources.power.satisfaction == 1.0
+    end
+  end
+
+  describe "stalled" do
+    test "a fresh city is not stalled" do
+      # `Enum.all?/2` over no nodes is true, and avg_health of an empty city is 0.0 —
+      # so an untouched grid satisfies the naive "everything is dead" reading. This is
+      # the case the non-empty clause exists for.
+      refute Calc.metrics(CityMap.new(40, 30)).stalled
+    end
+
+    test "two dead houses are not stalled — they heal from an empty treasury" do
+      # 15 x 2 = 30 power against the free baseline of 40, so they are fully supplied
+      # and regenerate. Consumption is not health-scaled, which is what makes the
+      # count the deciding factor.
+      refute Calc.metrics(dead_houses(2)).stalled
+    end
+
+    test "three dead houses are stalled" do
+      # 15 x 3 = 45 against 40. The cliff is 15n <= 40.
+      assert Calc.metrics(dead_houses(3)).stalled
+    end
+
+    test "three starving houses above zero health are not stalled" do
+      # Starving (45 power demanded against 40) but not yet at the floor, so they are
+      # still losing health rather than stuck. This is what separates `health == 0.0`
+      # from a status- or threshold-based reading; without it, relaxing the clause to
+      # `health < 20.0` would go unnoticed.
+      refute Calc.metrics(houses(3, 10.0)).stalled
+    end
+
+    test "three dead houses plus one live one are not stalled" do
+      # A uniform fixture cannot tell `Enum.all?/2` apart from `Enum.any?/2`: every node
+      # in `dead_houses/1` and `houses/2` shares one health value, so both quantifiers
+      # agree on every existing case above. This is the first mixed fixture in the
+      # suite, and it is also the shape real gameplay produces — a partially collapsed
+      # city, not a uniformly dead or uniformly healthy one.
+      #
+      # The extra house at full health is neither dead nor short of anything, so `all?`
+      # is false here while `any?` (true as soon as the three dead houses qualify) would
+      # wrongly call this city stalled — a live, still-decaying city reported as frozen.
+      city = CityMap.put_node(dead_houses(3), %Node{Node.new(9, 9, :residential) | health: 100.0})
+      refute Calc.metrics(city).stalled
     end
   end
 

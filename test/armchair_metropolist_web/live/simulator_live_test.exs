@@ -134,7 +134,35 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
   end
 
+  # `@tag :stalled_city` seeds a city that is stalled *and* bankrupt: three dead
+  # residential blocks (15 x 3 = 45 power against the free baseline of 40, so they
+  # starve at zero health and stay there) and an empty treasury.
+  defp initial_snapshot(%{stalled_city: true}), do: {:ok, {0, stalled_city(0.0)}}
+
+  # The same city with money in the bank — stalled, but a rescue is still affordable.
+  defp initial_snapshot(%{stalled_solvent_city: true}), do: {:ok, {0, stalled_city(105.0)}}
+
   defp initial_snapshot(_context), do: {:error, :not_found}
+
+  # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
+  # ones, purely so the compiler sees all of that function's clauses grouped together.
+  # `mix.exs` sets `elixirc_paths(:test)` to only "lib" and "test/support", so this file
+  # is outside what `mix precommit`'s `--warnings-as-errors` compiles and the "clauses
+  # ... should be grouped together" warning it would otherwise raise never gates the
+  # build — but it is a real warning worth not having, and `mix test` prints it on
+  # every run, which is reason enough to keep the clauses together.
+  defp stalled_city(money) do
+    city =
+      Enum.reduce(0..2, CityMap.new(40, 30), fn x, map ->
+        CityMap.put_node(map, %Node{
+          Node.new(x, 0, :residential)
+          | health: 0.0,
+            status: :offline
+        })
+      end)
+
+    %{city | money: money}
+  end
 
   test "two visitors with different sessions get different cities", %{conn: conn} do
     a = Plug.Test.init_test_session(conn, %{"city_id" => "aaaaaaaaaaaaaaaaaaaaaa"})
@@ -341,6 +369,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     assert html =~ "demolishing costs 10"
     assert html =~ "treasury holds 4"
+  end
+
+  describe "the page header" do
+    test "lays its action group out as a row", %{conn: conn} do
+      # daisyUI's `.flex-none` is `flex: none` — an *item* property, not `display: flex`.
+      # With the original markup a button added to that group stacks above the theme
+      # toggle instead of beside it. No content assertion can see that: the button is
+      # present, labelled and clickable either way. Only this class can.
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ ~s(class="flex flex-none items-center gap-2")
+    end
+
+    test "gives the subtitle its own full-width row, right-aligned", %{conn: conn} do
+      # `text-align` aligns to the column box, not to the text in it. With a `1fr`
+      # column that box is wider than the wrapped title, which pushed the subtitle 64px
+      # past it; `min-content` makes box and ink coincide. Also invisible to content
+      # assertions — every rendered character is identical either way.
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "grid-cols-[auto_min-content]"
+      assert html =~ ~s(class="col-span-2 text-right text-[11px] opacity-60")
+    end
   end
 
   describe "legend" do
@@ -950,5 +1001,158 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     view
     |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
     |> render_click()
+  end
+
+  describe "the reset control" do
+    test "is absent while the city has living housing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # `select_type` first, and it is not optional. `@selected_type` defaults to
+      # `List.first(Node.types())`, and `Node.types/0` is `Map.keys/1` over the production
+      # table — arbitrary order, so the default is not reliably `residential`. Placing
+      # whatever happens to be first would leave `housing_alive` false and this test would
+      # assert the opposite of what it claims.
+      render_click(view, "select_type", %{"type" => "residential"})
+      render_click(view, "place", %{"x" => "1", "y" => "1"})
+
+      refute has_element?(view, "#reset-city")
+    end
+
+    test "is absent on a fresh, empty city", %{conn: conn} do
+      # No housing alive, but nothing placed and the grant intact — a reset here is a
+      # no-op, so offering one is noise.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      refute has_element?(view, "#reset-city")
+    end
+
+    @tag :stalled_city
+    test "appears once no housing is alive", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#reset-city")
+    end
+
+    @tag treasury: 9.0
+    test "appears on an empty grid that cannot afford to act", %{conn: conn} do
+      # The dead end the `node_count > 0` disjunct alone creates: demolish your way down
+      # to an empty grid holding 9, and nothing costs 10 or less while an empty grid
+      # earns nothing, forever.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#reset-city")
+    end
+
+    @tag :stalled_city
+    test "clears the grid and starts a new city", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert render(view) =~ ~s{id="0:0"}
+
+      render_click(view, "wipe")
+
+      html = render(view)
+      refute html =~ ~s{id="0:0"}
+      assert html =~ "Treasury: #{trunc(CityMap.opening_grant())}"
+      refute has_element?(view, "#reset-city")
+    end
+
+    @tag :stalled_city
+    test "another viewer's reset clears this one's grid too", %{conn: conn} do
+      # The broadcast path, which the click path above cannot reach: `handle_event("wipe",
+      # …)` clears this view's own stream, so deleting `handle_info(:city_reset, …)`
+      # entirely leaves that test green while every *other* open tab keeps rendering the
+      # city it just watched being wiped. Broadcast directly rather than opening a second
+      # view, matching the removal test above.
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert render(view) =~ ~s{id="0:0"}
+
+      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, :city_reset)
+
+      refute render(view) =~ ~s{id="0:0"}
+    end
+
+    @tag :stalled_city
+    test "is sized and coloured for the contrast and target-size floors", %{conn: conn} do
+      # Every one of these four classes is a measurement, and every one is invisible to a
+      # content assertion — the button is present, labelled `Reset` and clickable without
+      # any of them. `min-h-6` is 24px against bare `btn-xs`'s 21px, which fails WCAG 2.2's
+      # 24x24 target size; `text-white` is 4.60:1 on `--color-error` against
+      # `--color-error-content`'s measured 4.08:1, under the 4.5 floor for small text.
+      # Asserted as one exact string so a reordering or a dropped class both go red, and
+      # scoped to the button's own id so it cannot pass against some other element.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert view |> element("#reset-city") |> render() =~
+               ~s(class="btn btn-xs btn-error text-white min-h-6")
+    end
+
+    @tag :stalled_city
+    test "is labelled Reset", %{conn: conn} do
+      # Nothing else in the suite reads this string. Both banners below tell the player
+      # to press "Reset in the header" — relabelling this button would leave every test
+      # above green while stranding that instruction against a button that no longer
+      # says what they claim it says.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#reset-city", "Reset")
+    end
+  end
+
+  describe "the collapse banner" do
+    @tag :stalled_city
+    test "says the city is dead when nothing can restart it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#collapse-banner")
+      assert render(view) =~ "Game over — this city is dead."
+    end
+
+    @tag :stalled_solvent_city
+    test "says the city is stalled while a rescue is still affordable", %{conn: conn} do
+      # Both banners share their second sentence, so asserting on the shared prose would
+      # pass against the wrong state. The headline is the only text that separates them,
+      # which is why both directions are asserted here.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render(view)
+      assert html =~ "City stalled — nothing is changing on its own."
+      refute html =~ "this city is dead"
+    end
+
+    test "is absent while the city is running", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      refute has_element?(view, "#collapse-banner")
+    end
+
+    @tag :stalled_city
+    test "is as wide as the grid", %{conn: conn} do
+      # Scoped to the banner's own id. A bare `html =~ "width: 960px"` would pass with no
+      # banner rendered at all, because the grid container carries that same width — the
+      # assertion would be incapable of failing.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#collapse-banner[style*="width: #{40 * 24}px"]})
+    end
+
+    @tag :stalled_city
+    test "does not render a second reset control", %{conn: conn} do
+      # The banner names the header's button rather than repeating it. A later edit that
+      # helpfully adds one back would ship duplicate DOM ids and a second untested event
+      # path, and nothing else in the suite would notice.
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert length(String.split(html, ~s(phx-click="wipe"))) == 2
+    end
+
+    @tag :stalled_solvent_city
+    test "points the player at the header's Reset button", %{conn: conn} do
+      # The other half of the coupling pinned by "is labelled Reset" above: this banner
+      # names the button rather than rendering one of its own, so the two assertions
+      # together are what would catch a relabelling that the rest of the suite misses.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#collapse-banner", "Reset")
+    end
   end
 end

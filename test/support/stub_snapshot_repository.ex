@@ -10,7 +10,10 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   use Agent
 
   def start_link(_ \\ []) do
-    Agent.start_link(fn -> %{initial: {:error, :not_found}, saves: []} end, name: __MODULE__)
+    Agent.start_link(
+      fn -> %{initial: {:error, :not_found}, saves: [], calls: []} end,
+      name: __MODULE__
+    )
   end
 
   @doc "Seed what load/1 will return."
@@ -50,10 +53,50 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
     Agent.get_and_update(__MODULE__, fn state ->
       case Map.get(state, :stale_at) do
         nil ->
-          {:ok, %{state | saves: [{city_id, tick, city_map} | state.saves]}}
+          {:ok,
+           %{
+             state
+             | saves: [{city_id, tick, city_map} | state.saves],
+               calls: [{:save, city_id, tick} | state.calls]
+           }}
 
         stored_tick ->
           {{:stale, stored_tick}, Map.delete(state, :stale_at)}
+      end
+    end)
+  end
+
+  @doc """
+  Every accepted `save/3` and every `delete/1`, newest first — not literally every
+  call. A `save/3` refused via `refuse_saves_as_stale/1` does not append here, and
+  `load/1` is never recorded at all.
+
+  `saves/0` answers "what was written"; this answers "in what order, against what
+  else". The engine's reset has to delete before it saves, so the ordering between
+  an accepted save and a delete is behaviour worth asserting rather than an
+  implementation detail.
+  """
+  def calls, do: Agent.get(__MODULE__, & &1.calls)
+
+  @doc "Make delete/1 fail, to prove the engine still resets in memory."
+  def fail_deletes(reason) do
+    Agent.update(__MODULE__, &Map.put(&1, :delete_result, {:error, reason}))
+  end
+
+  @impl true
+  def delete(city_id) do
+    Agent.get_and_update(__MODULE__, fn state ->
+      calls = [{:delete, city_id} | state.calls]
+
+      case Map.get(state, :delete_result, :ok) do
+        # Clears `saves` as well as answering, so a subsequent `saves/0` reports what
+        # the engine wrote *after* the wipe rather than the discarded city's history.
+        # Note this does not make `load/1` report nothing: under `echo_saves/0` an empty
+        # `saves` falls back to whatever `set_initial/1` seeded, which is the old city.
+        # No test relies on that path today; a future one that does needs a real
+        # tombstone here rather than an empty list.
+        :ok -> {:ok, %{state | saves: [], calls: calls}}
+        error -> {error, %{state | calls: calls}}
       end
     end)
   end

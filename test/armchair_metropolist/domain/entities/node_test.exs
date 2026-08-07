@@ -203,6 +203,33 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
   end
 
+  describe "cheapest costs" do
+    test "cheapest_construction_cost is a real construction cost, and a lower bound on all of them" do
+      costs = Enum.map(Node.types(), &Node.construction_cost/1)
+
+      assert Node.cheapest_construction_cost() in costs
+      assert Enum.all?(costs, &(Node.cheapest_construction_cost() <= &1))
+    end
+
+    test "cheapest_action_cost is a real action cost, and a lower bound on all of them" do
+      # Characterised as "a member of the set, and <= every member" rather than by
+      # restating `min(...)`. Restating the implementation's own expression would make
+      # this test unable to fail.
+      actions = [Node.demolition_cost() | Enum.map(Node.types(), &Node.construction_cost/1)]
+
+      assert Node.cheapest_action_cost() in actions
+      assert Enum.all?(actions, &(Node.cheapest_action_cost() <= &1))
+    end
+
+    test "today the cheapest action is the demolition fee, and the cheapest build is a house" do
+      # Pins the figures the player-facing copy and the bankruptcy threshold quote.
+      # The characterisations above hold for any table; these two are what change if
+      # a balance patch moves the prices.
+      assert Node.cheapest_action_cost() == 10.0
+      assert Node.cheapest_construction_cost() == 15.0
+    end
+  end
+
   describe "status_for/1" do
     test "uses half-open intervals at the boundaries" do
       assert Node.status_for(100.0) == :online

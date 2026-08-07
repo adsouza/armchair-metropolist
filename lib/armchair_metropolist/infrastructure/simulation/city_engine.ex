@@ -26,11 +26,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   advanced by `AdvanceCityTick` and written to storage. Everything user-visible
   uses `city_map.tick`.
 
+  ## Freezing a collapsed city
+
+  When `metrics.stalled` is true the engine ignores `{:tick, n}` entirely: no
+  `AdvanceCityTick`, no broadcast, no checkpoint, no deficit notification. See the
+  clause itself for why this preserves the treasury rather than merely saving work.
+
   ## Broadcasts
 
   On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
+  `:city_reset` on a successful `reset/1`, followed by `{:city_metrics, metrics}`.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
   a shared one would deliver every visitor's deltas to every other visitor.
 
@@ -85,6 +92,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.ResetCity
   alias ArmchairMetropolist.UseCases.SummarizeCity
 
   require Logger
@@ -144,6 +152,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @spec demolish(String.t(), integer(), integer()) ::
           {:ok, String.t()} | {:error, :empty | :insufficient_funds}
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
+
+  @doc """
+  Discard this city and start a new one on the same grid.
+
+  Deletes the stored snapshot, so the tick-0 city that replaces it is durable
+  immediately rather than unsaveable until it outlives the city it replaced.
+  """
+  @spec reset(String.t()) :: :ok
+  def reset(city_id), do: call(city_id, :reset)
 
   @doc """
   Register `pid` as a viewer of `city_id`.
@@ -287,6 +304,37 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
+  def handle_call(:reset, _from, state) do
+    {:ok, %{city_map: city_map, metrics: metrics}} = ResetCity.execute(state.city_map)
+
+    # Delete first, then save — and the order is the error handling. `save/3` is
+    # monotonic in tick, so with the old row still present this save at tick 0 is
+    # refused as `{:stale, _}` and lands in `save/2`'s existing warning path, which
+    # already means "this engine's city is older than what is stored". A failed delete
+    # therefore reports itself through a path that exists, with no new branch and no new
+    # error policy. Reversed, the save would be refused *before* the delete and the new
+    # city would never reach storage at all.
+    #
+    # Saving here rather than waiting for the next checkpoint: a player who wipes and
+    # immediately closes the tab would otherwise get the collapsed city back.
+    delete(state.city_id)
+    save(state.city_id, city_map)
+
+    broadcast(state.city_id, :city_reset)
+    broadcast(state.city_id, {:city_metrics, metrics})
+
+    # Re-armed from the new city rather than left as it was, so the next deficit is a
+    # fresh edge. An empty city has no deficit, so this is `false` in practice; deriving
+    # it keeps that a consequence of the city rather than a second thing to remember.
+    {:reply, :ok,
+     %{
+       state
+       | city_map: city_map,
+         metrics: metrics,
+         critical?: critical_resources(metrics) != []
+     }}
+  end
+
   def handle_call({:attach, pid}, _from, state) do
     ref = Process.monitor(pid)
 
@@ -294,9 +342,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
      %{state | viewers: Map.put(state.viewers, ref, pid), linger: cancel_linger(state.linger)}}
   end
 
+  # A stalled city has reached a fixpoint in health, so advancing it would recompute an
+  # identical result — but this is not only an optimisation. Money demand is not
+  # health-scaled either, so a stalled city with a water plant, transit hub or park goes
+  # on draining its treasury, and that treasury is exactly what a rescue is paid for.
+  # Freezing preserves it, which makes "stalled but solvent" a stable state a player can
+  # act on rather than a countdown.
+  #
+  # Not a lockout: `handle_call({:place, …})` does not tick, so a player with money left
+  # can still build, the recomputed metrics clear this flag, and the clock resumes on the
+  # next pulse.
+  #
+  # Nothing is persisted for this. `handle_continue(:hydrate, …)` recomputes metrics, so a
+  # stalled city loads stalled and stays frozen — the same reasoning that keeps `critical?`
+  # derived rather than stored.
+  @impl true
+  def handle_info({:tick, _clock_pulse}, %{metrics: %{stalled: true}} = state) do
+    {:noreply, state}
+  end
+
   # The clock's pulse number is deliberately discarded: city_map.tick is the
   # authority.
-  @impl true
   def handle_info({:tick, _clock_pulse}, state) do
     {:ok, %{city_map: city_map, delta: delta, metrics: metrics}} =
       AdvanceCityTick.execute(state.city_map)
@@ -350,14 +416,22 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # or abort shutdown here — the process still exits within its 10s budget.
   #
   # When the stop came from handle_info(:linger_expired, ...), this is a second save
-  # following the :DOWN handler's - but not of an unchanged city_map. The engine
-  # stays subscribed to "city_tick" throughout the linger and keeps ticking a frozen
-  # city's viewers away, so a full linger window's worth of ticks (~30 at the
-  # default engine_linger_ms) can land between the two saves, and this one is a real
-  # write of a map that has moved on since. (This is a small deviation from the
-  # spec's "a frozen city does not advance": it advances for up to the linger
-  # window after its last viewer leaves, not indefinitely.) Harmless either way,
-  # because save/3 is idempotent for an unchanged tick if the two ever do coincide.
+  # following the :DOWN handler's. Whether it saves an unchanged city_map now depends on
+  # whether the city is stalled — the per-visitor design's "a frozen city does not
+  # advance" was written about the no-viewer case covered in the next paragraph, before
+  # this branch gave "frozen" its own meaning for a stalled city's tick.
+  #
+  # An unstalled city keeps ticking while abandoned: the engine stays subscribed to
+  # "city_tick" throughout the linger, so a full linger window's worth of ticks (~30 at
+  # the default engine_linger_ms) can land between the two saves, and this one is a real
+  # write of a map that has moved on since. (That is the per-visitor design's deviation:
+  # an abandoned city advances for up to the linger window after its last viewer leaves,
+  # not indefinitely.)
+  #
+  # A stalled city is the opposite: its tick is frozen, so no tick lands during the
+  # linger, the map here is identical to what the :DOWN handler already saved, and this
+  # second save is refused `{:stale, _}` and logs a warning rather than being
+  # idempotent — see save/2's comment for why that warning is harmless.
   def terminate(_reason, state) do
     save(state.city_id, state.city_map)
   end
@@ -432,9 +506,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         :ok
 
       # Not a failure — the adapter refused to move the city backwards. Worth a warning
-      # rather than silence, because reaching here means this engine hydrated from an
-      # older snapshot than the one stored: a crash-and-replay, which is the exact case
-      # the guarantee exists for and the only signal that it happened.
+      # rather than silence, because reaching here has three causes. One is a
+      # crash-and-replay, where this engine hydrated from an older snapshot than the
+      # one stored — the exact case the guarantee exists for. Another is an ordinary
+      # shutdown of a stalled city: its tick never advances, so the :DOWN handler's
+      # save and terminate/2's save both carry the same tick, and the second is always
+      # refused. The third is `handle_call(:reset, …)` when its preceding `delete/1`
+      # failed: the old row is still there at its old tick, so the reset's save at
+      # tick 0 lands here too — see that handler's comment. None of the three threatens
+      # durability: the city is already durable, either at the tick already stored or
+      # at the tick this call just tried to write. Only the stalled-shutdown case is
+      # noise, though: for crash-and-replay this warning is the only evidence a replay
+      # happened, and for a failed-delete reset it corroborates the error delete/1
+      # already logged.
       {:stale, stored_tick} ->
         Logger.warning(
           "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
@@ -456,6 +540,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   defp log_failed_save(tick, reason) do
     Logger.error("failed to persist city snapshot at tick #{tick}: #{inspect(reason)}")
+
+    :ok
+  end
+
+  # Never raises, and never returns anything but `:ok` — same policy as `save/2`, and for
+  # the same reason: this runs inside a `handle_call`, and a raise here would take the
+  # city down and roll it back to the last checkpoint. The consequence of a swallowed
+  # failure is bounded and visible: the save that follows is refused as stale and logs.
+  defp delete(city_id) do
+    case snapshot_repository().delete(city_id) do
+      :ok -> :ok
+      {:error, reason} -> log_failed_delete(city_id, reason)
+    end
+  rescue
+    exception -> log_failed_delete(city_id, exception)
+  catch
+    kind, value -> log_failed_delete(city_id, {kind, value})
+  end
+
+  defp log_failed_delete(city_id, reason) do
+    Logger.error("failed to delete city snapshot for #{city_id}: #{inspect(reason)}")
 
     :ok
   end

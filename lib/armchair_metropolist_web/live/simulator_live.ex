@@ -25,6 +25,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
   @cell_size 24
@@ -137,6 +138,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
+  def handle_event("wipe", _params, socket) do
+    :ok = CityEngine.reset(socket.assigns.city_id)
+
+    {:noreply, stream(socket, :nodes, [], reset: true)}
+  end
+
   def handle_event("toggle_legend_detail", _params, socket) do
     {:noreply, assign(socket, :legend_detail, not socket.assigns.legend_detail)}
   end
@@ -161,6 +168,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
   end
 
+  def handle_info(:city_reset, socket) do
+    {:noreply, stream(socket, :nodes, [], reset: true)}
+  end
+
   @impl true
   # Placing and demolishing are the same gesture — a click on a square — because the
   # node div sits on top of its grid cell and swallows the cell's own click. Nothing on
@@ -173,10 +184,32 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
+      <%!-- `min-h-6` rather than bare `btn-xs`: daisyUI's xs button is 21px tall and
+            WCAG 2.2 AA wants a 24x24 target. `btn-sm` clears that at 35px but costs
+            48px of width, which is what pushes the wordmark over at a 375px viewport.
+
+            `text-white` rather than daisyUI's own error foreground: measured,
+            `--color-error-content` on `--color-error` is 4.08:1 in both themes, under
+            the 4.5 floor for small text. White is 4.60:1 and passes in both. --%>
+      <:actions>
+        <button
+          :if={show_reset?(@metrics)}
+          id="reset-city"
+          type="button"
+          class="btn btn-xs btn-error text-white min-h-6"
+          phx-click="wipe"
+          title="Clear every block and start a new city — this cannot be undone"
+        >
+          Reset
+        </button>
+      </:actions>
+
       <%!-- The chrome in Layouts.app already shows the wordmark, so rendering it
             again here just duplicated it. Kept as sr-only rather than deleted:
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
+
+      <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
 
       <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
@@ -378,6 +411,81 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       </div>
     </Layouts.app>
     """
+  end
+
+  # Rendered above the grid, deliberately outside the `<aside>`: the sidebar's width sets
+  # the wrap thresholds documented in `render/1`, and this block's prose is far wider than
+  # anything already in there.
+  #
+  # Status only. It names the header's Reset button rather than rendering a second copy of
+  # it — `show_reset?/1` is a strict superset of `stalled`, so the control is guaranteed to
+  # be on screen whenever this is.
+  attr :metrics, :map, required: true
+  attr :width, :integer, required: true
+  attr :cell_size, :integer, required: true
+
+  defp collapse_banner(assigns) do
+    ~H"""
+    <%!-- The grid's own width expression, so the two cannot drift apart. `max-w-full`
+          and `box-border` are both required: without the first this overflows a narrow
+          viewport instead of clamping, and without the second the padding and border
+          push it past the grid's right edge at every width. --%>
+    <div
+      :if={@metrics.stalled}
+      id="collapse-banner"
+      class={[
+        "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
+        if(SimulationMetrics.game_over?(@metrics),
+          do: "border-error bg-error/10",
+          else: "border-warning bg-warning/10"
+        )
+      ]}
+      style={"width: #{@width * @cell_size}px"}
+    >
+      <%!-- The headline is a verdict and the sentence under it is the mechanism, in that
+            order. The verdict is earned rather than asserted: ticks are ignored while
+            stalled, so health, tick and money are all constant, and both commands cost
+            more than the treasury holds. --%>
+      <p :if={SimulationMetrics.game_over?(@metrics)} class="font-semibold">
+        Game over — this city is dead.
+      </p>
+      <p :if={not SimulationMetrics.game_over?(@metrics)} class="font-semibold">
+        City stalled — nothing is changing on its own.
+      </p>
+
+      <p :if={SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
+        Every block is dead and starving, so the clock has stopped. Building costs at least {trunc(
+          Node.cheapest_construction_cost()
+        )} and demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
+          @metrics.money
+        )} — so
+        nothing can restart it. <strong>Reset</strong>
+        in the header clears the grid and starts a new city. This cannot be undone.
+      </p>
+      <p :if={not SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
+        Every block is dead and starving, so the clock has stopped. The treasury still holds {trunc(
+          @metrics.money
+        )} — enough to demolish, and demolishing sometimes restarts the clock; placing a
+        block always would, once it is affordable. Or <strong>Reset</strong>
+        in the header to start over.
+      </p>
+    </div>
+    """
+  end
+
+  # No living housing, and the reset would actually change something.
+  #
+  # The second disjunct is not redundant. Demolishing costs 10 and clears a node, so a
+  # player can spend down to an empty grid holding 9: no nodes, so the city is not stalled
+  # and there is no banner; nothing costs 10 or less; and an empty grid earns nothing,
+  # forever. Without it that position has no affordance at all. With it, the button still
+  # stays hidden on a fresh city, where a reset is a no-op — which is the only reason the
+  # gate is not the bare `not housing_alive`.
+  #
+  # `bankrupt` rather than a second comparison against `Node.cheapest_action_cost/0`, so
+  # the threshold has exactly one reader.
+  defp show_reset?(metrics) do
+    not metrics.housing_alive and (metrics.node_count > 0 or metrics.bankrupt)
   end
 
   # The resource columns are fixed and identical on every row, including where a type

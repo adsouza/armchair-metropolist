@@ -11,6 +11,21 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
     assert {:error, :not_found} = SnapshotStore.load("city-b")
   end
 
+  test "delete/1 does not remove another city's snapshot" do
+    # The contract can't pin this: it only ever exercises one @city_id, and
+    # FileSnapshotStore deliberately has no per-city scoping to test in the first
+    # place. A delete/1 that forgot its `where: s.city_id == ^city_id` clause would
+    # wipe every player's city, not just the one being reset.
+    assert :ok = SnapshotStore.save("city-a", 5, CityMap.new(12, 12))
+    assert :ok = SnapshotStore.save("city-b", 5, CityMap.new(14, 14))
+
+    assert :ok = SnapshotStore.delete("city-a")
+
+    assert {:error, :not_found} = SnapshotStore.load("city-a")
+    assert {:ok, {5, loaded}} = SnapshotStore.load("city-b")
+    assert loaded.width == 14
+  end
+
   test "load/1 hydrates a row stored before the transit-hub rename" do
     # A raw insert, not save/3: the point is a payload this code no longer
     # writes. The fixture is the row behind the 2026-08-05 production 500 —

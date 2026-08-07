@@ -46,28 +46,45 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity_labour == 0.0
   end
 
-  test "carries the amenity figures it is given" do
+  test "carries the derived figures it is given" do
     metrics =
       SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
         amenity: 1.75,
         amenity_marginal_labour: 5.0,
-        amenity_labour: 15.0
+        amenity_labour: 15.0,
+        stalled: true
       })
 
     assert metrics.amenity == 1.75
     assert metrics.amenity_marginal_labour == 5.0
     assert metrics.amenity_labour == 15.0
+
+    # `true` rather than `false`: the struct default is `false`, so a build that dropped
+    # this key on the floor would still satisfy a `refute`.
+    assert metrics.stalled
   end
 
-  # A partial amenity map is a programming error, not a request for defaults: the default
+  # A partial derived map is a programming error, not a request for defaults: the default
   # applies to the argument as a whole, so silently filling one missing key would let a
-  # caller that computed two figures out of three ship an amenity-free labour total.
-  test "raises rather than defaulting when the amenity map is missing a figure" do
-    assert_raise KeyError, fn ->
-      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
-        amenity: 1.75,
-        amenity_marginal_labour: 5.0
-      })
+  # caller that computed three figures out of four ship an amenity-free labour total.
+  #
+  # Exactly one key is withheld, and it is named in the assertion. With two or more
+  # missing, this passes for whichever one `build/3` happens to fetch first and says
+  # nothing about the others.
+  #
+  # Built with `Map.new/1` rather than a map literal: a literal missing a required key is
+  # something Elixir's type checker now catches statically — precisely the incompleteness
+  # this test exists to force at runtime — so it emits a compile-time type-warning that a
+  # literal built through `Map.new/1` does not. The checker cannot see through the call, and
+  # the resulting map is byte-identical to the literal it replaces, so the raise this test
+  # is pinning is unaffected.
+  test "raises rather than defaulting when the derived map is missing a figure" do
+    assert_raise KeyError, ~r/:amenity_labour/, fn ->
+      SimulationMetrics.build(
+        CityMap.new(40, 30),
+        %{},
+        Map.new(amenity: 1.75, amenity_marginal_labour: 5.0, stalled: false)
+      )
     end
   end
 
@@ -151,5 +168,66 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert by_type.power_plant.actual_production.power === 0.0
       assert by_type.power_plant.consumption.water === 0.0
     end
+  end
+
+  describe "housing_alive" do
+    test "false when every residential block sits at exactly zero health" do
+      # A count-based reading would say true here — the houses are still standing.
+      # This is the common death, so a reading that misses it is useless.
+      city = city_with([%Node{Node.new(0, 0, :residential) | health: 0.0, status: :offline}])
+
+      refute build(city).housing_alive
+    end
+
+    test "true when one residential block has any health at all" do
+      # health 5.0 is `:offline`, and still supplies 0.25 labour. A status-based
+      # reading would say false here.
+      city = city_with([%Node{Node.new(0, 0, :residential) | health: 5.0, status: :offline}])
+
+      assert build(city).housing_alive
+    end
+
+    test "false when the city has no residential blocks" do
+      city = city_with([Node.new(0, 0, :power_plant)])
+
+      refute build(city).housing_alive
+    end
+  end
+
+  describe "bankrupt" do
+    test "true just below the cheapest action" do
+      # 9.0 and 10.0 rather than 0.0 and something large: a fixture at 0.0 cannot tell
+      # `money < 10` apart from `money == 0`, and these two straddle the real boundary.
+      assert build(%{CityMap.new(40, 30) | money: 9.0}).bankrupt
+    end
+
+    test "false at exactly the cheapest action" do
+      refute build(%{CityMap.new(40, 30) | money: 10.0}).bankrupt
+    end
+  end
+
+  describe "game_over?/1" do
+    test "true only when the city is both stalled and bankrupt" do
+      assert SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: true})
+    end
+
+    test "false for a stalled city that can still afford to act" do
+      # This is the state a rescue is possible from, so calling it game over would be
+      # a false claim. Also what an `or` in place of the `and` would break.
+      refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: false})
+    end
+
+    test "false for a broke city that is still running" do
+      refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: false, bankrupt: true})
+    end
+  end
+
+  # Helpers — put these at the bottom of the module, beside any existing private helpers.
+  defp city_with(nodes) do
+    Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
+  end
+
+  defp build(city_map) do
+    SimulationMetrics.build(city_map, %{})
   end
 end

@@ -93,6 +93,41 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
         assert {:ok, {2, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 12
       end
+
+      test "delete/1 removes the stored city" do
+        assert :ok = @adapter.save(@city_id, 7, sample_city())
+        assert :ok = @adapter.delete(@city_id)
+        assert {:error, :not_found} = @adapter.load(@city_id)
+      end
+
+      test "delete/1 is :ok when nothing is stored" do
+        # A reset of a city that has never been checkpointed is ordinary, not an error.
+        assert :ok = @adapter.delete(@city_id)
+      end
+
+      test "after delete/1 a lower tick can be saved again" do
+        # The whole reason this callback exists. `save/3` is monotonic in tick, so a
+        # city reset to tick 0 is unsaveable until it climbs back past what is stored —
+        # during which a restart would restore the city the player just wiped.
+        #
+        # Two accepted saves, not one: on FileSnapshotStore the second creates a
+        # backup file alongside the primary, and load_current/0 reads *both*,
+        # returning whichever holds the higher tick. A delete/1 that only cleared
+        # the primary would leave the backup to resurrect the wiped city on the
+        # very next load — this is a shared property, not a file-adapter wrinkle,
+        # since the same two-writes-then-delete sequence is what a real reset does
+        # on either adapter.
+        assert :ok = @adapter.save(@city_id, 8, CityMap.new(18, 18))
+        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
+        assert {:stale, 9} = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+
+        assert :ok = @adapter.delete(@city_id)
+        assert {:error, :not_found} = @adapter.load(@city_id)
+
+        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+        assert {:ok, {1, loaded}} = @adapter.load(@city_id)
+        assert loaded.width == 11
+      end
     end
   end
 end

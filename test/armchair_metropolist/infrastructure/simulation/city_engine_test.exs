@@ -20,6 +20,9 @@ defmodule ArmchairMetropolist.FailingSnapshotRepository do
       :exit -> exit(:timeout)
     end
   end
+
+  @impl true
+  def delete(_city_id), do: {:error, :disk_full}
 end
 
 defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
@@ -1038,6 +1041,186 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "freezing a stalled city" do
+    test "ignores the clock once the city has stalled", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert metrics.stalled
+
+      broadcast_tick(1)
+
+      # snapshot/1 is a GenServer.call, so returning means the broadcast above has
+      # already been handled — or deliberately ignored.
+      {:ok, %{city_map: city_map, metrics: after_tick}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 3
+      assert after_tick.stalled
+    end
+
+    test "a running city still advances", %{city_id: city_id} do
+      # The other direction. A freeze that always fires and a freeze that never fires
+      # are different bugs, and only one of them is caught by the test above.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(2, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
+      refute metrics.stalled
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 4
+    end
+
+    test "a placement unfreezes a stalled city that can still afford one", %{city_id: city_id} do
+      # The freeze is not a lockout. Three dead houses have no money demand at all —
+      # residential consumes none — so their treasury never drained, and 105 covers the
+      # 80 a power plant costs.
+      #
+      # What unfreezes the city is the *new block's own health*, not a rescue of the
+      # houses: `stalled?` is `Enum.all?`, and a node placed at 100.0 fails the
+      # `health == @min_health` half immediately. Measured, the placement does not in
+      # fact rescue the houses — the plant's own draw takes water from 36/40 to 56/40
+      # and labour supply is 0.0 with no living housing, so ten ticks later the three
+      # houses are still at 0.0 and the plant itself has decayed to 40.0. That is a
+      # worse deficit than the 45/40 power shortfall it replaced. The clock restarting
+      # is the whole claim here; do not restate it as a recovery.
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 105.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _node} = CityEngine.place(city_id, 10, 10, :power_plant)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+    end
+
+    test "demolishing back inside the free baseline unfreezes without building", %{
+      city_id: city_id
+    } do
+      # The other unfreeze, and the one the game-over copy leans on: three dead houses
+      # draw 45 power against the free baseline of 40, two draw 30, so tearing one down
+      # for 10 makes the survivors fully supplied at zero health and they regenerate.
+      #
+      # Seeded at exactly 10.0 — the demolition fee, and the `bankrupt` boundary. At 9
+      # the command is refused and this test would assert nothing about the freeze.
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 10.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _id} = CityEngine.demolish(city_id, 2, 0)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+    end
+  end
+
+  describe "reset/1" do
+    test "clears the city, restores the grant, and returns to tick 0", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert city_map.nodes == %{}
+      assert city_map.tick == 0
+      assert city_map.money == CityMap.opening_grant()
+      refute metrics.stalled
+    end
+
+    test "deletes the stored snapshot before saving the new city", %{city_id: city_id} do
+      # The ordering is the error handling: if the delete fails, the save that follows is
+      # refused as stale and lands in the existing warning path. Reversed, the save is
+      # refused first and then the delete throws the new city away too.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      # Newest first, so the save is ahead of the delete.
+      assert [{:save, ^city_id, 0}, {:delete, ^city_id} | _] = StubSnapshotRepository.calls()
+    end
+
+    test "still resets in memory when the snapshot delete fails", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+      StubSnapshotRepository.fail_deletes(:disk_full)
+
+      log = capture_log(fn -> assert :ok = CityEngine.reset(city_id) end)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.nodes == %{}
+      assert log =~ "disk_full"
+    end
+
+    test "broadcasts the reset and the new metrics", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.reset(city_id)
+
+      # Bound in arrival order and matched afterwards, because two separate
+      # `assert_receive`s would *not* pin the order: each scans the whole mailbox, so
+      # `assert_receive :city_reset` followed by `assert_receive {:city_metrics, _}` passes
+      # whichever way round the two arrived. Order is the behaviour worth having — a viewer
+      # clears its stream on `:city_reset` and re-renders on the metrics that follow, so
+      # reversed it paints the new figures over the old grid for a frame. Nothing else
+      # sends to this process: it subscribes to one topic and starts one engine.
+      assert_receive first
+      assert_receive second
+
+      assert first == :city_reset
+      assert {:city_metrics, %{node_count: 0, tick: 0}} = second
+    end
+
+    test "a reset city ticks again", %{city_id: city_id} do
+      # The freeze from Task 4 must not survive the reset.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 1
+    end
+
+    test "notifies a fresh deficit in the new city rather than inheriting the old one's flag",
+         %{city_id: city_id} do
+      # dead_city(3, 0.0) is already in critical deficit at hydration - three dead houses
+      # draw 45 power against the free baseline of 40 (satisfaction 0.888) - so `critical?`
+      # comes out of handle_continue/2 as `true` before reset ever runs. If
+      # handle_call(:reset, ...) left that flag alone instead of re-deriving it from the
+      # brand-new (empty, therefore fully satisfied) city, the stale `true` would still be
+      # sitting there the next time notify_deficits/2 runs. Its `{_resources, true}` arm
+      # reads that as "already told the player", so the very first deficit anyone creates
+      # in the new city would reach the engine and never reach the player - silently, with
+      # every other assertion in this describe block still green. That is the mirror image
+      # of the moduledoc's "three byte-identical notifications" story: there the flag was
+      # too eager, here a leftover flag would be too quiet.
+      #
+      # One commercial block on an otherwise empty grid demands labour (8) the reset city
+      # cannot supply at all - no housing exists yet, so labour's baseline is the 0.0 every
+      # resource without free capacity gets - which makes this deficit both cheap (40 of the
+      # 150 opening grant) and unambiguously new rather than a continuation of the power
+      # shortfall reset just wiped away.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      {:ok, _node} = CityEngine.place(city_id, 0, 0, :commercial)
+      broadcast_tick(1)
+
+      assert_receive {:notified, _title, _body}, 1_000
+    end
+  end
+
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
   # demand, so every resource sits below full satisfaction.
   defp starved_city do
@@ -1090,6 +1273,24 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   defp broadcast_tick(n) do
     :ok = Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, n})
+  end
+
+  # `house_count` residential blocks, all pinned to `health` (and to whatever status
+  # that health implies) and nothing else on the map — the shape "freezing a stalled
+  # city" needs at both ends of the cliff: 2 houses draw 30 power against the free
+  # baseline of 40 and regenerate, 3 draw 45 and starve. `tick: 3` matches the seeded
+  # `StubSnapshotRepository` tick so callers can assert the frozen tick never moves.
+  defp dead_city(house_count, health) do
+    city =
+      Enum.reduce(0..(house_count - 1)//1, CityMap.new(40, 30), fn x, map ->
+        CityMap.put_node(map, %Node{
+          Node.new(x, 0, :residential)
+          | health: health,
+            status: Node.status_for(health)
+        })
+      end)
+
+    %{city | tick: 3, money: 0.0}
   end
 
   # No matching unsubscribe: the subscription is owned by the test process and

@@ -42,6 +42,33 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "reset/1" do
+    test "keeps the grid dimensions and discards everything else" do
+      city =
+        CityMap.new(12, 7)
+        |> CityMap.put_node(Node.new(1, 1, :power_plant))
+        |> CityMap.debit(100.0)
+
+      city = %{city | tick: 412}
+
+      reset = CityMap.reset(city)
+
+      # Each property named separately: a reset that forgets one of these is a real bug
+      # and a single `==` against a literal struct would not say which.
+      assert reset.width == 12
+      assert reset.height == 7
+      assert reset.tick == 0
+      assert reset.nodes == %{}
+      assert reset.money == CityMap.opening_grant()
+    end
+
+    test "a reset city is indistinguishable from a new one of the same size" do
+      city = CityMap.put_node(CityMap.new(40, 30), Node.new(3, 3, :commercial))
+
+      assert CityMap.reset(city) == CityMap.new(40, 30)
+    end
+  end
+
   describe "in_bounds?/3" do
     setup do: {:ok, map: CityMap.new(40, 30)}
 

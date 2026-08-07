@@ -30,4 +30,7 @@ defmodule ArmchairMetropolist.SlowSnapshotRepository do
 
   @impl true
   def save(city_id, tick, city_map), do: StubSnapshotRepository.save(city_id, tick, city_map)
+
+  @impl true
+  def delete(city_id), do: StubSnapshotRepository.delete(city_id)
 end

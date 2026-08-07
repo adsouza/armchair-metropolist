@@ -21,11 +21,15 @@ defmodule ArmchairMetropolistWeb.Layouts do
   ## Examples
 
       <Layouts.app flash={@flash}>
+        <:actions><button>Reset</button></:actions>
         <h1>Content</h1>
       </Layouts.app>
 
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
+
+  slot :actions,
+    doc: "page controls for the header, rendered beside the theme toggle"
 
   slot :inner_block, required: true
 
@@ -33,15 +37,41 @@ defmodule ArmchairMetropolistWeb.Layouts do
     ~H"""
     <header class="navbar border-b border-base-200 px-4 sm:px-6 lg:px-8">
       <div class="flex-1">
-        <a href="/" class="flex w-fit items-center gap-3" aria-label="Armchair Metropolist">
+        <%!-- A two-column grid, not a flex row with a nested column, so the subtitle can
+              span the full brand width and share a right edge with the title.
+
+              `min-content` on the second column is load-bearing and `1fr` is the trap:
+              `text-right` aligns to the *column box*, and a `1fr` column stretches to fill
+              the brand — measured 146px wide at a 375px viewport while the wrapped title
+              inked only 82px of it, so right-aligning pushed the subtitle 64px past the
+              text it was supposed to line up with. `min-content` sizes the column to the
+              longest word, so box edge and ink edge coincide and the alignment is exact at
+              both 375 and 1932. It also narrows the brand from 200px to 146px, which hands
+              width back to the header rather than spending it.
+
+              The title stays in column 2 beside the logo and wraps to two lines there.
+              That is wanted, not tolerated. --%>
+        <a
+          href="/"
+          class="grid w-fit grid-cols-[auto_min-content] items-center gap-x-3 gap-y-0.5"
+          aria-label="Armchair Metropolist"
+        >
           <.city_mark />
-          <span class="flex flex-col leading-none">
-            <span class="text-base font-semibold tracking-tight">Armchair Metropolist</span>
-            <span class="text-[11px] opacity-60">city infrastructure simulator</span>
+          <span class="text-base font-semibold tracking-tight leading-tight">
+            Armchair Metropolist
+          </span>
+          <span class="col-span-2 text-right text-[11px] opacity-60">
+            city infrastructure simulator
           </span>
         </a>
       </div>
-      <div class="flex-none">
+      <%!-- `flex` is mandatory here and is not what `flex-none` provides: daisyUI's
+            `.flex-none` is `flex: none`, describing how this div behaves as a *child* of
+            the navbar, and says nothing about its own children. Without `flex` a second
+            control stacks above the theme toggle and grows the header from 64px to 77px at
+            every viewport width. --%>
+      <div class="flex flex-none items-center gap-2">
+        {render_slot(@actions)}
         <.theme_toggle />
       </div>
     </header>
