@@ -39,14 +39,14 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # two cannot drift apart silently.
   @statuses [:online, :degraded, :offline]
 
-  # Resources where a rising figure is bad. For these, a production-table entry is
-  # *removal* capacity and a consumption-table entry is *emission* — `industrial`
+  # Resources where a rising figure is bad. For these, a capacity-table entry is
+  # *removal* capacity and a load-table entry is *emission* — `industrial`
   # processes 90 waste, a house emits 10.
   #
-  # The numbers stay in the tables they are in today, and must. Production is
-  # health-scaled and consumption never is, which is exactly the right asymmetry
+  # The numbers stay in the tables they are in today, and must. Capacity is
+  # health-scaled and load never is, which is exactly the right asymmetry
   # here: a neglected incinerator processes less, a decaying house still emits full.
-  # Moving industrial's 90 to the consumption table to make it "read as removal"
+  # Moving industrial's 90 to the load table to make it "read as removal"
   # would unscale removal from health, and waste would become the one resource
   # neglect cannot punish.
   #
@@ -56,8 +56,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # and it lives beside `signed/1` in the LiveView.
   @negative_resources [:waste, :traffic]
 
-  # Production tables (resource outputs)
-  @production_table %{
+  # Capacity tables — the health-scaled side of the ledger.
+  @capacity_table %{
     power_plant: %{power: 120.0},
     water_plant: %{water: 100.0},
     industrial: %{waste: 90.0},
@@ -67,8 +67,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     park: %{waste: 8.0}
   }
 
-  # Consumption tables (resource inputs)
-  @consumption_table %{
+  # Load tables — the side that is never scaled by health.
+  @load_table %{
     power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0},
     water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0, money: 5.0, labour: 1.0},
     industrial: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0},
@@ -78,7 +78,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
   }
 
-  # What each type costs to build. A third table beside production and consumption, so
+  # What each type costs to build. A third table beside capacity and load, so
   # every price a player pays lives in one module.
   #
   # Ordered by the block's weight in the city, so the curve reads as
@@ -128,19 +128,19 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   end
 
   @doc """
-  Get the production table for a node type.
+  Get the capacity table for a node type.
   Returns a map of resource => amount (float).
   """
-  def production(node_type) do
-    Map.fetch!(@production_table, node_type)
+  def capacity(node_type) do
+    Map.fetch!(@capacity_table, node_type)
   end
 
   @doc """
-  Get the consumption table for a node type.
+  Get the load table for a node type.
   Returns a map of resource => amount (float).
   """
-  def consumption(node_type) do
-    Map.fetch!(@consumption_table, node_type)
+  def load(node_type) do
+    Map.fetch!(@load_table, node_type)
   end
 
   @doc """
@@ -207,10 +207,10 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
 
   @doc """
   List all node types.
-  Derived from the production table keys to avoid duplication.
+  Derived from the capacity table keys to avoid duplication.
   """
   def types do
-    Map.keys(@production_table)
+    Map.keys(@capacity_table)
   end
 
   @doc """
@@ -251,14 +251,14 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   def negative_resource?(resource), do: resource in @negative_resources
 
   @doc """
-  Calculate the effective production of a node, scaled by its health.
-  Production is scaled by (health / 100).
+  Calculate the effective capacity of a node, scaled by its health.
+  Capacity is scaled by (health / 100).
   """
-  def effective_production(node) do
-    base_production = production(node.type)
+  def effective_capacity(node) do
+    base_capacity = capacity(node.type)
     health_fraction = node.health / 100.0
 
-    Map.new(base_production, fn {resource, amount} ->
+    Map.new(base_capacity, fn {resource, amount} ->
       {resource, amount * health_fraction}
     end)
   end

@@ -106,7 +106,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert Enum.sort(Map.keys(by_type)) == Enum.sort(Node.types())
     end
 
-    test "rated production is count x base and ignores health" do
+    test "rated capacity is count x base and ignores health" do
       map =
         CityMap.new(40, 30)
         |> CityMap.put_node(%Node{Node.new(0, 0, :power_plant) | health: 25.0})
@@ -114,12 +114,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
 
       by_type = SimulationMetrics.build(map, stats()).by_type
 
-      assert_in_delta by_type.power_plant.rated_production.power, 240.0, 0.001
+      assert_in_delta by_type.power_plant.rated_capacity.power, 240.0, 0.001
     end
 
-    test "actual production is health-scaled and diverges from rated" do
-      # This divergence is the whole point of the legend: production scales with
-      # health, consumption does not, so a damaged city shows supply falling against
+    test "actual capacity is health-scaled and diverges from rated" do
+      # This divergence is the whole point of the legend: capacity scales with
+      # health, load does not, so a damaged city shows supply falling against
       # steady demand.
       map =
         CityMap.new(40, 30)
@@ -128,14 +128,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
 
       by_type = SimulationMetrics.build(map, stats()).by_type
 
-      assert_in_delta by_type.power_plant.actual_production.power, 150.0, 0.001
+      assert_in_delta by_type.power_plant.actual_capacity.power, 150.0, 0.001
 
-      assert by_type.power_plant.actual_production.power <
-               by_type.power_plant.rated_production.power,
+      assert by_type.power_plant.actual_capacity.power <
+               by_type.power_plant.rated_capacity.power,
              "a damaged producer must report less actual output than rated"
     end
 
-    test "consumption is count x base and does not scale with health" do
+    test "load is count x base and does not scale with health" do
       map =
         CityMap.new(40, 30)
         |> CityMap.put_node(%Node{Node.new(0, 0, :residential) | health: 1.0})
@@ -143,18 +143,18 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
 
       by_type = SimulationMetrics.build(map, stats()).by_type
 
-      assert_in_delta by_type.residential.consumption.power, 30.0, 0.001
-      assert_in_delta by_type.residential.consumption.water, 24.0, 0.001
+      assert_in_delta by_type.residential.load.power, 30.0, 0.001
+      assert_in_delta by_type.residential.load.water, 24.0, 0.001
     end
 
     test "a key is present only where the type touches that resource" do
       by_type = SimulationMetrics.build(CityMap.new(40, 30), stats()).by_type
 
       # A transit hub produces traffic and consumes power and waste, but never water.
-      assert Map.has_key?(by_type.transit_hub.rated_production, :traffic)
-      assert Map.has_key?(by_type.transit_hub.consumption, :power)
-      refute Map.has_key?(by_type.transit_hub.consumption, :water)
-      refute Map.has_key?(by_type.transit_hub.rated_production, :water)
+      assert Map.has_key?(by_type.transit_hub.rated_capacity, :traffic)
+      assert Map.has_key?(by_type.transit_hub.load, :power)
+      refute Map.has_key?(by_type.transit_hub.load, :water)
+      refute Map.has_key?(by_type.transit_hub.rated_capacity, :water)
     end
 
     test "an empty city reports every type at zero rather than an empty map" do
@@ -164,9 +164,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
 
       # `===`, not `==`: these three come out of `scale/2`, which returns floats, and
       # `== 0.0` would also pass for an integer `0`. The type is the requirement.
-      assert by_type.power_plant.rated_production.power === 0.0
-      assert by_type.power_plant.actual_production.power === 0.0
-      assert by_type.power_plant.consumption.water === 0.0
+      assert by_type.power_plant.rated_capacity.power === 0.0
+      assert by_type.power_plant.actual_capacity.power === 0.0
+      assert by_type.power_plant.load.water === 0.0
     end
   end
 

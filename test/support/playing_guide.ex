@@ -468,13 +468,13 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp production_block do
     rows =
-      for type <- sorted_types(), not Enum.empty?(production_of(type)) do
-        produced = production_of(type)
+      for type <- sorted_types(), not Enum.empty?(capacity_of(type)) do
+        produced = capacity_of(type)
 
         # Iterated in the display-order @resources list rather than the raw map's
         # key order: a map's key order is a hash-seed artifact, not a decision
         # anyone made, and residential (labour + money, as of this task) is the
-        # first production entry with two keys to expose that non-determinism.
+        # first capacity entry with two keys to expose that non-determinism.
         outputs =
           @resources
           |> Enum.filter(&Map.has_key?(produced, &1))
@@ -485,12 +485,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
     non_producers =
       sorted_types()
-      |> Enum.filter(&Enum.empty?(production_of(&1)))
+      |> Enum.filter(&Enum.empty?(capacity_of(&1)))
       |> Enum.map_join(", ", &"`#{&1}`")
 
-    # Commercial's money production means every type produces something now, so
+    # Commercial's money capacity means every type produces something now, so
     # there is no non-producer list to print — `Enum.empty?` sidesteps the dead
-    # comparison `== %{}` would be (every production map is non-empty at the
+    # comparison `== %{}` would be (every capacity map is non-empty at the
     # type level too, which is what made that comparison a compiler warning).
     footer =
       if non_producers == "" do
@@ -511,11 +511,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
     rows =
       for type <- sorted_types() do
-        consumption = Node.consumption(type)
+        consumed = Node.load(type)
 
         cells =
           Enum.map_join(@resources, " | ", fn r ->
-            case Map.get(consumption, r) do
+            case Map.get(consumed, r) do
               nil -> "—"
               amount -> signed_num(r, -amount)
             end
@@ -621,7 +621,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # --- helpers ------------------------------------------------------------
 
   defp sorted_types, do: Enum.sort(Node.types())
-  defp production_of(type), do: Node.production(type)
+
+  # Not to be confused with `capacities_block/0` above: that renders the generated
+  # residential-support table (how many housing tiles a support set sustains, computed
+  # by simulation); this reads a single type's row straight out of `Node`'s capacity table.
+  defp capacity_of(type), do: Node.capacity(type)
 
   defp city_with(counts) do
     {city, _} =

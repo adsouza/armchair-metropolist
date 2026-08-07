@@ -30,9 +30,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   """
   @type type_stats :: %{
           count: non_neg_integer(),
-          rated_production: %{Node.resource() => float()},
-          actual_production: %{Node.resource() => float()},
-          consumption: %{Node.resource() => float()}
+          rated_capacity: %{Node.resource() => float()},
+          actual_capacity: %{Node.resource() => float()},
+          load: %{Node.resource() => float()}
         }
 
   @type t :: %__MODULE__{
@@ -155,8 +155,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   end
 
   # Every type gets an entry, present or not, so the legend renders a stable set of
-  # rows. Rated and actual are kept apart rather than reduced to one figure: production
-  # scales with health and consumption does not, and that divergence is what makes a
+  # rows. Rated and actual are kept apart rather than reduced to one figure: capacity
+  # scales with health and load does not, and that divergence is what makes a
   # collapse visible.
   defp build_by_type(nodes) do
     grouped = Enum.group_by(nodes, & &1.type)
@@ -167,9 +167,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       {type,
        %{
          count: length(of_type),
-         rated_production: scale(Node.production(type), length(of_type)),
-         actual_production: sum_actual_production(type, of_type),
-         consumption: scale(Node.consumption(type), length(of_type))
+         rated_capacity: scale(Node.capacity(type), length(of_type)),
+         actual_capacity: sum_actual_capacity(type, of_type),
+         load: scale(Node.load(type), length(of_type))
        }}
     end)
   end
@@ -178,15 +178,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     Map.new(table, fn {resource, amount} -> {resource, amount * count} end)
   end
 
-  # Keyed off the type's *base* production table rather than the nodes, so the keys are
+  # Keyed off the type's *base* capacity table rather than the nodes, so the keys are
   # the same whether or not any are placed.
-  defp sum_actual_production(type, nodes) do
+  defp sum_actual_capacity(type, nodes) do
     type
-    |> Node.production()
+    |> Node.capacity()
     |> Map.new(fn {resource, _base} ->
       total =
         Enum.reduce(nodes, 0.0, fn node, acc ->
-          acc + Map.get(Node.effective_production(node), resource, 0.0)
+          acc + Map.get(Node.effective_capacity(node), resource, 0.0)
         end)
 
       {resource, total}

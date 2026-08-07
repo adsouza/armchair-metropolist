@@ -95,7 +95,7 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
   defp expected_health(node, stats) do
     worst =
       node.type
-      |> Node.consumption()
+      |> Node.load()
       |> Enum.reduce(1.0, fn {resource, _amount}, acc ->
         min(acc, Map.fetch!(stats, resource).satisfaction)
       end)
