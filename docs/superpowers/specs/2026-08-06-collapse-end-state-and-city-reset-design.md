@@ -320,7 +320,7 @@ group must become `flex flex-none items-center gap-2`.
 ### The button: label, size and colour are all measured, not chosen
 
 ```heex
-<button class="btn btn-xs min-h-6 bg-error text-white border-error" phx-click="wipe"
+<button class="btn btn-xs btn-error text-white min-h-6" phx-click="wipe"
         title="Clear every block and start a new city — this cannot be undone">Reset</button>
 ```
 
