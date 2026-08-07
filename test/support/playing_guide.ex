@@ -511,11 +511,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
     rows =
       for type <- sorted_types() do
-        consumption = Node.load(type)
+        consumed = Node.load(type)
 
         cells =
           Enum.map_join(@resources, " | ", fn r ->
-            case Map.get(consumption, r) do
+            case Map.get(consumed, r) do
               nil -> "—"
               amount -> signed_num(r, -amount)
             end

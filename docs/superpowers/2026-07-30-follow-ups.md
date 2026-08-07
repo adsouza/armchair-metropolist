@@ -346,7 +346,7 @@ slip past both the vocabulary and its test.** Guarded only by comments at each e
 `defstruct`. See `SnapshotVocabulary`'s moduledoc.
 
 A trap for whoever maintains it: the seven node-type atoms are **not** in either module's `AtU8`
-atom chunk — they live in the compressed `LitT` literals chunk of `node.ex`'s `@production_table`.
+atom chunk — they live in the compressed `LitT` literals chunk of `node.ex`'s `@capacity_table`.
 A `:beam_lib` atom-chunk audit therefore reports a *false* coverage gap. Module load interns
 literals, which is why `Code.ensure_loaded!` is the right mechanism.
 
