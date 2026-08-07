@@ -149,11 +149,9 @@ No single release can fix this — the atom must already exist in the binary doi
 
 Add `:waste_stock` to `SnapshotVocabulary`'s interning surface, so the reading side names the atom explicitly rather than relying on `CityMap` happening to be loaded. Follow the file's existing pattern for `@node_type_renames`, whose literal keys are documented as load-bearing precisely because they intern atoms; add a sibling attribute with a comment saying it interns field names added since the first release, and reference it from `ensure_loaded!/0` so it cannot be dropped as dead code.
 
-Then add to `docs/deploying.md`, beside the existing "The other trap: renaming a node type" section:
+Then add a section to `docs/deploying.md`, beside the existing "The other trap: renaming a node type". Head it **"The third trap: rolling back past a new CityMap field"** at the same heading level as its neighbour, with this body:
 
 ```markdown
-### The third trap: rolling back past a new CityMap field
-
 `waste_stock` was added to `CityMap` on 2026-08-07. Snapshots written from that
 commit onward contain the `:waste_stock` atom, and a binary built before it
 cannot decode them — `:safe` will not create an atom the release does not
@@ -198,7 +196,6 @@ git commit -m "feat: add a persisted waste_stock field with its hydration defaul
 
 Add to `test/armchair_metropolist/domain/services/simulation_calculator_test.exs`. The file already has a `map_with/1` helper taking a list of nodes.
 
-```elixir
 **`five_houses/0` is a module-level private function — Elixir does not allow `defp` inside a `describe` block.** Put it at the bottom of the file beside `map_with/1` and the other helpers:
 
 ```elixir
@@ -686,8 +683,9 @@ Measure each of these against the running engine — do not reason about them:
 
 Measure with a script under the scratchpad directory, run via `mix run`. Read each claim's board out of the guide first — the counts below are placeholders for whatever that prose actually describes:
 
+Save it as `measure_waste_claims.exs` in the scratchpad directory:
+
 ```elixir
-# scratchpad/measure_waste_claims.exs
 alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
 alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
 
