@@ -145,6 +145,29 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   def demolition_cost, do: @demolition_cost
 
   @doc """
+  The cheapest block a player can put up.
+
+  Derived from the table rather than written down again: the figure appears in the
+  game-over copy, and a balance patch that reprices `residential` must move the
+  sentence with it.
+  """
+  @spec cheapest_construction_cost() :: float()
+  def cheapest_construction_cost, do: Enum.min(Map.values(@construction_cost_table))
+
+  @doc """
+  The cheapest thing a player can do at all — build the cheapest block, or demolish.
+
+  This is the bankruptcy threshold: below it no command is affordable, so a frozen
+  city holding less than this can never change again. Derived rather than pinned to
+  `demolition_cost/0`, even though demolition is the cheaper of the two today and
+  `node_test.exs` enforces that. Deriving means a balance patch that inverts them
+  moves this figure too, instead of silently leaving a threshold naming the wrong
+  lever.
+  """
+  @spec cheapest_action_cost() :: float()
+  def cheapest_action_cost, do: min(@demolition_cost, cheapest_construction_cost())
+
+  @doc """
   Determine the status of a node based on its health value.
   Uses half-open intervals:
   - :online when health >= 60.0
