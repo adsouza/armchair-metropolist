@@ -133,7 +133,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta stats.power.supplied, 40.0, 0.001
     end
 
-    test "capacity scales with health but load does not" do
+    test "a node's capacity scales with health but load does not" do
       # This asymmetry is the mechanism behind cascading failure. If
       # load also scaled, the simulation would silently self-stabilise
       # and the cascade test below would pass for the wrong reason.

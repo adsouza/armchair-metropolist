@@ -42,6 +42,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # No free workers: labour comes only from housing, which is the point of the resource.
   # No free income either: money has no baseline, which is what forces commercial to be
   # built once the capacity and load tables arrive.
+  #
+  # Despite its name, this is not one of those tables: `Node`'s `@capacity_table` is the
+  # health-scaled side of a node's ledger, while this belongs to no node and is never
+  # scaled by anything.
   @baseline_capacity %{
     power: 40.0,
     water: 40.0,
@@ -94,8 +98,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @doc """
   Supply, demand, deficit and satisfaction for every resource in the city.
 
-  Always returns an entry for all six resources, even on an empty map.
-  Capacity is scaled by producer health; load is not scaled at all.
+  Always returns an entry for all six resources, even on an empty map. A node's
+  capacity is scaled by that node's health; load is not scaled at all. The free
+  baseline folded into `supplied` is scaled by nothing — it belongs to no node.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
   def resource_stats(city_map) do

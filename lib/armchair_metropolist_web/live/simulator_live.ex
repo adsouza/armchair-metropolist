@@ -764,13 +764,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   defp marginal_cell(type, resource, _amenity_marginal_labour) do
-    produced = Map.get(Node.capacity(type), resource)
-    consumed = Map.get(Node.load(type), resource)
+    capacity = Map.get(Node.capacity(type), resource)
+    load = Map.get(Node.load(type), resource)
 
-    if is_nil(produced) and is_nil(consumed) do
+    if is_nil(capacity) and is_nil(load) do
       "—"
     else
-      signed(net(resource, produced || 0.0, consumed || 0.0))
+      signed(net(resource, capacity || 0.0, load || 0.0))
     end
   end
 
@@ -786,7 +786,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   # The mirror of `marginal_cell/3`'s park clause, and needed for the same reason: park's
   # labour effect is in neither capacity table nor load table, so the general
-  # clause below would take its `is_nil(produced)` branch and render the bare staffing draw
+  # clause below would take its `is_nil(capacity)` branch and render the bare staffing draw
   # — `-3` for three parks whose amenity is worth +15. Bolder than the line above it, so
   # that was the wrong figure in the more prominent position.
   #
@@ -802,20 +802,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   defp total_cell(_type, resource, stats, _amenity_labour) do
-    produced = Map.get(stats.rated_capacity, resource)
+    capacity = Map.get(stats.rated_capacity, resource)
     actual = Map.get(stats.actual_capacity, resource)
-    consumed = Map.get(stats.load, resource)
+    load = Map.get(stats.load, resource)
 
     cond do
-      is_nil(produced) and is_nil(consumed) ->
+      is_nil(capacity) and is_nil(load) ->
         nil
 
-      is_nil(produced) ->
-        signed(net(resource, 0.0, consumed))
+      is_nil(capacity) ->
+        signed(net(resource, 0.0, load))
 
       true ->
-        rated_net = net(resource, produced, consumed || 0.0)
-        actual_net = net(resource, actual, consumed || 0.0)
+        rated_net = net(resource, capacity, load || 0.0)
+        actual_net = net(resource, actual, load || 0.0)
 
         # Compared as displayed rather than as floats: capacity scales continuously
         # with health, so most of the time the two differ by a fraction of a unit that
@@ -858,7 +858,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # One function rather than a flip at each call site, deliberately. `marginal_cell/3`
   # and both branches of `total_cell/4` read the same two tables, and the
-  # `is_nil(produced)` branch is the one that fires for most types on a negative
+  # `is_nil(capacity)` branch is the one that fires for most types on a negative
   # resource — no type both produces and consumes waste, and none does for traffic. So
   # a partial patch leaves every emitter rendering backwards while the two removers
   # look right, which is the shape of defect this legend has shipped before.
@@ -870,10 +870,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # flagged here so a future negative resource with its own special-cased clause has to
   # decide whether it can bypass `net/3` too, rather than assuming the park precedent
   # means it can.
-  defp net(resource, produced, consumed) do
+  defp net(resource, capacity, load) do
     if Node.negative_resource?(resource),
-      do: consumed - produced,
-      else: produced - consumed
+      do: load - capacity,
+      else: capacity - load
   end
 
   defp signed(value) do

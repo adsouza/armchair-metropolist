@@ -621,6 +621,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # --- helpers ------------------------------------------------------------
 
   defp sorted_types, do: Enum.sort(Node.types())
+
+  # Not to be confused with `capacities_block/0` above: that renders the generated
+  # residential-support table (how many housing tiles a support set sustains, computed
+  # by simulation); this reads a single type's row straight out of `Node`'s capacity table.
   defp capacity_of(type), do: Node.capacity(type)
 
   defp city_with(counts) do
