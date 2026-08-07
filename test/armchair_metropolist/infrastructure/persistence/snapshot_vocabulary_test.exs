@@ -1,6 +1,7 @@
 defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest do
   use ExUnit.Case, async: true
 
+  alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary
 
@@ -69,5 +70,31 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     }
 
     assert SnapshotVocabulary.modernize(city) == city
+  end
+
+  test "modernize/1 supplies waste_stock for a payload written before the field existed" do
+    SnapshotVocabulary.ensure_loaded!()
+
+    decoded =
+      @pre_rename_fixture
+      |> File.read!()
+      |> :erlang.binary_to_term([:safe])
+
+    # Asserted first, and load-bearing: it proves the fixture really is a
+    # missing-key payload. Without it this test would silently become a no-op the
+    # day someone regenerates the fixture against the current struct.
+    refute Map.has_key?(decoded, :waste_stock),
+           "the fixture must predate waste_stock for this test to mean anything"
+
+    assert SnapshotVocabulary.modernize(decoded).waste_stock == 0.0
+  end
+
+  test "modernize/1 does not reset a waste_stock the city already carries" do
+    # The mutation this exists to catch is `Map.put` where `Map.put_new` belongs.
+    # It passes the test above, and silently wipes a real backlog on every hydrate
+    # — a save-corrupting bug that no other test in the suite can see.
+    city = %{CityMap.new(40, 30) | waste_stock: 42.0}
+
+    assert SnapshotVocabulary.modernize(city).waste_stock == 42.0
   end
 end

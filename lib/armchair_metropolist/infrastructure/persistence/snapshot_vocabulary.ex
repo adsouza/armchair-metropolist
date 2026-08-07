@@ -57,12 +57,31 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   # they drive the rewrite in modernize/1.
   @node_type_renames %{road_hub: :transit_hub}
 
+  # Struct field names added to a persisted entity since the first release. Unlike
+  # `@node_type_renames`, these are current vocabulary, not retired — but they are
+  # just as load-bearing: rolling an older binary back past the commit that added
+  # one means it decodes a snapshot containing the atom without ever having loaded
+  # the module version that defines it, and `:safe` refuses to create it from
+  # scratch. Listing it here interns it explicitly, rather than relying on
+  # `CityMap` happening to already be compiled with the field. See
+  # docs/deploying.md, "The third trap: rolling back past a new CityMap field".
+  @added_fields [:waste_stock]
+
   @doc "The modules whose atoms a persisted city can contain."
   def modules, do: @modules
 
   @doc "Interns every atom a persisted city can legitimately contain."
   def ensure_loaded! do
     Enum.each(@modules, &Code.ensure_loaded!/1)
+
+    # `@added_fields` lists struct field names, not modules — there is nothing to
+    # `Code.ensure_loaded!/1` for a plain atom. It is already interned simply by
+    # appearing as a literal in this module's own compiled code, true the instant
+    # `SnapshotVocabulary` itself is loaded (the same reason `@node_type_renames`'s
+    # keys need no loader either). Reading it here keeps it wired into a real code
+    # path instead: an attribute nothing reads is a compiler warning in this
+    # project, and dead code a later edit could delete without anyone noticing.
+    Enum.each(@added_fields, &Function.identity/1)
   end
 
   @doc """
@@ -72,10 +91,20 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   rename hydrates as though it had been written after it. A city already in the
   current vocabulary passes through unchanged. Called by both snapshot adapters
   immediately after their `:safe` decode — a city that skips this carries retired
-  atoms into the domain, where `Node.capacity/1` raises on them.
+  atoms into the domain, where `Node.capacity/1` raises on them. It also supplies
+  defaults for struct fields added since the payload was written, so an older
+  city hydrates with the same fields a fresh one gets rather than raising
+  `KeyError` the first time something reads the new field.
   """
   def modernize(%{nodes: nodes} = city_map) when is_map(nodes) do
-    %{city_map | nodes: Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end)}
+    # `Map.put_new`, not the `%{map | key: value}` update syntax: that syntax
+    # requires the key to already exist, which is exactly what an older payload
+    # does not have. And not `Map.put` either — see the test that seeds a city
+    # with a real backlog, which a `put` would silently reset to zero on every
+    # hydrate.
+    city_map
+    |> Map.put_new(:waste_stock, 0.0)
+    |> Map.put(:nodes, Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end))
   end
 
   defp rename_type(%{type: type} = node) do
