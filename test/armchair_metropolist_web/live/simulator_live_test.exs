@@ -575,7 +575,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # Health decays continuously, so actual production drifts below rated by fractions
       # of a unit long before it drifts by a whole one. Both figures render as 120, and
       # an arrow from a number to itself is noise.
-      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 119.7)})
+      send(view.pid, {:city_metrics, metrics_with_power_capacity(120.0, 119.7)})
       render(view)
 
       cell = view |> element(~s{[data-cell="power_plant-power"]}) |> render()
@@ -586,7 +586,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     test "a divergence big enough to see is shown as rated → actual", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      send(view.pid, {:city_metrics, metrics_with_power_production(120.0, 90.0)})
+      send(view.pid, {:city_metrics, metrics_with_power_capacity(120.0, 90.0)})
       render(view)
 
       assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~
@@ -1031,18 +1031,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
   # Placing real nodes cannot produce an exact divergence — actual production is
   # whatever health decay happens to have left — so the breakdown is written directly.
-  defp metrics_with_power_production(rated, actual) do
+  defp metrics_with_power_capacity(rated, actual) do
     metrics = empty_city_metrics()
 
     put_in(metrics.by_type[:power_plant], %{
       count: 1,
-      rated_production: %{power: rated},
-      actual_production: %{power: actual},
-      consumption: %{water: 20.0, waste: 12.0, traffic: 3.0}
+      rated_capacity: %{power: rated},
+      actual_capacity: %{power: actual},
+      load: %{water: 20.0, waste: 12.0, traffic: 3.0}
     })
   end
 
-  # The negative-resource counterpart to `metrics_with_power_production/2`. Industrial's
+  # The negative-resource counterpart to `metrics_with_power_capacity/2`. Industrial's
   # waste entry is *removal* capacity, and removal is health-scaled, so this is the
   # divergence a decaying incinerator actually produces. Written directly for the same
   # reason: placing real nodes cannot produce an exact rated/actual gap.
@@ -1051,9 +1051,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     put_in(metrics.by_type[:industrial], %{
       count: 1,
-      rated_production: %{waste: rated},
-      actual_production: %{waste: actual},
-      consumption: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0}
+      rated_capacity: %{waste: rated},
+      actual_capacity: %{waste: actual},
+      load: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0}
     })
   end
 

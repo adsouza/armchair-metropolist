@@ -798,13 +798,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # `consumption` is already scaled by count in `build_by_type/1`, so this nets whole-row
   # against whole-row.
   defp total_cell(:park, :labour, stats, amenity_labour) do
-    signed(amenity_labour - Map.get(stats.consumption, :labour, 0.0))
+    signed(amenity_labour - Map.get(stats.load, :labour, 0.0))
   end
 
   defp total_cell(_type, resource, stats, _amenity_labour) do
-    produced = Map.get(stats.rated_production, resource)
-    actual = Map.get(stats.actual_production, resource)
-    consumed = Map.get(stats.consumption, resource)
+    produced = Map.get(stats.rated_capacity, resource)
+    actual = Map.get(stats.actual_capacity, resource)
+    consumed = Map.get(stats.load, resource)
 
     cond do
       is_nil(produced) and is_nil(consumed) ->
