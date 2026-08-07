@@ -4,8 +4,8 @@ An urban infrastructure simulation game.
 
 A city of power plants, water plants, industrial and commercial blocks, transit hubs,
 parks and residential blocks ticks forward in real time. Each tick recomputes six
-resources — power, water, waste, traffic, labour and money — as supply against
-demand; starved nodes lose health and eventually go offline, which removes their
+resources — power, water, waste, traffic, labour and money — as demand against
+capacity; starved nodes lose health and eventually go offline, which removes their
 contribution and starves the rest of the city further. Money is the one resource
 whose surplus survives the tick boundary, so a city can read fully satisfied on the
 other five and still be quietly going broke.

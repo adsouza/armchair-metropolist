@@ -491,13 +491,13 @@ defmodule ArmchairMetropolist.PlayingGuide do
     # type level too, which is what made that comparison a compiler warning).
     footer =
       if non_producers == "" do
-        "Every type produces something."
+        "Every type has a health-scaled effect."
       else
-        "Produce nothing at all: #{non_producers}."
+        "No health-scaled effect: #{non_producers}."
       end
 
     Enum.join(
-      ["| type | produces |", "|---|---|"] ++ rows ++ ["", footer],
+      ["| type | effect |", "|---|---|"] ++ rows ++ ["", footer],
       "\n"
     )
   end

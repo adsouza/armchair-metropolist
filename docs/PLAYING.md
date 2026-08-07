@@ -90,7 +90,8 @@ and takes this section with it.
 **On the third residential block.**
 
 The city starts with free baseline capacity — 40 each of power, water, waste and
-traffic, no infrastructure needed. Labour and money have no free baseline; they arrive
+traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
+to absorb 40 waste and 40 traffic. Labour and money have no free baseline; they arrive
 only once you build for them. A residential block draws `power 15`. Two blocks come to
 30 and hold at full health forever. The third makes 45, against a supply of 40, and
 from that moment the city is dying.
@@ -264,7 +265,7 @@ else — and `industrial` and `commercial` both need labour to hold their own he
 Simulated against 19 dead residential blocks: adding 5 power, 4 water, 3 industrial and 3
 transit hubs — a combination that reaches full satisfaction on power, water, waste and
 traffic simultaneously — still fails. The fresh `industrial` block starves for workers
-from the very first tick, decays, and its falling waste output drags the rest of the city
+from the very first tick, decays, and its falling waste processing drags the rest of the city
 down before the dead residential can recover on power and water alone. Measured: every
 node's health is still 0.0 after 150 ticks.
 
@@ -438,7 +439,7 @@ at 50% health delivers half. Power, water, labour and money are goods: you want 
 rise. Waste and traffic are bads: you want them to fall.
 
 <!-- generated:production -->
-| type | produces |
+| type | effect |
 |---|---|
 | `commercial` | money +30 |
 | `industrial` | waste -90 |
@@ -448,7 +449,7 @@ rise. Waste and traffic are bads: you want them to fall.
 | `transit_hub` | traffic -60 |
 | `water_plant` | water +100 |
 
-Every type produces something.
+Every type has a health-scaled effect.
 <!-- /generated:production -->
 
 ### Per-block effect, never scaled by health
@@ -467,9 +468,6 @@ behind every death spiral: a dying block draws its full power and emits its full
 | `transit_hub` | -8 | — | +2 | — | -2 | -4 |
 | `water_plant` | -25 | — | +6 | +2 | -1 | -5 |
 <!-- /generated:consumption -->
-
-Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
-`transit_hub` supplies transit capacity, which residential and commercial then consume.
 
 `park` is how you get more workers out of the housing you already have. It produces no
 labour itself — a city with no residential blocks has no workforce for a park to

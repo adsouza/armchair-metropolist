@@ -66,6 +66,20 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
              "outgrew what its water plants can house"
   end
 
+  test "the guide states which resources are bads instead of reinterpreting them" do
+    guide = File.read!(@guide)
+
+    # Positive case first: the replacement framing must actually be present, so this
+    # fails if the sentence is deleted outright rather than reworded.
+    assert guide =~ "Waste and traffic are bads"
+
+    # And the instruction it replaced must be gone. Alone, this refute would pass
+    # against a guide with the whole reference section deleted.
+    refute guide =~ "as *capacity*",
+           "the guide must not tell the reader to reinterpret a resource — that " <>
+             "sentence is the bug this change removes"
+  end
+
   describe "the documented opening sequence" do
     # These pin the *advice*, not just its rendering. The guide tells a player to place
     # seven specific blocks in one specific order and promises nothing goes short on the
