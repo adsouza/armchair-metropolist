@@ -343,6 +343,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     assert html =~ "treasury holds 4"
   end
 
+  describe "the page header" do
+    test "lays its action group out as a row", %{conn: conn} do
+      # daisyUI's `.flex-none` is `flex: none` — an *item* property, not `display: flex`.
+      # With the original markup a button added to that group stacks above the theme
+      # toggle instead of beside it. No content assertion can see that: the button is
+      # present, labelled and clickable either way. Only this class can.
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ ~s(class="flex flex-none items-center gap-2")
+    end
+
+    test "gives the subtitle its own full-width row, right-aligned", %{conn: conn} do
+      # `text-align` aligns to the column box, not to the text in it. With a `1fr`
+      # column that box is wider than the wrapped title, which pushed the subtitle 64px
+      # past it; `min-content` makes box and ink coincide. Also invisible to content
+      # assertions — every rendered character is identical either way.
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "grid-cols-[auto_min-content]"
+      assert html =~ ~s(class="col-span-2 text-right text-[11px] opacity-60")
+    end
+  end
+
   describe "legend" do
     # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
     # negotiable for this block: the `+120` and `+360` figures two of these tests pin are
