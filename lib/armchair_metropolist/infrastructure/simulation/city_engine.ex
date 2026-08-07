@@ -513,10 +513,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
       # save and terminate/2's save both carry the same tick, and the second is always
       # refused. The third is `handle_call(:reset, …)` when its preceding `delete/1`
       # failed: the old row is still there at its old tick, so the reset's save at
-      # tick 0 lands here too — see that handler's comment. None of the three is a
-      # problem: the city is already durable, either at the tick already stored or at
-      # the tick this call just tried to write, and the warning is noise rather than a
-      # signal.
+      # tick 0 lands here too — see that handler's comment. None of the three threatens
+      # durability: the city is already durable, either at the tick already stored or
+      # at the tick this call just tried to write. Only the stalled-shutdown case is
+      # noise, though: for crash-and-replay this warning is the only evidence a replay
+      # happened, and for a failed-delete reset it corroborates the error delete/1
+      # already logged.
       {:stale, stored_tick} ->
         Logger.warning(
           "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
