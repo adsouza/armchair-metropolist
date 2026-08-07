@@ -395,11 +395,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "legend" do
-    # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
-    # negotiable for this block: the `+120` and `+360` figures two of these tests pin are
-    # power_plant capacity, so switching to a cheaper type would turn a fixture fix into
-    # a rebalance of the test's own subject. A round balance rather than 160 exactly, so a
-    # change to the construction cost does not break a test that has no opinion about it.
+    # Two power plants at 80 each is 160, comfortably inside the 400 opening grant —
+    # measured, this test passes with the tag removed, so the treasury is insulation
+    # rather than necessity. It is kept because it pins a round balance that neither the
+    # grant nor the construction cost can move: `power_plant` would have to pass 200
+    # before two of them stopped fitting the grant unaided, and a test about legend
+    # rendering should not start failing on a balance patch it has no opinion about.
+    #
+    # (This comment said "past the 150 opening grant" until 2026-08-07. The grant became
+    # 400 in d6642b6 and nothing re-derived the sentence, so it went on asserting that
+    # 160 was *over* the grant — the arithmetic inverted, not just the figure.)
+    #
+    # The type is not negotiable for this block: the `+120` and `+360` figures two of
+    # these tests pin are power_plant capacity, so switching to a cheaper type would turn
+    # a fixture fix into a rebalance of the test's own subject.
     @tag treasury: 1_000.0
     test "shows how many of each type are placed, updating as you place", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -460,7 +469,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       refute power =~ "font-semibold"
     end
 
-    # Three power plants at 80 each is 240, past the 150 opening grant.
+    # Three power plants at 80 each is 240, inside the 400 opening grant — measured, this
+    # test passes with the tag removed too. Kept for the same reason as the block above,
+    # and the margin here is the thinner of the two: `power_plant` passing 133 would take
+    # three of them past the grant, where two would still fit until 200.
     @tag treasury: 1_000.0
     test "placing blocks adds a city total beside the per-block figure", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
