@@ -46,27 +46,37 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity_labour == 0.0
   end
 
-  test "carries the amenity figures it is given" do
+  test "carries the derived figures it is given" do
     metrics =
       SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
         amenity: 1.75,
         amenity_marginal_labour: 5.0,
-        amenity_labour: 15.0
+        amenity_labour: 15.0,
+        stalled: true
       })
 
     assert metrics.amenity == 1.75
     assert metrics.amenity_marginal_labour == 5.0
     assert metrics.amenity_labour == 15.0
+
+    # `true` rather than `false`: the struct default is `false`, so a build that dropped
+    # this key on the floor would still satisfy a `refute`.
+    assert metrics.stalled
   end
 
-  # A partial amenity map is a programming error, not a request for defaults: the default
+  # A partial derived map is a programming error, not a request for defaults: the default
   # applies to the argument as a whole, so silently filling one missing key would let a
-  # caller that computed two figures out of three ship an amenity-free labour total.
-  test "raises rather than defaulting when the amenity map is missing a figure" do
-    assert_raise KeyError, fn ->
+  # caller that computed three figures out of four ship an amenity-free labour total.
+  #
+  # Exactly one key is withheld, and it is named in the assertion. With two or more
+  # missing, this passes for whichever one `build/3` happens to fetch first and says
+  # nothing about the others.
+  test "raises rather than defaulting when the derived map is missing a figure" do
+    assert_raise KeyError, ~r/:amenity_labour/, fn ->
       SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
         amenity: 1.75,
-        amenity_marginal_labour: 5.0
+        amenity_marginal_labour: 5.0,
+        stalled: false
       })
     end
   end
@@ -186,6 +196,22 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
 
     test "false at exactly the cheapest action" do
       refute build(%{CityMap.new(40, 30) | money: 10.0}).bankrupt
+    end
+  end
+
+  describe "game_over?/1" do
+    test "true only when the city is both stalled and bankrupt" do
+      assert SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: true})
+    end
+
+    test "false for a stalled city that can still afford to act" do
+      # This is the state a rescue is possible from, so calling it game over would be
+      # a false claim. Also what an `or` in place of the `and` would break.
+      refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: false})
+    end
+
+    test "false for a broke city that is still running" do
+      refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: false, bankrupt: true})
     end
   end
 

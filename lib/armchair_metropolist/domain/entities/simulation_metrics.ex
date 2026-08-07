@@ -47,15 +47,21 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           amenity_marginal_labour: float(),
           amenity_labour: float(),
           housing_alive: boolean(),
-          bankrupt: boolean()
+          bankrupt: boolean(),
+          stalled: boolean()
         }
 
   # A city with no parks has no amenity, so the identity multiplier and zero labour from it
-  # are the correct values rather than filler. The default exists because `build/2` has
-  # a dozen call sites in tests; the one production caller,
-  # `Domain.Services.SimulationCalculator.metrics/1`, always passes real figures, and a
-  # test on that wiring is what stops this default reaching a player.
-  @default_amenity %{amenity: 1.0, amenity_marginal_labour: 0.0, amenity_labour: 0.0}
+  # are the correct values rather than filler, and a city with no nodes is not stalled. The
+  # default exists because `build/2` has a dozen call sites in tests; the one production
+  # caller, `Domain.Services.SimulationCalculator.metrics/1`, always passes real figures,
+  # and a test on that wiring is what stops this default reaching a player.
+  @default_derived %{
+    amenity: 1.0,
+    amenity_marginal_labour: 0.0,
+    amenity_labour: 0.0,
+    stalled: false
+  }
 
   defstruct tick: 0,
             resources: %{},
@@ -68,20 +74,22 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             amenity_marginal_labour: 0.0,
             amenity_labour: 0.0,
             housing_alive: false,
-            bankrupt: false
+            bankrupt: false,
+            stalled: false
 
   @doc """
   Build a SimulationMetrics struct from a city map, resource statistics and the city's
-  park amenity.
+  derived figures.
 
-  `amenity` carries `:amenity` (the multiplier on labour supply), `:amenity_marginal_labour`
-  (what one more park would add to it) and `:amenity_labour` (what the *already placed*
-  parks are contributing to it). The last two answer different questions and the legend
-  shows both, stacked. All three are computed by `Domain.Services.SimulationCalculator`,
-  which this module cannot call — `Domain` has `deps: []` — so they arrive as an argument
-  rather than being derived here.
+  `derived` carries `:amenity` (the multiplier on labour supply), `:amenity_marginal_labour`
+  (what one more park would add to it), `:amenity_labour` (what the *already placed*
+  parks are contributing to it) and `:stalled` (whether the city has reached a health
+  fixpoint). The amenity pair answers different questions and the legend shows both,
+  stacked. All four are computed by `Domain.Services.SimulationCalculator`, which this
+  module cannot call — `Domain` has `deps: []` — so they arrive as an argument rather
+  than being derived here.
   """
-  def build(city_map, resources, amenity \\ @default_amenity) do
+  def build(city_map, resources, derived \\ @default_derived) do
     nodes = CityMap.nodes(city_map)
     node_count = length(nodes)
 
@@ -96,9 +104,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       offline_count: offline_count,
       by_type: build_by_type(nodes),
       money: city_map.money,
-      amenity: Map.fetch!(amenity, :amenity),
-      amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour),
-      amenity_labour: Map.fetch!(amenity, :amenity_labour),
+      amenity: Map.fetch!(derived, :amenity),
+      amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
+      amenity_labour: Map.fetch!(derived, :amenity_labour),
       housing_alive: housing_alive?(nodes),
       # Derived rather than a written-down `10.0`, for the same reason
       # `Node.cheapest_action_cost/0` itself is derived: so a balance patch to the
@@ -107,9 +115,24 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       # `10.0` and nothing in this module's test environment can make them diverge — so
       # the coverage that actually protects this line lives in `node_test.exs`, which
       # characterizes `cheapest_action_cost/0` against the tables directly.
-      bankrupt: city_map.money < Node.cheapest_action_cost()
+      bankrupt: city_map.money < Node.cheapest_action_cost(),
+      stalled: Map.fetch!(derived, :stalled)
     }
   end
+
+  @doc """
+  Whether this city can never change again.
+
+  Both halves are needed and neither implies the other. `stalled` means the clock has
+  stopped, but a stalled city holding money can still be rescued — one demolition is
+  enough to take three dead houses back under the free baseline. `bankrupt` means no
+  command is affordable, but a running city that is merely broke still earns.
+
+  Defined here, once, rather than composed at each call site: the template and
+  `docs/PLAYING.md` both describe this state and must not be able to disagree about it.
+  """
+  @spec game_over?(t()) :: boolean()
+  def game_over?(%__MODULE__{stalled: stalled, bankrupt: bankrupt}), do: stalled and bankrupt
 
   defp calculate_avg_health([]), do: 0.0
 
