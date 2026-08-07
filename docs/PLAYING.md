@@ -292,13 +292,16 @@ Stalling is not the same as being beyond help, and the difference is the treasur
 frozen city's balance is frozen too — it no longer drains to the upkeep of water plants,
 transit hubs and parks — so whatever was in the bank when the city stalled is still there.
 
-**Building anything restarts the clock; demolishing restarts it only if it leaves something
-able to be supplied.** A new block goes up at full health, and "every block at zero" is
-what the stall is, so one placement of any type is enough to start the ticks again — though
-the new block is then subject to the same shortage that killed the rest, and a city that is
-still short will stall again once it dies. A demolition restarts the clock as soon as it
-leaves at least one surviving node fully supplied — the rest of the city is free to stay
-dead forever. Houses crowding each other out under the free baseline are the common case:
+**Building anything restarts the clock; demolishing restarts it if it leaves at least one
+surviving node fully supplied, or if it leaves nothing at all.** A new block goes up at
+full health, and "every block at zero" is what the stall is, so one placement of any type
+is enough to start the ticks again — though the new block is then subject to the same
+shortage that killed the rest, and a city that is still short will stall again once it
+dies. The empty-grid case is the edge of the same rule: an empty grid has no block at
+zero health, so it is never stalled — demolishing the very last dead block always
+restarts the clock, with nothing left in the city to run. Short of that, the rest of the
+city is free to stay dead forever. Houses crowding each other out under the free baseline
+are the common case:
 tear one house out of three and the remaining two are supplied and heal, tear one out of
 five and the remaining four are still over the line and nothing moves. It is not the only
 case: three dead houses beside one dead transit hub are stalled the same way, and

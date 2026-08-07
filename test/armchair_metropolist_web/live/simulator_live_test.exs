@@ -145,9 +145,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   defp initial_snapshot(_context), do: {:error, :not_found}
 
   # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
-  # ones, purely so the compiler sees all of that function's clauses grouped together —
-  # `mix precommit` turns the "clauses ... should be grouped together" warning into a
-  # build failure, and this helper's own placement was what split them.
+  # ones, purely so the compiler sees all of that function's clauses grouped together.
+  # `mix.exs` sets `elixirc_paths(:test)` to only "lib" and "test/support", so this file
+  # is outside what `mix precommit`'s `--warnings-as-errors` compiles and the "clauses
+  # ... should be grouped together" warning it would otherwise raise never gates the
+  # build — but it is a real warning worth not having, and `mix test` prints it on
+  # every run, which is reason enough to keep the clauses together.
   defp stalled_city(money) do
     city =
       Enum.reduce(0..2, CityMap.new(40, 30), fn x, map ->
@@ -1082,6 +1085,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element("#reset-city") |> render() =~
                ~s(class="btn btn-xs btn-error text-white min-h-6")
     end
+
+    @tag :stalled_city
+    test "is labelled Reset", %{conn: conn} do
+      # Nothing else in the suite reads this string. Both banners below tell the player
+      # to press "Reset in the header" — relabelling this button would leave every test
+      # above green while stranding that instruction against a button that no longer
+      # says what they claim it says.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#reset-city", "Reset")
+    end
   end
 
   describe "the collapse banner" do
@@ -1129,6 +1143,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       assert length(String.split(html, ~s(phx-click="wipe"))) == 2
+    end
+
+    @tag :stalled_solvent_city
+    test "points the player at the header's Reset button", %{conn: conn} do
+      # The other half of the coupling pinned by "is labelled Reset" above: this banner
+      # names the button rather than rendering one of its own, so the two assertions
+      # together are what would catch a relabelling that the rest of the suite misses.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#collapse-banner", "Reset")
     end
   end
 end

@@ -416,14 +416,22 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # or abort shutdown here — the process still exits within its 10s budget.
   #
   # When the stop came from handle_info(:linger_expired, ...), this is a second save
-  # following the :DOWN handler's - but not of an unchanged city_map. The engine
-  # stays subscribed to "city_tick" throughout the linger and keeps ticking a frozen
-  # city's viewers away, so a full linger window's worth of ticks (~30 at the
-  # default engine_linger_ms) can land between the two saves, and this one is a real
-  # write of a map that has moved on since. (This is a small deviation from the
-  # spec's "a frozen city does not advance": it advances for up to the linger
-  # window after its last viewer leaves, not indefinitely.) Harmless either way,
-  # because save/3 is idempotent for an unchanged tick if the two ever do coincide.
+  # following the :DOWN handler's. Whether it saves an unchanged city_map now depends on
+  # whether the city is stalled — the per-visitor design's "a frozen city does not
+  # advance" was written about the no-viewer case below, before this branch gave
+  # "frozen" its own meaning for a stalled city's tick.
+  #
+  # An unstalled city keeps ticking while abandoned: the engine stays subscribed to
+  # "city_tick" throughout the linger, so a full linger window's worth of ticks (~30 at
+  # the default engine_linger_ms) can land between the two saves, and this one is a real
+  # write of a map that has moved on since. (That is the per-visitor design's deviation:
+  # an abandoned city advances for up to the linger window after its last viewer leaves,
+  # not indefinitely.)
+  #
+  # A stalled city is the opposite: its tick is frozen, so no tick lands during the
+  # linger, the map here is identical to what the :DOWN handler already saved, and this
+  # second save is refused `{:stale, _}` and logs a warning rather than being
+  # idempotent — see save/2's comment for why that warning is harmless.
   def terminate(_reason, state) do
     save(state.city_id, state.city_map)
   end
@@ -498,9 +506,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         :ok
 
       # Not a failure — the adapter refused to move the city backwards. Worth a warning
-      # rather than silence, because reaching here means this engine hydrated from an
-      # older snapshot than the one stored: a crash-and-replay, which is the exact case
-      # the guarantee exists for and the only signal that it happened.
+      # rather than silence, because reaching here has two causes. One is a
+      # crash-and-replay, where this engine hydrated from an older snapshot than the
+      # one stored — the exact case the guarantee exists for. The other is an ordinary
+      # shutdown of a stalled city: its tick never advances, so the :DOWN handler's
+      # save and terminate/2's save both carry the same tick, and the second is always
+      # refused. In that second case nothing is wrong — the city is already durable at
+      # this tick, and the warning is noise rather than a signal.
       {:stale, stored_tick} ->
         Logger.warning(
           "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
