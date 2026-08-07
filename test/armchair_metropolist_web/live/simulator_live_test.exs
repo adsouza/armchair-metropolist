@@ -500,30 +500,41 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="transit_hub-water"]}) |> render() =~ "—"
     end
 
-    test "the totals row reports supply, demand and satisfaction per resource",
+    test "the totals row reports demand against capacity, and satisfaction per resource",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
       render(view)
 
-      # Supply and demand are half the cell and were asserted nowhere: the whole
-      # "supplied/demanded · " prefix could be deleted and the suite stayed green.
-      # The fixture's two figures differ, and differ per resource, so a transposed
-      # pair reads as wrong rather than as itself.
-      assert view |> element(~s{[data-total="power"]}) |> render() =~ "150/120"
-      assert view |> element(~s{[data-total="water"]}) |> render() =~ "35/70"
+      # Demand first, capacity second, for every resource. The fixture's two figures
+      # differ per resource, so a transposed pair reads as wrong rather than as itself.
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "120/150"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "70/35"
+
+      # The negative resources take the *same* order — that is the point of unifying
+      # on demand-first. An ordering swap applied only to waste and traffic passes the
+      # two assertions below and fails the two above; one applied only to the positive
+      # resources does the reverse. Both pairs are needed.
+      assert view |> element(~s{[data-total="waste"]}) |> render() =~ "80/60"
+      assert view |> element(~s{[data-total="traffic"]}) |> render() =~ "100/25"
 
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
+      assert view |> element(~s{[data-total="waste"]}) |> render() =~ "75.0%"
+      assert view |> element(~s{[data-total="traffic"]}) |> render() =~ "25.0%"
+
+      # The header names the order. It is a decision, so a silent revert to
+      # supplied/demanded must redden something.
+      assert render(view) =~ "demanded/supplied · met this tick"
     end
 
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
     # cell contradict its own two halves. Money supplied 13, demanded 23, but a
     # treasury of 487 (carried) brings the balance-inclusive `satisfaction` to
-    # 1.0 -- exactly the case that used to render "13/23 · 100.0%", where dividing
+    # 1.0 -- exactly the case that used to render "23/13 · 100.0%", where dividing
     # the two numbers shown gives 57%, not 100%. The cell must read the flow-only
-    # figure instead, so 56.5% (13/23) is what belongs beside 13/23.
+    # figure instead, so 56.5% (13/23) is what belongs beside 23/13.
     test "the money totals cell reads the flow-only percentage, not the balance-inclusive one",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -532,7 +543,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       render(view)
 
       cell = view |> element(~s{[data-total="money"]}) |> render()
-      assert cell =~ "13/23"
+      assert cell =~ "23/13"
       assert cell =~ "56.5%"
       refute cell =~ "100.0%"
     end
@@ -683,25 +694,35 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are midpoints of measured windows (expanded [2254, 2415], collapsed
-    # [1415, 1415] — that one is degenerate, so it is the only legal value rather than a
-    # midpoint with slack), not the wrap points themselves. See the comment in `render/1`:
-    # an earlier pair sat on the windows' lower edges and fell out the moment the cells
-    # grew a line. If a legitimate content change moves these, re-measure in the browser
-    # and move them to the new *midpoint* — do not derive them from these plus a guess at
-    # the width of whatever you added.
+    # The values are midpoints of measured windows, not the wrap points themselves.
+    # Collapsed, 1415 is the midpoint of a measured window [1415, 1415] — degenerate, so
+    # it is the only legal value rather than a midpoint with slack.
+    #
+    # Expanded, 2424 was re-measured 2026-08-07 (fix round) after the negative-polarity
+    # footnote was reworded a second time, to a shorter sentence than the first draft: the
+    # first draft's 1626px pushed the threshold past 2560px, a common monitor width,
+    # dropping the legend below the grid there where it previously sat beside it. The
+    # shorter wording measures 1288px, and the threshold was re-derived by the same
+    # binary-search method as the comment in `render/1` — forcing `flexDirection` on the
+    # real inner div and reloading fresh at each candidate viewport (never resizing into
+    # it; that reads differently because of the scrollbar) — rather than by shifting the
+    # prior constant by a measured delta, which is what put this test into a fix round in
+    # the first place. That search found window [2343, 2505] (2343 = W_col, the boundary
+    # forcing `column`; 2505 = W_row, forcing `row`), whose midpoint is exactly 2424. If a
+    # legitimate content change moves the footnote again, re-measure in the browser and
+    # move this value to the *new* midpoint — do not derive it from this one plus a guess.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2335px]:flex-row"
+      assert expanded =~ "max-[2424px]:flex-row"
       refute expanded =~ "max-[1415px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
       assert collapsed =~ "max-[1415px]:flex-row"
-      refute collapsed =~ "max-[2335px]:flex-row"
+      refute collapsed =~ "max-[2424px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
@@ -901,6 +922,71 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       assert has_element?(view, ~s{[data-cell="residential-cost"][title="costs 15"]})
     end
+
+    # The whole point of the change: waste and traffic are bads, so a block that
+    # removes them reads negative and a block that emits them reads positive.
+    test "a negative resource shows removal as negative and emission as positive",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Nothing placed, so these are the per-block marginal figures and the test
+      # needs no treasury.
+      assert view |> element(~s{[data-cell="industrial-waste"]}) |> render() =~ "-90"
+      assert view |> element(~s{[data-cell="residential-waste"]}) |> render() =~ "+10"
+
+      # Traffic is the second negative resource, and it is not a copy of waste in
+      # the code — only in `@negative_resources`. Without these two lines, shipping
+      # the list as `[:waste]` passes the whole suite.
+      assert view |> element(~s{[data-cell="transit_hub-traffic"]}) |> render() =~ "-60"
+      assert view |> element(~s{[data-cell="residential-traffic"]}) |> render() =~ "+6"
+
+      # Positive resources in the same test. A flip applied to *every* resource rather
+      # than the negative ones satisfies the four assertions above; these two are what
+      # catch that broader mutation.
+      assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~ "+120"
+      assert view |> element(~s{[data-cell="residential-power"]}) |> render() =~ "-15"
+    end
+
+    # Three houses at 15 each is 45, inside the opening grant, but the treasury is
+    # raised so the fixture does not depend on the grant's current value.
+    @tag treasury: 1_000.0
+    test "a negative resource's city total flips too, not only the per-block figure",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view
+      |> element(~s{button[phx-click="select_type"][phx-value-type="residential"]})
+      |> render_click()
+
+      for {x, y} <- [{1, 1}, {2, 1}, {3, 1}] do
+        view
+        |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
+        |> render_click()
+      end
+
+      # Asserted on `.font-semibold` — the total line's own class — and not on the
+      # cell: the cell's text also holds the `+10` marginal, so a cell-level
+      # assertion silently matches whichever of the two lines the flip reached.
+      #
+      # This exercises `total_cell/4`'s `is_nil(produced)` branch, which is the
+      # branch that fires for every emitter, because no type both produces and
+      # consumes waste. Flipping only the main branch leaves this reading `-30`.
+      cell = view |> element(~s{[data-cell="residential-waste"] .font-semibold}) |> render()
+      assert cell =~ "+30", "three houses must total +30 waste emitted"
+    end
+
+    test "a decaying remover shows its capacity failing, rated → actual", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_industrial_waste(90.0, 45.0)})
+      render(view)
+
+      # Both nets flip, not just the rated one. The mutation that flips `rated_net`
+      # and leaves `actual_net` alone renders "-90 → +45", which an assertion on
+      # either figure alone accepts.
+      assert view |> element(~s{[data-cell="industrial-waste"] .font-semibold}) |> render() =~
+               "-90 → -45"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -953,6 +1039,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       rated_production: %{power: rated},
       actual_production: %{power: actual},
       consumption: %{water: 20.0, waste: 12.0, traffic: 3.0}
+    })
+  end
+
+  # The negative-resource counterpart to `metrics_with_power_production/2`. Industrial's
+  # waste entry is *removal* capacity, and removal is health-scaled, so this is the
+  # divergence a decaying incinerator actually produces. Written directly for the same
+  # reason: placing real nodes cannot produce an exact rated/actual gap.
+  defp metrics_with_industrial_waste(rated, actual) do
+    metrics = empty_city_metrics()
+
+    put_in(metrics.by_type[:industrial], %{
+      count: 1,
+      rated_production: %{waste: rated},
+      actual_production: %{waste: actual},
+      consumption: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0}
     })
   end
 

@@ -66,6 +66,33 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
              "outgrew what its water plants can house"
   end
 
+  test "the guide states which resources are bads instead of reinterpreting them" do
+    guide = File.read!(@guide)
+
+    # Positive case first: the replacement framing must actually be present, so this
+    # fails if the sentence is deleted outright rather than reworded.
+    assert guide =~ "Waste and traffic are bads"
+
+    # And the instruction it replaced must be gone. Alone, this refute would pass
+    # against a guide with the whole reference section deleted.
+    refute guide =~ "as *capacity*",
+           "the guide must not tell the reader to reinterpret a resource — that " <>
+             "sentence is the bug this change removes"
+  end
+
+  test "the generated production block signs a bad and a good the same way the legend does" do
+    # `net/3` in `SimulatorLive` and `signed_num/2` in this guide's own generator are two
+    # independent implementations of the same sign convention, and nothing else pins them
+    # to agreement — a "fix" to one followed by regenerating the guide from the other
+    # would stay green. One pinned cell per polarity is enough to catch that: `industrial`
+    # only produces waste (a bad, so producing reads negative) and `power_plant` only
+    # produces power (a good, so producing reads positive).
+    production = PlayingGuide.blocks()["production"]
+
+    assert production =~ "waste -90"
+    assert production =~ "power +120"
+  end
+
   describe "the documented opening sequence" do
     # These pin the *advice*, not just its rendering. The guide tells a player to place
     # seven specific blocks in one specific order and promises nothing goes short on the
@@ -85,8 +112,8 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
     test "every stage is fully supplied on all five physical resources" do
       # The promise the whole section rests on: a player who keeps up never sees decay.
       # Fails if `water_plant`'s power draw rises above the 25 that fits under the free
-      # baseline of 40 alongside one house and one park, or if `park`'s waste output
-      # drops below the 8 the last two stages need.
+      # baseline of 40 alongside one house and one park, or if `park`'s waste processing
+      # capacity drops below the 8 the last two stages need.
       # `tightness` is demand ÷ supply, unclamped, and the stage reports whichever of the
       # five is highest — so `<= 1.0` on that one resource says all five are covered.
       # Asserted on the ratio rather than on `satisfaction`, which clamps at 1.0 and so

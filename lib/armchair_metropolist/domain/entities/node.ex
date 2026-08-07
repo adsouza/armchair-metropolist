@@ -39,6 +39,23 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # two cannot drift apart silently.
   @statuses [:online, :degraded, :offline]
 
+  # Resources where a rising figure is bad. For these, a production-table entry is
+  # *removal* capacity and a consumption-table entry is *emission* — `industrial`
+  # processes 90 waste, a house emits 10.
+  #
+  # The numbers stay in the tables they are in today, and must. Production is
+  # health-scaled and consumption never is, which is exactly the right asymmetry
+  # here: a neglected incinerator processes less, a decaying house still emits full.
+  # Moving industrial's 90 to the consumption table to make it "read as removal"
+  # would unscale removal from health, and waste would become the one resource
+  # neglect cannot punish.
+  #
+  # Written out rather than derived, for the same reason `@resources` is: this is a
+  # design commitment, and a derivation would let a table edit silently change which
+  # resources are bads. The *sign convention* is not here — that is presentation,
+  # and it lives beside `signed/1` in the LiveView.
+  @negative_resources [:waste, :traffic]
+
   # Production tables (resource outputs)
   @production_table %{
     power_plant: %{power: 120.0},
@@ -216,6 +233,22 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   """
   @spec statuses() :: [status()]
   def statuses, do: @statuses
+
+  @doc """
+  The resources where a rising figure is bad.
+
+  A subset of `resources/0`. Consumers use this to decide a *display* sign: for a
+  negative resource the legend shows `consumed - produced`, so `industrial` reads
+  -90 because it removes 90 waste and a house reads +10 because it emits 10.
+  """
+  @spec negative_resources() :: [resource()]
+  def negative_resources, do: @negative_resources
+
+  @doc """
+  Whether a rising figure in `resource` is bad.
+  """
+  @spec negative_resource?(resource()) :: boolean()
+  def negative_resource?(resource), do: resource in @negative_resources
 
   @doc """
   Calculate the effective production of a node, scaled by its health.

@@ -345,6 +345,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
     types |> Enum.frequencies() |> Enum.to_list() |> city_with()
   end
 
+  # Typographic minus (U+2212), because this is prose (money flow, opening income) rather
+  # than a table cell mirroring the screen — contrast `signed_num/2` below, which renders
+  # ASCII `-` specifically to match `SimulatorLive`'s own cells.
   defp signed(value) when value < 0, do: "−#{num(abs(value))}"
   defp signed(value), do: "+#{num(value)}"
 
@@ -475,7 +478,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
         outputs =
           @resources
           |> Enum.filter(&Map.has_key?(produced, &1))
-          |> Enum.map_join(", ", fn r -> "#{r} #{num(Map.fetch!(produced, r))}" end)
+          |> Enum.map_join(", ", fn r -> "#{r} #{signed_num(r, Map.fetch!(produced, r))}" end)
 
         "| `#{type}` | #{outputs} |"
       end
@@ -491,13 +494,13 @@ defmodule ArmchairMetropolist.PlayingGuide do
     # type level too, which is what made that comparison a compiler warning).
     footer =
       if non_producers == "" do
-        "Every type produces something."
+        "Every type has a health-scaled effect."
       else
-        "Produce nothing at all: #{non_producers}."
+        "No health-scaled effect: #{non_producers}."
       end
 
     Enum.join(
-      ["| type | produces |", "|---|---|"] ++ rows ++ ["", footer],
+      ["| type | effect |", "|---|---|"] ++ rows ++ ["", footer],
       "\n"
     )
   end
@@ -514,7 +517,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
           Enum.map_join(@resources, " | ", fn r ->
             case Map.get(consumption, r) do
               nil -> "—"
-              amount -> num(amount)
+              amount -> signed_num(r, -amount)
             end
           end)
 
@@ -652,6 +655,19 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp worst_satisfaction(metrics) do
     metrics.resources |> Map.values() |> Enum.map(& &1.satisfaction) |> Enum.min()
+  end
+
+  # A table cell's *displayed* effect on a resource, sign included, matching the legend's
+  # `net/3`. For a negative resource a positive figure means the block adds to the problem:
+  # `industrial` removes 90 waste and renders `-90`, a house emits 10 and renders `+10`.
+  #
+  # ASCII `-`, not U+2212, because that is what `SimulatorLive.signed/1` emits and the guide
+  # must not disagree with the screen it describes. Contrast this module's own `signed/1`
+  # above, which uses the typographic minus for prose that never sits beside a screen cell.
+  defp signed_num(resource, amount) do
+    amount = if Node.negative_resource?(resource), do: -amount, else: amount
+
+    if amount > 0, do: "+#{num(amount)}", else: num(amount)
   end
 
   # 120.0 reads as noise in a table; 120 does not. Keeps one decimal when it matters.

@@ -32,10 +32,13 @@ The legend — to the right of the grid on a wide enough window, stacked below i
 otherwise — lists every type with how many you have placed, what it costs to build, and
 its net effect on each resource. Where a type produces a resource and its buildings are
 damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
-supplied at current health. A dash means the type does not touch that resource at all,
-which is different from netting to zero. The totals row gives city-wide supply, demand and
-satisfaction, per tick. Four of the six resources have a free baseline of 40 built into
-that supply; labour and money have none, deliberately — see below.
+supplied at current health. For a bad, that same arrow can rise while the situation
+worsens: a decaying `industrial` reads `-90 → -45`, which is less waste removed, not
+more of the problem. A dash means the type does not touch that resource at all,
+which is different from netting to zero. The totals row gives city-wide demand, supply
+and satisfaction, per tick. Four of the six resources have a free baseline of 40 built
+in — supply for power and water, absorption for waste and traffic; labour and money
+have none, deliberately — see below.
 
 **Show detail / Hide detail** collapses the legend to its type, count and cost columns,
 which is how you make the window narrower — the six resource columns are most of its
@@ -90,7 +93,8 @@ and takes this section with it.
 **On the third residential block.**
 
 The city starts with free baseline capacity — 40 each of power, water, waste and
-traffic, no infrastructure needed. Labour and money have no free baseline; they arrive
+traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
+to absorb 40 waste and 40 traffic. Labour and money have no free baseline; they arrive
 only once you build for them. A residential block draws `power 15`. Two blocks come to
 30 and hold at full health forever. The third makes 45, against a supply of 40, and
 from that moment the city is dying.
@@ -264,7 +268,7 @@ else — and `industrial` and `commercial` both need labour to hold their own he
 Simulated against 19 dead residential blocks: adding 5 power, 4 water, 3 industrial and 3
 transit hubs — a combination that reaches full satisfaction on power, water, waste and
 traffic simultaneously — still fails. The fresh `industrial` block starves for workers
-from the very first tick, decays, and its falling waste output drags the rest of the city
+from the very first tick, decays, and its falling waste processing drags the rest of the city
 down before the dead residential can recover on power and water alone. Measured: every
 node's health is still 0.0 after 150 ticks.
 
@@ -431,43 +435,42 @@ Available with no infrastructure placed at all.
 | 40 | 40 | 40 | 40 | 0 | 0 |
 <!-- /generated:baseline -->
 
-### What each type produces
+### Per-block effect, scaled by health
 
-Production is scaled by the node's health, so a plant at 50% health supplies half.
+Each figure is one block's effect on that resource, scaled by the block's health — a plant
+at 50% health delivers half. Power, water, labour and money are goods: you want them to
+rise. Waste and traffic are bads: you want them to fall.
 
 <!-- generated:production -->
-| type | produces |
+| type | effect |
 |---|---|
-| `commercial` | money 30 |
-| `industrial` | waste 90 |
-| `park` | waste 8 |
-| `power_plant` | power 120 |
-| `residential` | labour 5, money 1 |
-| `transit_hub` | traffic 60 |
-| `water_plant` | water 100 |
+| `commercial` | money +30 |
+| `industrial` | waste -90 |
+| `park` | waste -8 |
+| `power_plant` | power +120 |
+| `residential` | labour +5, money +1 |
+| `transit_hub` | traffic -60 |
+| `water_plant` | water +100 |
 
-Every type produces something.
+Every type has a health-scaled effect.
 <!-- /generated:production -->
 
-### What each type consumes
+### Per-block effect, never scaled by health
 
-Consumption is **never** scaled by health. This is the mechanic behind every death
-spiral.
+The other side of the ledger, and it is **never** scaled by health. This is the mechanic
+behind every death spiral: a dying block draws its full power and emits its full waste.
 
 <!-- generated:consumption -->
 | type | power | water | waste | traffic | labour | money |
 |---|---|---|---|---|---|---|
-| `commercial` | 22 | 8 | 14 | 9 | 8 | — |
-| `industrial` | 40 | 25 | — | 8 | 12 | — |
-| `park` | — | 18 | — | 2 | 1 | 3 |
-| `power_plant` | — | 20 | 12 | 3 | 1 | — |
-| `residential` | 15 | 12 | 10 | 6 | — | — |
-| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
-| `water_plant` | 25 | — | 6 | 2 | 1 | 5 |
+| `commercial` | -22 | -8 | +14 | +9 | -8 | — |
+| `industrial` | -40 | -25 | — | +8 | -12 | — |
+| `park` | — | -18 | — | +2 | -1 | -3 |
+| `power_plant` | — | -20 | +12 | +3 | -1 | — |
+| `residential` | -15 | -12 | +10 | +6 | — | — |
+| `transit_hub` | -8 | — | +2 | — | -2 | -4 |
+| `water_plant` | -25 | — | +6 | +2 | -1 | -5 |
 <!-- /generated:consumption -->
-
-Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
-`transit_hub` supplies transit capacity, which residential and commercial then consume.
 
 `park` is how you get more workers out of the housing you already have. It produces no
 labour itself — a city with no residential blocks has no workforce for a park to

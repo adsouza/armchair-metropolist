@@ -50,6 +50,37 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     end
   end
 
+  describe "negative_resources/0" do
+    test "names the two resources where a rising figure is bad" do
+      assert Node.negative_resources() == [:waste, :traffic]
+    end
+
+    test "every negative resource is a resource" do
+      # A typo'd atom would never match anything and would simply render the old
+      # sign forever, with nothing else in the suite noticing.
+      assert Enum.all?(Node.negative_resources(), &(&1 in Node.resources()))
+    end
+  end
+
+  describe "negative_resource?/1" do
+    test "is true for the bads and false for the goods" do
+      # Both halves are needed, and neither is redundant: a predicate hardcoded to
+      # `true` empties `positives`, one hardcoded to `false` empties `negatives`.
+      #
+      # Both lists are derived from `Node.resources/0` rather than written out twice,
+      # which is what actually forces the polarity decision the old literal-list
+      # version only claimed to: add a seventh resource to `@resources` and it lands
+      # in one of these two lists automatically, reddening `positives` (it defaults
+      # into the false/positive bucket) until someone classifies it in
+      # `@negative_resources`.
+      negatives = Enum.filter(Node.resources(), &Node.negative_resource?/1)
+      positives = Enum.reject(Node.resources(), &Node.negative_resource?/1)
+
+      assert negatives == [:waste, :traffic]
+      assert positives == [:power, :water, :labour, :money]
+    end
+  end
+
   describe "production/1 and consumption/1" do
     test "match the specified supply/demand table" do
       assert Node.production(:power_plant) == %{power: 120.0}

@@ -217,7 +217,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             on the real inner div below and resizing the real viewport (not a clone —
             cheaper to validate and immune to a clone's own `fit-content`/`flex-wrap`
             quirks), confirmed at the boundary pixel, the switch happens at viewport
-            2254 expanded and 1415 collapsed — with Metrics stacked. Those are the
+            2343 expanded and 1415 collapsed — with Metrics stacked. Those are the
             lower ends (`W_col`) of the windows the inner thresholds below sit inside.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
@@ -276,9 +276,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
               But a fixpoint at the aside's **widest child**, which is not the same thing
               as the matrix's natural width and today is not the matrix at all. Measured
-              2026-08-06, expanded: the totals footnote below is 1198px against the
+              2026-08-07, expanded: the totals footnote below is 1288px against the
               matrix's own 927px, so `100%` resolves to the footnote and stretches the
-              table ~271px past its content. Collapsed it is the re-entry line, at 359px
+              table ~361px past its content. Collapsed it is the re-entry line, at 359px
               against 173px of matrix. That distinction is the whole subject of the
               threshold comment on the `max-[Npx]` classes further down — read it before
               reasoning about this sidebar's width from the table. --%>
@@ -326,8 +326,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 Measured by binary search on the live page (forcing `flexDirection` on the
                 real inner div and resizing the real viewport, rather than a clone — cheaper
                 to validate and immune to the clone's own `fit-content` quirks), then
-                confirmed at the boundary pixel: expanded `[2254, 2415]`, collapsed
-                `[1415, 1415]`. So the expanded midpoint below absorbs ±80px of content
+                confirmed at the boundary pixel: expanded `[2343, 2505]`, collapsed
+                `[1415, 1415]`. So the expanded midpoint below absorbs ±81px of content
                 drift, and **the collapsed one absorbs none at all** — see below.
 
                 **Reload at every candidate width.** Wrapping makes the page taller, which
@@ -342,13 +342,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 decided on the aside's *max-content* width (`min-width: fit-content` can
                 only raise a flex item's hypothetical size, never lower it), and measured
                 here that is the widest unbroken line it contains: expanded, the totals
-                footnote at 1198px against the nine-column matrix's 927px; collapsed, the
-                re-entry sentence at 359px against 173px of matrix. Both edges of both
-                windows moved between the last measurement and this one, and the resource
-                vocabulary was not why — a sentence added to the footnote and a re-entry
-                block added by an unrelated change were. Re-measure when *any* line in the
-                aside grows, not only when the table does, and move the value to the new
-                midpoint rather than to whichever edge you happened to measure.
+                footnote at 1288px against the nine-column matrix's 927px; collapsed, the
+                re-entry sentence at 359px against 173px of matrix. The expanded window
+                moved between the last measurement and this one, and this time the resource
+                vocabulary is exactly why: the footnote below was reworded for the
+                negative-polarity change, and that reword is what shifted the boundary to
+                today's `[2343, 2505]`. The collapsed window did not move at all — its own
+                re-entry sentence was untouched by this change, so it is still
+                `[1415, 1415]`. Re-measure when *any* line in the aside grows, not only when
+                the table does, and move the value to the new midpoint rather than to
+                whichever edge you happened to measure.
 
                 Collapsed, `W_col == W_row`: the re-entry sentence is wider than either
                 inner arrangement (173px stacked, 349px in a row), so the arrangement no
@@ -363,7 +366,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[2335px]:flex-row", else: "max-[1415px]:flex-row")
+            if(@legend_detail, do: "max-[2424px]:flex-row", else: "max-[1415px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
@@ -589,7 +592,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                     short, with money's total sitting under `labour` and the last
                     resource getting no column at all. Adding an always-visible column
                     means incrementing this by hand and looking at the table. --%>
-              <th class="text-left" colspan="3">supplied/demanded · met this tick</th>
+              <th class="text-left" colspan="3">demanded/supplied · met this tick</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -604,19 +607,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <%!-- Hidden with the totals row it explains — and not only for tidiness. A long
             line of prose sets this sidebar's width, so left visible it would hold the
-            collapsed sidebar at this paragraph's own 1198px instead of the 359px the
+            collapsed sidebar at this paragraph's own width instead of the 359px the
             re-entry line below already imposes, and collapsing would reclaim almost
             nothing. Anything added here must stay short or wrappable.
 
-            Re-measured 2026-08-06 (the earlier "437px instead of 127px" predates both
-            the re-entry block and this paragraph's third sentence): expanded, these
-            1198px are not merely a nuisance but the *binding* width of the whole
+            Re-measured 2026-08-07, after the negative-polarity reword: expanded, these
+            1288px are not merely a nuisance but the *binding* width of the whole
             sidebar — wider than the nine-column matrix's own 927px — so this paragraph,
             not the table, is what sets the expanded wrap threshold in `render/1`. Edit
-            the wording here and that constant needs re-measuring. --%>
+            the wording here and that constant needs re-measuring.
+
+            A longer first draft of this sentence measured 1626px and pushed the
+            threshold past 2560px, a common monitor width, dropping the legend below the
+            grid there where it previously sat beside it — this shorter wording was
+            chosen specifically to avoid that. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
-        Totals include the free baseline of 40 for power, water, waste and traffic, which
-        belongs to no type. Labour and money have no free baseline.
+        Totals include the free baseline of 40, belonging to no type: power and water
+        supplied, waste and traffic absorbed. Labour and money have no free baseline.
         Labour's total also includes the park amenity; park's own row carries it.
       </p>
     </div>
@@ -763,7 +770,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     if is_nil(produced) and is_nil(consumed) do
       "—"
     else
-      signed((produced || 0.0) - (consumed || 0.0))
+      signed(net(resource, produced || 0.0, consumed || 0.0))
     end
   end
 
@@ -804,11 +811,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         nil
 
       is_nil(produced) ->
-        signed(-consumed)
+        signed(net(resource, 0.0, consumed))
 
       true ->
-        rated_net = produced - (consumed || 0.0)
-        actual_net = actual - (consumed || 0.0)
+        rated_net = net(resource, produced, consumed || 0.0)
+        actual_net = net(resource, actual, consumed || 0.0)
 
         # Compared as displayed rather than as floats: production scales continuously
         # with health, so most of the time the two differ by a fraction of a unit that
@@ -823,20 +830,50 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   # `resources` is populated from mount via SummarizeCity, so there is no empty-map
   # case to guard here beyond ordinary defensiveness.
+  #
+  # Demand first, capacity second, for every resource regardless of polarity. This is
+  # what lets one header sentence cover both: for power it reads "drawing 120 of 150
+  # available", for waste "generating 80 against 60 of processing". It is also the
+  # order `docs/PLAYING.md` already uses for its `tightest resource` column, so the
+  # guide and the app no longer disagree about which figure comes first.
   defp totals_cell(resources, resource) do
     case Map.get(resources, resource) do
       nil ->
         "—"
 
       stats ->
-        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are supplied
-        # and demanded, both flow-only, so the percentage beside them has to be
+        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are demanded
+        # and supplied, both flow-only, so the percentage beside them has to be
         # computed on that same basis or it stops being derivable from what's on
         # screen. For money, `satisfaction` also counts the treasury and would make
-        # this cell contradict its own two halves (13/23 while reading 100%).
-        "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
+        # this cell contradict its own two halves (23/13 while reading 100%).
+        "#{round(stats.demanded)}/#{round(stats.supplied)} · " <>
           "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
     end
+  end
+
+  # The sign convention, in one place. For a negative resource a positive figure means
+  # the type adds to the problem: `industrial` reads -90 because it removes 90 waste,
+  # a house reads +10 because it emits 10.
+  #
+  # One function rather than a flip at each call site, deliberately. `marginal_cell/3`
+  # and both branches of `total_cell/4` read the same two tables, and the
+  # `is_nil(produced)` branch is the one that fires for most types on a negative
+  # resource — no type both produces and consumes waste, and none does for traffic. So
+  # a partial patch leaves every emitter rendering backwards while the two removers
+  # look right, which is the shape of defect this legend has shipped before.
+  #
+  # Not a complete inventory of every site that touches sign, though: the two
+  # `{:park, :labour}` clauses (`marginal_cell/3` above and `total_cell/4` below) bypass
+  # this function entirely, because labour is a positive resource and their special
+  # casing is about the amenity multiplier, not polarity. That bypass is deliberate —
+  # flagged here so a future negative resource with its own special-cased clause has to
+  # decide whether it can bypass `net/3` too, rather than assuming the park precedent
+  # means it can.
+  defp net(resource, produced, consumed) do
+    if Node.negative_resource?(resource),
+      do: consumed - produced,
+      else: produced - consumed
   end
 
   defp signed(value) do
