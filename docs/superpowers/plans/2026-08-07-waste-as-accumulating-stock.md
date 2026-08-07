@@ -141,7 +141,31 @@ mix test test/armchair_metropolist/infrastructure/persistence/snapshot_vocabular
 
 Expected: PASS.
 
-- [ ] **Step 6: Run the full suite**
+- [ ] **Step 6: Record the rollback hazard, which runs the other way**
+
+Steps 1-5 cover old payload → new code. The reverse is the more dangerous direction: once this release checkpoints a city, the stored term contains the atom `:waste_stock`, which **does not exist on `main`** (verified: zero references). An older binary decoding that snapshot with `:safe` cannot create the atom. `SnapshotStore.decode/3` has no rescue, so the server engine crash-loops; `FileSnapshotStore` is rescued and instead starts an empty city, with the stale envelope tick then able to block later saves.
+
+No single release can fix this — the atom must already exist in the binary doing the reading. Make the constraint visible instead:
+
+Add `:waste_stock` to `SnapshotVocabulary`'s interning surface, so the reading side names the atom explicitly rather than relying on `CityMap` happening to be loaded. Follow the file's existing pattern for `@node_type_renames`, whose literal keys are documented as load-bearing precisely because they intern atoms; add a sibling attribute with a comment saying it interns field names added since the first release, and reference it from `ensure_loaded!/0` so it cannot be dropped as dead code.
+
+Then add to `docs/deploying.md`, beside the existing "The other trap: renaming a node type" section:
+
+```markdown
+### The third trap: rolling back past a new CityMap field
+
+`waste_stock` was added to `CityMap` on 2026-08-07. Snapshots written from that
+commit onward contain the `:waste_stock` atom, and a binary built before it
+cannot decode them — `:safe` will not create an atom the release does not
+already have. Rolling back past that commit strands every city written since:
+the server crash-loops on hydrate, the desktop app starts an empty grid.
+
+That commit is the minimum rollback target. Any future field added to a
+persisted struct has the same one-way property, and the safe pattern is two
+releases — one that interns the atom without writing it, then the writer.
+```
+
+- [ ] **Step 7: Run the full suite**
 
 ```bash
 mix test
@@ -149,12 +173,14 @@ mix test
 
 Expected: PASS. The field is inert — nothing reads it yet.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
 git commit -m "feat: add a persisted waste_stock field with its hydration default"
 ```
+
+**This commit is the natural two-release boundary.** Anyone who wants rollback safety deploys it alone first, then the rest of the branch.
 
 ---
 
@@ -298,17 +324,25 @@ In `lib/armchair_metropolist/domain/services/simulation_calculator.ex`, replace 
 Replace `carried/2`:
 
 ```elixir
-  # Derived from @carryover rather than matching on :money directly, so the list
-  # is the single place a reader looks to learn which resources are treasuries.
+  # The guard stays on @carryover so the list remains the single place a reader
+  # looks to learn which resources carry a balance; the sign lives in the clauses
+  # below it.
   #
-  # Waste is returned **negated**, and that one sign is the whole mechanic. It
-  # makes `available = supplied + carried` read `supplied - stock`, and therefore
-  # makes `deficit = max(0.0, demanded - available)` equal `demanded - supplied +
-  # stock` — exactly the next tick's stock, with no second formula to keep in step.
-  defp carried(city_map, :money), do: city_map.money
-  defp carried(city_map, :waste), do: -city_map.waste_stock
+  # Waste's balance is returned **negated**, and that one sign is the whole
+  # mechanic. It makes `available = supplied + carried` read `supplied - stock`,
+  # and therefore makes `deficit = max(0.0, demanded - available)` equal
+  # `demanded - supplied + stock` — exactly the next tick's stock, with no second
+  # formula to keep in step.
+  defp carried(city_map, resource) when resource in @carryover,
+    do: carried_balance(city_map, resource)
+
   defp carried(_city_map, _resource), do: 0.0
+
+  defp carried_balance(city_map, :money), do: city_map.money
+  defp carried_balance(city_map, :waste), do: -city_map.waste_stock
 ```
+
+**Keep the `when resource in @carryover` guard.** Replacing it with bare `carried(city_map, :money)` / `carried(city_map, :waste)` clauses leaves `@carryover` referenced nowhere in executable code. Elixir then warns *"module attribute @carryover was set but never used"*, and this repo's `mix precommit` runs `compile --warnings-as-errors` over `lib` — so that shape cannot pass its own commit gate. Verified by compiling a minimal probe with `elixirc --warnings-as-errors`.
 
 - [ ] **Step 5: Write the stock in `advance_tick/1`**
 
@@ -326,7 +360,61 @@ In `advance_tick/1`, beside the existing money line:
      delta}
 ```
 
-- [ ] **Step 6: Update the moduledoc**
+- [ ] **Step 6: Give `stalled?` a third argument, or backlogged cities freeze forever**
+
+`CityEngine.handle_info/2` skips ticks entirely for a stalled city:
+
+```elixir
+def handle_info({:tick, _clock_pulse}, %{metrics: %{stalled: true}} = state) do
+  {:noreply, state}
+end
+```
+
+Un-stalling needs `worst_satisfaction >= 1.0`, which needs the stock drained, which needs a tick. Without this step a stalled backlogged city is frozen permanently and no amount of demolition or money rescues it. Change the predicate so a moving landfill means not-stalled:
+
+```elixir
+  defp stalled?([], _stats, _stock), do: false
+
+  defp stalled?(nodes, stats, stock) do
+    Enum.all?(nodes, fn node ->
+      node.health == @min_health and worst_satisfaction(node, stats) < 1.0
+    end) and Map.fetch!(stats, :waste).deficit >= stock
+  end
+```
+
+and update its one call site in `metrics/1` to pass `city_map.waste_stock`.
+
+**The comparator is `>=`, not `==`.** What the predicate means in substance is *no node can recover*. A growing landfill (`deficit > stock`) is a city getting monotonically worse, which is stalled; only a *draining* one (`deficit < stock`) has a route back. Using `==` would call the growing case not-stalled, so a city drowning in waste would tick forever and never satisfy `game_over?/1 = stalled and bankrupt`.
+
+Add these two tests to the describe block from Step 1:
+
+```elixir
+    test "a city whose landfill is still draining is not stalled" do
+      # Five dead houses emit 50 against the baseline's 40, so at stock 60 the
+      # next deficit is max(0, 50 - 40 + 60) = 70 — still climbing, no route back.
+      dead = for i <- 0..4, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
+      assert Calc.metrics(%{map_with(dead) | waste_stock: 60.0}).stalled
+
+      # Every emitter demolished: demand 0 against the baseline's 40, so the next
+      # deficit is max(0, 0 - 40 + 60) = 20 < 60 and the landfill is draining.
+      # The engine skips ticks for a stalled city, so calling THIS stalled would
+      # freeze the stock permanently — the deadlock this clause exists to prevent.
+      refute Calc.metrics(%{map_with([]) | waste_stock: 60.0}).stalled
+    end
+
+    test "a settled dead city is still stalled" do
+      # The regression guard for the clause above: three dead houses emit 30
+      # against the baseline's 40, so the deficit is 0, equal to the stock, and
+      # nothing is moving. Power is what keeps them dead (45 drawn against 40).
+      dead = for i <- 0..2, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
+
+      assert Calc.metrics(map_with(dead)).stalled
+    end
+```
+
+**Verify the second test's premise before trusting it.** Three dead houses must actually satisfy the existing clause — every node at 0.0 health *and* short of something. They draw power 45 against the baseline's 40, so power satisfaction is 0.889 and they are short; but confirm that against `Calc.resource_stats/1` rather than this comment, and if three houses turn out to be self-healing (the `15n <= 40` cliff sits nearby) pick a configuration that is genuinely dead and say which you used.
+
+- [ ] **Step 7: Update the moduledoc**
 
 The numbered walkthrough at the top of the module describes each tick. Step 9 currently covers money's surplus only. Extend it, and add step 10:
 
@@ -344,7 +432,7 @@ The numbered walkthrough at the top of the module describes each tick. Step 9 cu
 
 Also amend step 3's description of `satisfaction`, which says it is `min(1.0, available / demand)` — still true, but note it is **not** floored at zero and why.
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [ ] **Step 8: Run the tests to verify they pass**
 
 ```bash
 mix test test/armchair_metropolist/domain/services/simulation_calculator_test.exs
@@ -352,7 +440,7 @@ mix test test/armchair_metropolist/domain/services/simulation_calculator_test.ex
 
 Expected: PASS.
 
-- [ ] **Step 8: Run the full suite**
+- [ ] **Step 9: Run the full suite**
 
 ```bash
 mix test
@@ -360,7 +448,7 @@ mix test
 
 Expected: PASS. If any pre-existing test reddens, **do not adjust its expected value** — a changed assertion here means the mechanic reached a city that should have been deficit-free, which is a real finding. Report it.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -561,20 +649,28 @@ git --no-pager diff --no-ext-diff --stat docs/PLAYING.md
 
 Expected: the regenerate reports the guide was already current and the diff is **empty**. Every configuration those blocks describe is deficit-free by construction, so a moved figure means the mechanic reached somewhere it should not have — stop and report BLOCKED rather than committing the new numbers.
 
-- [ ] **Step 2: Reword `stalled?/2`'s comment**
+- [ ] **Step 2: Rewrite `stalled?`'s comment for the clause Task 2 added**
 
-Its comment currently ends the first paragraph with: *"and demand — which is not health-scaled — does not move. The next tick is therefore identical in every node."* The second sentence is now false of the city, whose stock moves, though still true of the nodes. Replace those two sentences with:
+Task 2 changed the predicate's arity and meaning, so the comment must describe what it now tests. Replace the first paragraph — currently ending *"and demand — which is not health-scaled — does not move. The next tick is therefore identical in every node."* — with:
 
 ```
-  # and demand — which is not health-scaled — does not fall. The next tick is
-  # therefore identical in every *node*, which is what this predicate claims.
-  # The city itself may still be changing: an unprocessed-waste stock keeps
-  # growing underneath a stalled city, which only drives satisfaction further
-  # below zero and so cannot rescue any node. Accumulation reinforces this
-  # fixpoint rather than breaking it.
+  # The city has reached a fixpoint: every node is on the floor and still short of
+  # something, so `health_delta/1` is negative for all of them and the clamp holds
+  # them at zero — and the landfill is not draining, so nothing can lift them off
+  # it later either.
+  #
+  # That third condition is `deficit >= stock`, not `== stock`, and the comparator
+  # is load-bearing. A *growing* landfill is a city getting monotonically worse and
+  # is stalled; only a draining one has a route back. Testing `==` would call the
+  # growing case unstalled, so a city drowning in waste would tick forever and
+  # never satisfy `SimulationMetrics.game_over?/1`.
+  #
+  # Without the stock condition entirely, a backlogged stalled city freezes
+  # permanently: `CityEngine.handle_info/2` runs no tick while `stalled` is true,
+  # un-stalling needs the stock drained, and draining needs a tick.
 ```
 
-Leave both clauses of the function alone — the logic is unchanged.
+Keep the two existing paragraphs below it (the empty-list clause and the per-node-rather-than-`avg_health` rationale) exactly as they are.
 
 - [ ] **Step 3: Re-measure the three at-risk prose claims**
 
@@ -668,3 +764,7 @@ git commit -m "docs: document the landfill and re-measure the collapse figures"
 - [ ] **Nothing else accumulates:** `@carryover` is exactly `[:money, :waste]`.
 - [ ] **Satisfaction is still unfloored:** `satisfaction/2` contains no `max(0.0, ...)`; the only clamps are the two display sites in Task 3.
 - [ ] **The generated guide blocks are byte-identical to `main`:** `git diff main -- docs/PLAYING.md` shows prose changes only.
+- [ ] **A backlogged city can be rescued:** drive a city to stalled with a landfill, demolish its emitters, and confirm the engine resumes ticking and the stock reaches zero. This is the deadlock the `stalled?` clause exists to prevent, and it is only observable through `CityEngine` — a `SimulationCalculator`-level test cannot see the tick-skipping that causes it.
+- [ ] **A drowning city still ends:** a dead city whose landfill is growing must report `stalled: true`, so `game_over?/1` still fires. Confirms the comparator is `>=` and not `==`.
+- [ ] **`@carryover` is still referenced in executable code:** `mix precommit` passes, which it will not if the attribute is set but unused.
+- [ ] **The rollback constraint is written down:** `docs/deploying.md` names this branch's persistence commit as the minimum rollback target.
