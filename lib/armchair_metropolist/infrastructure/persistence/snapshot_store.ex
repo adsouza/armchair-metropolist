@@ -100,6 +100,19 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
     kind, value -> {:error, {kind, value}}
   end
 
+  @impl true
+  def delete(city_id) do
+    Repo.delete_all(from(s in CitySnapshot, where: s.city_id == ^city_id))
+
+    :ok
+  rescue
+    # Same never-raise policy as `save/3` above, and for the same reason: this runs
+    # inside a `GenServer.call` on the engine, and a raise there takes the city with it.
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+
   # sobelow_skip ["Misc.BinToTerm"]
   # `:safe` stops atom, pid and function creation but not a deliberately huge or
   # deeply nested term, which is why Sobelow flags this regardless. Accepted because

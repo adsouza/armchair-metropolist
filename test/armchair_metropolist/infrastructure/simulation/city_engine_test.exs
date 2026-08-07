@@ -20,6 +20,9 @@ defmodule ArmchairMetropolist.FailingSnapshotRepository do
       :exit -> exit(:timeout)
     end
   end
+
+  @impl true
+  def delete(_city_id), do: {:error, :disk_full}
 end
 
 defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do

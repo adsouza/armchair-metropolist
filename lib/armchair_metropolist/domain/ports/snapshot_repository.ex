@@ -35,4 +35,18 @@ defmodule ArmchairMetropolist.Domain.Ports.SnapshotRepository do
   """
   @callback save(String.t(), non_neg_integer(), CityMap.t()) ::
               :ok | {:stale, non_neg_integer()} | {:error, term()}
+
+  @doc """
+  Delete the city stored under `city_id`.
+
+  Returns `:ok` when nothing was stored — a reset of a city that has never been
+  checkpointed is ordinary, not a failure.
+
+  Exists because `save/3` is monotonic in tick and must stay that way. A reset city
+  starts again at tick 0, which `save/3` correctly refuses as stale until the new city
+  outlives the old one; deleting the stored row is how a wipe becomes durable without
+  putting a hole in that guarantee. See `UseCases.ResetCity` and
+  `Infrastructure.Simulation.CityEngine.handle_call(:reset, …)`.
+  """
+  @callback delete(String.t()) :: :ok | {:error, term()}
 end

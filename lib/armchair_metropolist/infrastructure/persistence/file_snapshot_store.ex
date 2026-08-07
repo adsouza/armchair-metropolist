@@ -71,6 +71,32 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
     end
   end
 
+  # The city id is accepted and ignored, exactly as `load/1` ignores it: this adapter
+  # keeps one pair of files for one city.
+  #
+  # The temp file is removed too. It is normally absent — `write_snapshot/1` renames it
+  # into place — but a crash mid-write can leave one, and a wipe should not leave a
+  # fragment of the discarded city on disk.
+  #
+  # sobelow_skip ["Traversal.FileModule"]
+  # Required, not decorative: `:rm` is on `Traversal.FileModule`'s function list and the
+  # path here is a variable, and `.sobelow-conf` sets `exit: "low"`, so an unannotated
+  # finding fails `mix check`. Sobelow rewrites this comment to `@sobelow_skip [...]` and
+  # pairs it with the next `def` it collects — `@doc` and `@impl` go to a different bucket
+  # and do not break the pairing, but another `def` in between would. Same justification
+  # as the other skips here: the paths come from `:snapshot_dir` config, never from a
+  # request.
+  @impl true
+  def delete(_city_id) do
+    Enum.reduce([primary_path(), backup_path(), tmp_path()], :ok, fn path, outcome ->
+      case File.rm(path) do
+        :ok -> outcome
+        {:error, :enoent} -> outcome
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
   def load_current do
     # Mandatory before any `:safe` decode below, and the reason is not obvious —
     # see SnapshotVocabulary. Without it a saved city is discarded in silence.
