@@ -694,25 +694,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are midpoints of measured windows (expanded [2254, 2415], collapsed
-    # [1415, 1415] — that one is degenerate, so it is the only legal value rather than a
-    # midpoint with slack), not the wrap points themselves. See the comment in `render/1`:
-    # an earlier pair sat on the windows' lower edges and fell out the moment the cells
-    # grew a line. If a legitimate content change moves these, re-measure in the browser
-    # and move them to the new *midpoint* — do not derive them from these plus a guess at
-    # the width of whatever you added.
+    # The values are not the wrap points themselves but points chosen to sit safely inside
+    # the window where the sidebar fits beside the grid. Collapsed, 1415 is the midpoint of
+    # a measured window [1415, 1415] — degenerate, so it is the only legal value rather than
+    # a midpoint with slack. Expanded, 2763 was re-measured 2026-08-07 after the
+    # negative-polarity reword raised the totals footnote's max-content width from 1198px to
+    # 1626px: rather than a fresh binary search, the prior constant (2335, itself the
+    # midpoint of a measured [2254, 2415] window) was raised by that same delta,
+    # ceil(1626 - 1198) = 428, then confirmed at the boundary pixel — 2763 keeps the legend
+    # beside the grid, 2762 drops it below. If a legitimate content change moves the
+    # footnote again, re-measure in the browser and shift this value by the new delta, or
+    # re-run the full binary search from the comment in `render/1` if the margin looks thin.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2335px]:flex-row"
+      assert expanded =~ "max-[2763px]:flex-row"
       refute expanded =~ "max-[1415px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
       assert collapsed =~ "max-[1415px]:flex-row"
-      refute collapsed =~ "max-[2335px]:flex-row"
+      refute collapsed =~ "max-[2763px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across

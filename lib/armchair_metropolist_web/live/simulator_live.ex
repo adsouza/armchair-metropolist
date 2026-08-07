@@ -276,9 +276,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
               But a fixpoint at the aside's **widest child**, which is not the same thing
               as the matrix's natural width and today is not the matrix at all. Measured
-              2026-08-06, expanded: the totals footnote below is 1198px against the
+              2026-08-07, expanded: the totals footnote below is 1626px against the
               matrix's own 927px, so `100%` resolves to the footnote and stretches the
-              table ~271px past its content. Collapsed it is the re-entry line, at 359px
+              table ~699px past its content. Collapsed it is the re-entry line, at 359px
               against 173px of matrix. That distinction is the whole subject of the
               threshold comment on the `max-[Npx]` classes further down — read it before
               reasoning about this sidebar's width from the table. --%>
@@ -342,7 +342,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 decided on the aside's *max-content* width (`min-width: fit-content` can
                 only raise a flex item's hypothetical size, never lower it), and measured
                 here that is the widest unbroken line it contains: expanded, the totals
-                footnote at 1198px against the nine-column matrix's 927px; collapsed, the
+                footnote at 1626px against the nine-column matrix's 927px; collapsed, the
                 re-entry sentence at 359px against 173px of matrix. Both edges of both
                 windows moved between the last measurement and this one, and the resource
                 vocabulary was not why — a sentence added to the footnote and a re-entry
@@ -363,7 +363,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 the first viewport that should *not* get the row layout. --%>
           <div class={[
             "flex flex-col gap-4",
-            if(@legend_detail, do: "max-[2335px]:flex-row", else: "max-[1415px]:flex-row")
+            if(@legend_detail, do: "max-[2763px]:flex-row", else: "max-[1415px]:flex-row")
           ]}>
             <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
@@ -604,19 +604,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <%!-- Hidden with the totals row it explains — and not only for tidiness. A long
             line of prose sets this sidebar's width, so left visible it would hold the
-            collapsed sidebar at this paragraph's own 1198px instead of the 359px the
+            collapsed sidebar at this paragraph's own width instead of the 359px the
             re-entry line below already imposes, and collapsing would reclaim almost
             nothing. Anything added here must stay short or wrappable.
 
-            Re-measured 2026-08-06 (the earlier "437px instead of 127px" predates both
-            the re-entry block and this paragraph's third sentence): expanded, these
-            1198px are not merely a nuisance but the *binding* width of the whole
+            Re-measured 2026-08-07, after the negative-polarity reword: expanded, these
+            1626px are not merely a nuisance but the *binding* width of the whole
             sidebar — wider than the nine-column matrix's own 927px — so this paragraph,
             not the table, is what sets the expanded wrap threshold in `render/1`. Edit
             the wording here and that constant needs re-measuring. --%>
       <p :if={@detail} class="mt-1 text-xs opacity-60">
         Totals include the free baseline of 40 for power, water, waste and traffic, which
-        belongs to no type. Labour and money have no free baseline.
+        belongs to no type — capacity to supply power and water, capacity to absorb waste
+        and traffic. Labour and money have no free baseline.
         Labour's total also includes the park amenity; park's own row carries it.
       </p>
     </div>
