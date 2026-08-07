@@ -45,7 +45,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           money: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
-          amenity_labour: float()
+          amenity_labour: float(),
+          housing_alive: boolean(),
+          bankrupt: boolean()
         }
 
   # A city with no parks has no amenity, so the identity multiplier and zero labour from it
@@ -64,7 +66,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             money: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
-            amenity_labour: 0.0
+            amenity_labour: 0.0,
+            housing_alive: false,
+            bankrupt: false
 
   @doc """
   Build a SimulationMetrics struct from a city map, resource statistics and the city's
@@ -94,7 +98,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       money: city_map.money,
       amenity: Map.fetch!(amenity, :amenity),
       amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour),
-      amenity_labour: Map.fetch!(amenity, :amenity_labour)
+      amenity_labour: Map.fetch!(amenity, :amenity_labour),
+      housing_alive: housing_alive?(nodes),
+      bankrupt: city_map.money < Node.cheapest_action_cost()
     }
   end
 
@@ -107,6 +113,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   defp count_offline_nodes(nodes) do
     Enum.count(nodes, &(&1.status == :offline))
+  end
+
+  # `health > 0.0`, not a count and not a status. Residential is the only type that
+  # consumes no labour, so it is the only source of labour supply; at exactly zero
+  # health that supply is exactly 0.0 and every other type starves at the full decay
+  # rate. A block at health 5 is `:offline` and still supplies 0.25 labour, so a
+  # status-based reading would call a city doomed while it is still being staffed.
+  defp housing_alive?(nodes) do
+    Enum.any?(nodes, &(&1.type == :residential and &1.health > 0.0))
   end
 
   # Every type gets an entry, present or not, so the legend renders a stable set of

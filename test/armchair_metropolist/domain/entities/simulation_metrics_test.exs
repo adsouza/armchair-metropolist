@@ -152,4 +152,49 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert by_type.power_plant.consumption.water === 0.0
     end
   end
+
+  describe "housing_alive" do
+    test "false when every residential block sits at exactly zero health" do
+      # A count-based reading would say true here — the houses are still standing.
+      # This is the common death, so a reading that misses it is useless.
+      city = city_with([%Node{Node.new(0, 0, :residential) | health: 0.0, status: :offline}])
+
+      refute build(city).housing_alive
+    end
+
+    test "true when one residential block has any health at all" do
+      # health 5.0 is `:offline`, and still supplies 0.25 labour. A status-based
+      # reading would say false here.
+      city = city_with([%Node{Node.new(0, 0, :residential) | health: 5.0, status: :offline}])
+
+      assert build(city).housing_alive
+    end
+
+    test "false when the city has no residential blocks" do
+      city = city_with([Node.new(0, 0, :power_plant)])
+
+      refute build(city).housing_alive
+    end
+  end
+
+  describe "bankrupt" do
+    test "true just below the cheapest action" do
+      # 9.0 and 10.0 rather than 0.0 and something large: a fixture at 0.0 cannot tell
+      # `money < 10` apart from `money == 0`, and these two straddle the real boundary.
+      assert build(%{CityMap.new(40, 30) | money: 9.0}).bankrupt
+    end
+
+    test "false at exactly the cheapest action" do
+      refute build(%{CityMap.new(40, 30) | money: 10.0}).bankrupt
+    end
+  end
+
+  # Helpers — put these at the bottom of the module, beside any existing private helpers.
+  defp city_with(nodes) do
+    Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
+  end
+
+  defp build(city_map) do
+    SimulationMetrics.build(city_map, %{})
+  end
 end
