@@ -1189,6 +1189,36 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
       assert city_map.tick == 1
     end
+
+    test "notifies a fresh deficit in the new city rather than inheriting the old one's flag",
+         %{city_id: city_id} do
+      # dead_city(3, 0.0) is already in critical deficit at hydration - three dead houses
+      # draw 45 power against the free baseline of 40 (satisfaction 0.888) - so `critical?`
+      # comes out of handle_continue/2 as `true` before reset ever runs. If
+      # handle_call(:reset, ...) left that flag alone instead of re-deriving it from the
+      # brand-new (empty, therefore fully satisfied) city, the stale `true` would still be
+      # sitting there the next time notify_deficits/2 runs. Its `{_resources, true}` arm
+      # reads that as "already told the player", so the very first deficit anyone creates
+      # in the new city would reach the engine and never reach the player - silently, with
+      # every other assertion in this describe block still green. That is the mirror image
+      # of the moduledoc's "three byte-identical notifications" story: there the flag was
+      # too eager, here a leftover flag would be too quiet.
+      #
+      # One commercial block on an otherwise empty grid demands labour (8) the reset city
+      # cannot supply at all - no housing exists yet, so labour's baseline is the 0.0 every
+      # resource without free capacity gets - which makes this deficit both cheap (40 of the
+      # 150 opening grant) and unambiguously new rather than a continuation of the power
+      # shortfall reset just wiped away.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      {:ok, _node} = CityEngine.place(city_id, 0, 0, :commercial)
+      broadcast_tick(1)
+
+      assert_receive {:notified, _title, _body}, 1_000
+    end
   end
 
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
