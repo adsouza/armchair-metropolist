@@ -397,7 +397,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   describe "legend" do
     # Two power plants at 80 each is 160, past the 150 opening grant. The type is not
     # negotiable for this block: the `+120` and `+360` figures two of these tests pin are
-    # power_plant production, so switching to a cheaper type would turn a fixture fix into
+    # power_plant capacity, so switching to a cheaper type would turn a fixture fix into
     # a rebalance of the test's own subject. A round balance rather than 160 exactly, so a
     # change to the construction cost does not break a test that has no opinion about it.
     @tag treasury: 1_000.0
@@ -572,7 +572,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # Health decays continuously, so actual production drifts below rated by fractions
+      # Health decays continuously, so actual capacity drifts below rated by fractions
       # of a unit long before it drifts by a whole one. Both figures render as 120, and
       # an arrow from a number to itself is noise.
       send(view.pid, {:city_metrics, metrics_with_power_capacity(120.0, 119.7)})
@@ -844,7 +844,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "-1"
     end
 
-    test "staffed types other than park render through the ordinary consumption path", %{
+    test "staffed types other than park render through the ordinary load path", %{
       conn: conn
     } do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -1029,7 +1029,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     }
   end
 
-  # Placing real nodes cannot produce an exact divergence — actual production is
+  # Placing real nodes cannot produce an exact divergence — actual capacity is
   # whatever health decay happens to have left — so the breakdown is written directly.
   defp metrics_with_power_capacity(rated, actual) do
     metrics = empty_city_metrics()
@@ -1114,7 +1114,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # `select_type` first, and it is not optional. `@selected_type` defaults to
-      # `List.first(Node.types())`, and `Node.types/0` is `Map.keys/1` over the production
+      # `List.first(Node.types())`, and `Node.types/0` is `Map.keys/1` over the capacity
       # table — arbitrary order, so the default is not reliably `residential`. Placing
       # whatever happens to be first would leave `housing_alive` false and this test would
       # assert the opposite of what it claims.

@@ -149,7 +149,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
 
     test "everything but housing is staffed, and housing supplies the staff" do
       # Positive cases first: without these, the refutation below is satisfied by a
-      # consumption table that mentions labour nowhere at all.
+      # load table that mentions labour nowhere at all.
       assert Node.load(:industrial)[:labour] == 12.0
       assert Node.load(:commercial)[:labour] == 8.0
       assert Node.load(:transit_hub)[:labour] == 2.0
@@ -171,7 +171,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
     # labour or money cannot touch it, however severe", and that a house can therefore
     # sit at full health next to a block that never recovers. Four sentences rest on
     # this table having exactly these keys and no others: regeneration is per node over
-    # `consumption/1` (`SimulationCalculator.worst_satisfaction/2` folds `min` over it),
+    # `load/1` (`SimulationCalculator.worst_satisfaction/2` folds `min` over it),
     # so adding `labour` or `money` here makes every one of them false at once, and the
     # guide's own drift test only checks the generated blocks. Assert the key set, not
     # just the absence of labour, because `money` would break the same sentences.
@@ -306,7 +306,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "effective_capacity/1" do
-    test "scales production by health fraction" do
+    test "scales capacity by health fraction" do
       node = %Node{Node.new(0, 0, :power_plant) | health: 50.0}
       assert effective = Node.effective_capacity(node)
       assert_in_delta effective.power, 60.0, 0.001
@@ -317,7 +317,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert_in_delta Node.effective_capacity(node).power, 6.0, 0.001
     end
 
-    test "commercial's money production also scales with health" do
+    test "commercial's money capacity also scales with health" do
       # Every node type produces something now (commercial produces money),
       # so there is no longer a pure-consumer example; assert the scaling
       # instead of an empty map.

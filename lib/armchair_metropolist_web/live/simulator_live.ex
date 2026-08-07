@@ -785,7 +785,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp total_cell(_type, _resource, %{count: 0}, _amenity_labour), do: nil
 
   # The mirror of `marginal_cell/3`'s park clause, and needed for the same reason: park's
-  # labour effect is in neither production table nor consumption table, so the general
+  # labour effect is in neither capacity table nor load table, so the general
   # clause below would take its `is_nil(produced)` branch and render the bare staffing draw
   # — `-3` for three parks whose amenity is worth +15. Bolder than the line above it, so
   # that was the wrong figure in the more prominent position.
@@ -795,7 +795,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # It cannot be derived from this one — below the cap they coincide per park, at the cap
   # the marginal is 0.0 while the total is still large.
   #
-  # `consumption` is already scaled by count in `build_by_type/1`, so this nets whole-row
+  # `load` is already scaled by count in `build_by_type/1`, so this nets whole-row
   # against whole-row.
   defp total_cell(:park, :labour, stats, amenity_labour) do
     signed(amenity_labour - Map.get(stats.load, :labour, 0.0))
@@ -817,7 +817,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         rated_net = net(resource, produced, consumed || 0.0)
         actual_net = net(resource, actual, consumed || 0.0)
 
-        # Compared as displayed rather than as floats: production scales continuously
+        # Compared as displayed rather than as floats: capacity scales continuously
         # with health, so most of the time the two differ by a fraction of a unit that
         # `signed/1` then rounds away, and the arrow would point from a number to
         # itself. `SimulationCalculator` makes the same choice one layer down, comparing

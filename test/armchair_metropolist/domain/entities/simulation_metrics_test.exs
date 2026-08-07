@@ -106,7 +106,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert Enum.sort(Map.keys(by_type)) == Enum.sort(Node.types())
     end
 
-    test "rated production is count x base and ignores health" do
+    test "rated capacity is count x base and ignores health" do
       map =
         CityMap.new(40, 30)
         |> CityMap.put_node(%Node{Node.new(0, 0, :power_plant) | health: 25.0})
@@ -117,9 +117,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert_in_delta by_type.power_plant.rated_capacity.power, 240.0, 0.001
     end
 
-    test "actual production is health-scaled and diverges from rated" do
-      # This divergence is the whole point of the legend: production scales with
-      # health, consumption does not, so a damaged city shows supply falling against
+    test "actual capacity is health-scaled and diverges from rated" do
+      # This divergence is the whole point of the legend: capacity scales with
+      # health, load does not, so a damaged city shows supply falling against
       # steady demand.
       map =
         CityMap.new(40, 30)
@@ -135,7 +135,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
              "a damaged producer must report less actual output than rated"
     end
 
-    test "consumption is count x base and does not scale with health" do
+    test "load is count x base and does not scale with health" do
       map =
         CityMap.new(40, 30)
         |> CityMap.put_node(%Node{Node.new(0, 0, :residential) | health: 1.0})

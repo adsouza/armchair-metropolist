@@ -43,10 +43,10 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # *removal* capacity and a load-table entry is *emission* — `industrial`
   # processes 90 waste, a house emits 10.
   #
-  # The numbers stay in the tables they are in today, and must. Production is
-  # health-scaled and consumption never is, which is exactly the right asymmetry
+  # The numbers stay in the tables they are in today, and must. Capacity is
+  # health-scaled and load never is, which is exactly the right asymmetry
   # here: a neglected incinerator processes less, a decaying house still emits full.
-  # Moving industrial's 90 to the consumption table to make it "read as removal"
+  # Moving industrial's 90 to the load table to make it "read as removal"
   # would unscale removal from health, and waste would become the one resource
   # neglect cannot punish.
   #
@@ -78,7 +78,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
   }
 
-  # What each type costs to build. A third table beside production and consumption, so
+  # What each type costs to build. A third table beside capacity and load, so
   # every price a player pays lives in one module.
   #
   # Ordered by the block's weight in the city, so the curve reads as

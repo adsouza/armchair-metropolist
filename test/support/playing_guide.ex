@@ -474,7 +474,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
         # Iterated in the display-order @resources list rather than the raw map's
         # key order: a map's key order is a hash-seed artifact, not a decision
         # anyone made, and residential (labour + money, as of this task) is the
-        # first production entry with two keys to expose that non-determinism.
+        # first capacity entry with two keys to expose that non-determinism.
         outputs =
           @resources
           |> Enum.filter(&Map.has_key?(produced, &1))
@@ -488,9 +488,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
       |> Enum.filter(&Enum.empty?(capacity_of(&1)))
       |> Enum.map_join(", ", &"`#{&1}`")
 
-    # Commercial's money production means every type produces something now, so
+    # Commercial's money capacity means every type produces something now, so
     # there is no non-producer list to print — `Enum.empty?` sidesteps the dead
-    # comparison `== %{}` would be (every production map is non-empty at the
+    # comparison `== %{}` would be (every capacity map is non-empty at the
     # type level too, which is what made that comparison a compiler warning).
     footer =
       if non_producers == "" do

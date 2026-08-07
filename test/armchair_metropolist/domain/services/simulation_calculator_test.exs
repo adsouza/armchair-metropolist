@@ -133,9 +133,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta stats.power.supplied, 40.0, 0.001
     end
 
-    test "production scales with health but consumption does not" do
+    test "capacity scales with health but load does not" do
       # This asymmetry is the mechanism behind cascading failure. If
-      # consumption also scaled, the simulation would silently self-stabilise
+      # load also scaled, the simulation would silently self-stabilise
       # and the cascade test below would pass for the wrong reason.
       healthy = map_with([%Node{Node.new(0, 0, :power_plant) | health: 100.0}])
       broken = map_with([%Node{Node.new(0, 0, :power_plant) | health: 50.0}])
@@ -695,7 +695,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     test "two dead houses are not stalled — they heal from an empty treasury" do
       # 15 x 2 = 30 power against the free baseline of 40, so they are fully supplied
-      # and regenerate. Consumption is not health-scaled, which is what makes the
+      # and regenerate. Load is not health-scaled, which is what makes the
       # count the deciding factor.
       refute Calc.metrics(dead_houses(2)).stalled
     end

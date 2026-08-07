@@ -8,7 +8,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
   from measurements of `SimulationCalculator`, and this test is what makes the
   committed copy stay honest.
 
-  Regenerate after changing a production, consumption or health rule:
+  Regenerate after changing a capacity, load or health rule:
 
       REGENERATE_PLAYING_GUIDE=1 mix test test/docs/playing_guide_test.exs
   """
@@ -41,7 +41,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
       assert current?, """
       docs/PLAYING.md is out of date with the domain tables.
 
-      A production, consumption or health rule has changed since the guide was
+      A capacity, load or health rule has changed since the guide was
       written, so its numbers now describe a game that no longer exists.
 
       First difference:

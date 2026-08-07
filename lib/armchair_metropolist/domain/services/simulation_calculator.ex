@@ -5,13 +5,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   The simulation is a deterministic function of the city map. One tick:
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
-       production of `r`, plus whatever balance `r` carried over from the
+       capacity for `r`, plus whatever balance `r` carried over from the
        previous tick (every resource but money carries nothing). Labour is then
        multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
        both sides health-weighted — so parks raise the workforce their housing
        supplies without producing labour themselves. With no housing the
        multiplier is 1.0 and labour supply is 0.0 regardless of parks.
-    2. `demand(r)` is every node's *full* consumption of `r` — deliberately
+    2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
     3. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
@@ -41,7 +41,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   # No free workers: labour comes only from housing, which is the point of the resource.
   # No free income either: money has no baseline, which is what forces commercial to be
-  # built once the production and consumption tables arrive.
+  # built once the capacity and load tables arrive.
   @baseline_capacity %{
     power: 40.0,
     water: 40.0,
@@ -63,7 +63,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # §4.
   #
   # A park draws 1 labour of its own, so its net contribution is `L × k - 1`, where `L` is
-  # residential's labour production of 5.0. `k = 1.0` is the value for two reasons. It
+  # residential's labour capacity of 5.0. `k = 1.0` is the value for two reasons. It
   # clears the measured threshold: at k = 0.5 the net is only +1.5 and the optimal city is
   # byte-identical to one with no amenity at all, so the mechanic would ship as a no-op.
   # And it is the smallest such value keeping the gross bonus `L × k` a whole number —
@@ -95,7 +95,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   Supply, demand, deficit and satisfaction for every resource in the city.
 
   Always returns an entry for all six resources, even on an empty map.
-  Production is scaled by producer health; consumption is not scaled at all.
+  Capacity is scaled by producer health; load is not scaled at all.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
   def resource_stats(city_map) do
@@ -176,7 +176,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     SimulationMetrics.build(city_map, stats, derived)
   end
 
-  # Baseline capacity plus health-scaled production from every node, with labour then
+  # Baseline capacity plus health-scaled capacity from every node, with labour then
   # scaled by the park amenity.
   #
   # Applied here rather than in `resource_stats/1` so there is exactly one labour supply
@@ -251,7 +251,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end)
   end
 
-  # Full consumption from every node, regardless of that node's health.
+  # Full load from every node, regardless of that node's health.
   defp total_demand(nodes) do
     Enum.reduce(nodes, @no_resources, fn node, acc ->
       node.type

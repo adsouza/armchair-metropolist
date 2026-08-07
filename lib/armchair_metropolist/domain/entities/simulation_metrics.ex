@@ -155,8 +155,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   end
 
   # Every type gets an entry, present or not, so the legend renders a stable set of
-  # rows. Rated and actual are kept apart rather than reduced to one figure: production
-  # scales with health and consumption does not, and that divergence is what makes a
+  # rows. Rated and actual are kept apart rather than reduced to one figure: capacity
+  # scales with health and load does not, and that divergence is what makes a
   # collapse visible.
   defp build_by_type(nodes) do
     grouped = Enum.group_by(nodes, & &1.type)
