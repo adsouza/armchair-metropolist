@@ -1038,6 +1038,81 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "freezing a stalled city" do
+    test "ignores the clock once the city has stalled", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert metrics.stalled
+
+      broadcast_tick(1)
+
+      # snapshot/1 is a GenServer.call, so returning means the broadcast above has
+      # already been handled — or deliberately ignored.
+      {:ok, %{city_map: city_map, metrics: after_tick}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 3
+      assert after_tick.stalled
+    end
+
+    test "a running city still advances", %{city_id: city_id} do
+      # The other direction. A freeze that always fires and a freeze that never fires
+      # are different bugs, and only one of them is caught by the test above.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(2, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
+      refute metrics.stalled
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 4
+    end
+
+    test "a placement unfreezes a stalled city that can still afford one", %{city_id: city_id} do
+      # The freeze is not a lockout. Three dead houses have no money demand at all —
+      # residential consumes none — so their treasury never drained, and 105 covers the
+      # 80 a power plant costs.
+      #
+      # What unfreezes the city is the *new block's own health*, not a rescue of the
+      # houses: `stalled?` is `Enum.all?`, and a node placed at 100.0 fails the
+      # `health == @min_health` half immediately. Measured, the placement does not in
+      # fact rescue the houses — the plant's own draw takes water from 36/40 to 56/40
+      # and labour supply is 0.0 with no living housing, so ten ticks later the three
+      # houses are still at 0.0 and the plant itself has decayed to 40.0. That is a
+      # worse deficit than the 45/40 power shortfall it replaced. The clock restarting
+      # is the whole claim here; do not restate it as a recovery.
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 105.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _node} = CityEngine.place(city_id, 10, 10, :power_plant)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+    end
+
+    test "demolishing back inside the free baseline unfreezes without building", %{
+      city_id: city_id
+    } do
+      # The other unfreeze, and the one the game-over copy leans on: three dead houses
+      # draw 45 power against the free baseline of 40, two draw 30, so tearing one down
+      # for 10 makes the survivors fully supplied at zero health and they regenerate.
+      #
+      # Seeded at exactly 10.0 — the demolition fee, and the `bankrupt` boundary. At 9
+      # the command is refused and this test would assert nothing about the freeze.
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 10.0}}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _id} = CityEngine.demolish(city_id, 2, 0)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+    end
+  end
+
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
   # demand, so every resource sits below full satisfaction.
   defp starved_city do
@@ -1090,6 +1165,24 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   defp broadcast_tick(n) do
     :ok = Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, n})
+  end
+
+  # `house_count` residential blocks, all pinned to `health` (and to whatever status
+  # that health implies) and nothing else on the map — the shape "freezing a stalled
+  # city" needs at both ends of the cliff: 2 houses draw 30 power against the free
+  # baseline of 40 and regenerate, 3 draw 45 and starve. `tick: 3` matches the seeded
+  # `StubSnapshotRepository` tick so callers can assert the frozen tick never moves.
+  defp dead_city(house_count, health) do
+    city =
+      Enum.reduce(0..(house_count - 1)//1, CityMap.new(40, 30), fn x, map ->
+        CityMap.put_node(map, %Node{
+          Node.new(x, 0, :residential)
+          | health: health,
+            status: Node.status_for(health)
+        })
+      end)
+
+    %{city | tick: 3, money: 0.0}
   end
 
   # No matching unsubscribe: the subscription is owned by the test process and

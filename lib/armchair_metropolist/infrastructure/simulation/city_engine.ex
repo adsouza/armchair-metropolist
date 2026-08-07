@@ -26,6 +26,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   advanced by `AdvanceCityTick` and written to storage. Everything user-visible
   uses `city_map.tick`.
 
+  ## Freezing a collapsed city
+
+  When `metrics.stalled` is true the engine ignores `{:tick, n}` entirely: no
+  `AdvanceCityTick`, no broadcast, no checkpoint, no deficit notification. See the
+  clause itself for why this preserves the treasury rather than merely saving work.
+
   ## Broadcasts
 
   On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
@@ -294,9 +300,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
      %{state | viewers: Map.put(state.viewers, ref, pid), linger: cancel_linger(state.linger)}}
   end
 
+  # A stalled city has reached a fixpoint in health, so advancing it would recompute an
+  # identical result — but this is not only an optimisation. Money demand is not
+  # health-scaled either, so a stalled city with a water plant, transit hub or park goes
+  # on draining its treasury, and that treasury is exactly what a rescue is paid for.
+  # Freezing preserves it, which makes "stalled but solvent" a stable state a player can
+  # act on rather than a countdown.
+  #
+  # Not a lockout: `handle_call({:place, …})` does not tick, so a player with money left
+  # can still build, the recomputed metrics clear this flag, and the clock resumes on the
+  # next pulse.
+  #
+  # Nothing is persisted for this. `handle_continue(:hydrate, …)` recomputes metrics, so a
+  # stalled city loads stalled and stays frozen — the same reasoning that keeps `critical?`
+  # derived rather than stored.
+  @impl true
+  def handle_info({:tick, _clock_pulse}, %{metrics: %{stalled: true}} = state) do
+    {:noreply, state}
+  end
+
   # The clock's pulse number is deliberately discarded: city_map.tick is the
   # authority.
-  @impl true
   def handle_info({:tick, _clock_pulse}, state) do
     {:ok, %{city_map: city_map, delta: delta, metrics: metrics}} =
       AdvanceCityTick.execute(state.city_map)
