@@ -1207,7 +1207,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # One commercial block on an otherwise empty grid demands labour (8) the reset city
       # cannot supply at all - no housing exists yet, so labour's baseline is the 0.0 every
       # resource without free capacity gets - which makes this deficit both cheap (40 of the
-      # 150 opening grant) and unambiguously new rather than a continuation of the power
+      # 400 opening grant) and unambiguously new rather than a continuation of the power
       # shortfall reset just wiped away.
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
       start_supervised!({CityEngine, city_id: city_id})
@@ -1241,9 +1241,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :commercial) end)
   end
 
-  # The treasury every `starve/1` caller needs. Ten commercial blocks at 40 each is 400,
-  # well past the 150 opening grant, so without this the fourth `place` comes back
-  # `{:error, :insufficient_funds}` and the deficit under test never forms.
+  # The treasury one `starve/1` caller needs. Ten commercial blocks at 40 each is 400 —
+  # exactly the opening grant, leaving nothing — so `starve/1` on its own just fits
+  # unaided. What does not fit is "re-arms once satisfaction recovers", which demolishes
+  # and rebuilds all ten on top of that. Measured 2026-08-07 by reducing this seeding to
+  # the plain grant: that one test fails and the other four `starve/1` callers pass.
+  #
+  # (Until 2026-08-07 this said "well past the 150 opening grant, so without this the
+  # fourth `place` comes back `{:error, :insufficient_funds}`". The grant became 400 in
+  # d6642b6 and nothing re-derived the sentence, so it named both the wrong figure and
+  # the wrong failure — the fourth placement costs a cumulative 160 and has been
+  # affordable ever since.)
   #
   # Seeded *empty*: only the balance is preloaded, so `starve/1`'s consumers are still
   # placed through the running engine. That is the property its own docstring calls
@@ -1251,9 +1259,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # produce the unannounced edge these tests are about. Do not be tempted to seed
   # `starved_city/0` with money instead.
   #
-  # 10_000 rather than the exact 400: "re-arms once satisfaction recovers" also demolishes
-  # and rebuilds all ten, spending 900, and a figure that has to be recomputed whenever a
-  # cost moves is a fixture that breaks for reasons unrelated to what it tests.
+  # 10_000 rather than the 900 that sequence gross-costs — 400 to place ten, 100 to
+  # demolish ten, 400 to replace them: a figure that has to be recomputed whenever a
+  # construction or demolition cost moves is a fixture that breaks for reasons unrelated
+  # to what it tests.
   defp seed_funded_city do
     StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 10_000.0}}})
   end
