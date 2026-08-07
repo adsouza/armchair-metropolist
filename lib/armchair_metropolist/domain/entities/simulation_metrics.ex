@@ -100,6 +100,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       amenity_marginal_labour: Map.fetch!(amenity, :amenity_marginal_labour),
       amenity_labour: Map.fetch!(amenity, :amenity_labour),
       housing_alive: housing_alive?(nodes),
+      # Derived rather than a written-down `10.0`, for the same reason
+      # `Node.cheapest_action_cost/0` itself is derived: so a balance patch to the
+      # construction or demolition tables moves the threshold with it. No test here can
+      # tell this call apart from a hardcoded copy of today's value — the two agree at
+      # `10.0` and nothing in this module's test environment can make them diverge — so
+      # the coverage that actually protects this line lives in `node_test.exs`, which
+      # characterizes `cheapest_action_cost/0` against the tables directly.
       bankrupt: city_map.money < Node.cheapest_action_cost()
     }
   end
