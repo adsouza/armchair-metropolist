@@ -71,13 +71,20 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
   # Exactly one key is withheld, and it is named in the assertion. With two or more
   # missing, this passes for whichever one `build/3` happens to fetch first and says
   # nothing about the others.
+  #
+  # Built with `Map.new/1` rather than a map literal: a literal missing a required key is
+  # something Elixir's type checker now catches statically — precisely the incompleteness
+  # this test exists to force at runtime — so it emits a compile-time type-warning that a
+  # literal built through `Map.new/1` does not. The checker cannot see through the call, and
+  # the resulting map is byte-identical to the literal it replaces, so the raise this test
+  # is pinning is unaffected.
   test "raises rather than defaulting when the derived map is missing a figure" do
     assert_raise KeyError, ~r/:amenity_labour/, fn ->
-      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
-        amenity: 1.75,
-        amenity_marginal_labour: 5.0,
-        stalled: false
-      })
+      SimulationMetrics.build(
+        CityMap.new(40, 30),
+        %{},
+        Map.new(amenity: 1.75, amenity_marginal_labour: 5.0, stalled: false)
+      )
     end
   end
 

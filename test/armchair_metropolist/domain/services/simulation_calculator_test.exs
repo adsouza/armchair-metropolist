@@ -707,6 +707,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # `health < 20.0` would go unnoticed.
       refute Calc.metrics(houses(3, 10.0)).stalled
     end
+
+    test "three dead houses plus one live one are not stalled" do
+      # A uniform fixture cannot tell `Enum.all?/2` apart from `Enum.any?/2`: every node
+      # in `dead_houses/1` and `houses/2` shares one health value, so both quantifiers
+      # agree on every existing case above. This is the first mixed fixture in the
+      # suite, and it is also the shape real gameplay produces — a partially collapsed
+      # city, not a uniformly dead or uniformly healthy one.
+      #
+      # The extra house at full health is neither dead nor short of anything, so `all?`
+      # is false here while `any?` (true as soon as the three dead houses qualify) would
+      # wrongly call this city stalled — a live, still-decaying city reported as frozen.
+      city = CityMap.put_node(dead_houses(3), %Node{Node.new(9, 9, :residential) | health: 100.0})
+      refute Calc.metrics(city).stalled
+    end
   end
 
   describe "geography" do
