@@ -460,7 +460,7 @@ the grid's right edge at every width.
 
 > **City stalled — nothing is changing on its own.**
 > Every block is dead and starving, so the clock has stopped. The treasury still holds *N*:
-> building or demolishing restarts it. Or **Reset** in the header to start over.
+> building always restarts it, and demolishing can too. Or **Reset** in the header to start over.
 
 The headline is a verdict and the sentence under it is the mechanism, deliberately in that order. A
 verdict is what a player wants first, and this one is *earned* rather than asserted — ticks are

@@ -465,7 +465,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={not SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. The treasury still holds {trunc(
           @metrics.money
-        )}: building or demolishing restarts it. Or <strong>Reset</strong>
+        )}: building always restarts it, and demolishing can too. Or <strong>Reset</strong>
         in the header to start over.
       </p>
     </div>

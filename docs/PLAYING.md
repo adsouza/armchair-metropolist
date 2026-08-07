@@ -292,14 +292,19 @@ Stalling is not the same as being beyond help, and the difference is the treasur
 frozen city's balance is frozen too — it no longer drains to the upkeep of water plants,
 transit hubs and parks — so whatever was in the bank when the city stalled is still there.
 
-**Building anything restarts the clock; demolishing restarts it only if it changes the
-arithmetic.** A new block goes up at full health, and "every block at zero" is what the
-stall is, so one placement of any type is enough to start the ticks again — though the new
-block is then subject to the same shortage that killed the rest, and a city that is still
-short will stall again once it dies. A demolition restarts the clock only when it takes
-what is left back inside the free baseline: tear one house out of three and the remaining
-two are supplied and heal, tear one out of five and the remaining four are still over the
-line and nothing moves.
+**Building anything restarts the clock; demolishing restarts it only if it leaves something
+able to be supplied.** A new block goes up at full health, and "every block at zero" is
+what the stall is, so one placement of any type is enough to start the ticks again — though
+the new block is then subject to the same shortage that killed the rest, and a city that is
+still short will stall again once it dies. A demolition restarts the clock as soon as it
+leaves at least one surviving node fully supplied — the rest of the city is free to stay
+dead forever. Houses crowding each other out under the free baseline are the common case:
+tear one house out of three and the remaining two are supplied and heal, tear one out of
+five and the remaining four are still over the line and nothing moves. It is not the only
+case: three dead houses beside one dead transit hub are stalled the same way, and
+demolishing a house is still the fix, even though the transit hub is untouched — measured,
+the two houses left recover to 100 health within 100 ticks while the transit hub, short of
+labour and money, neither of which has a free baseline, sits at zero forever.
 
 Not every dead-looking city is stalled. One or two houses alone recover from zero health
 with an empty treasury: each draws 15 power against the free baseline of 40, so at `15n ≤
@@ -309,8 +314,8 @@ with an empty treasury: each draws 15 power against the free baseline of 40, so 
 **Game over** is the narrower case: the city has stalled *and* holds less than 10. The
 cheapest thing you can do is demolish, at 10, and the cheapest thing you can build is a
 house, at 15, so below 10 no command is affordable — and because the clock has stopped, the
-balance will never rise again. Nothing can change. See "Running out of money" above: the
-escape has to be bought while there is still something to buy it with.
+balance will never rise again. Nothing in the city can change on its own. See "Running out
+of money" above: the escape has to be bought while there is still something to buy it with.
 
 Both states put a **Reset** button in the page header, beside the theme toggle. It clears
 every block, returns the treasury to the opening grant, sets the tick back to zero and
