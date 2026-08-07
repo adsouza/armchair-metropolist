@@ -67,12 +67,14 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   end
 
   @doc """
-  Every call this adapter received, newest first.
+  Every accepted `save/3` and every `delete/1`, newest first — not literally every
+  call. A `save/3` refused via `refuse_saves_as_stale/1` does not append here, and
+  `load/1` is never recorded at all.
 
-  `saves/0` answers "what was written"; this answers "in what order, against what else".
-  The engine's reset has to delete before it saves — the ordering *is* the error
-  handling, since a failed delete then shows up as the save being refused as stale — so
-  that ordering is behaviour worth asserting rather than an implementation detail.
+  `saves/0` answers "what was written"; this answers "in what order, against what
+  else". The engine's reset has to delete before it saves, so the ordering between
+  an accepted save and a delete is behaviour worth asserting rather than an
+  implementation detail.
   """
   def calls, do: Agent.get(__MODULE__, & &1.calls)
 
