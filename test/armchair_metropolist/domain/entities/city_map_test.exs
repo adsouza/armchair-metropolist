@@ -19,7 +19,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       # merges a decoded snapshot onto `%CityMap{}` — so the struct default is what an old
       # city inherits, while `new/2` is what a fresh one gets. Stating the figure twice
       # (as this module used to) desyncs them on a path only cold loads exercise.
-      assert CityMap.opening_grant() == 150.0
+      assert CityMap.opening_grant() == 400.0
       assert CityMap.new(40, 30).money == CityMap.opening_grant()
       assert %CityMap{}.money == CityMap.opening_grant()
     end

@@ -27,11 +27,27 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # literal was what a fresh one got. Changing one and not the other desynced them on a
   # path only cold loads exercise.
   #
-  # 150 rather than the original 500: the park amenity lowered the cheapest viable
-  # earning city to 75 — one commercial, one park and one house, measured stable at
-  # +28/tick — so 500 bought the minimum six times over. See the construction-costs
-  # design, §7.
-  @opening_grant 150.0
+  # 400, sized to the *second* city rather than the first. The cheapest earning city is
+  # 75 — one commercial, one park and one house, measured stable at +28/tick — and 150
+  # bought that twice over, which is why it stood for a while. What 150 could not buy is
+  # the next rung: there is no self-sustaining city between 95 and 260, and the 260 one
+  # has to be built through a stretch with no commercial block in it, so nothing is
+  # earning while it goes up. On 150 that opening is refused part-way, at the power
+  # plant, with 37 in the bank.
+  #
+  # 400 covers the whole of it from the grant alone, which is what the guide's opening
+  # sequence spends. The slack is reaction time, not luxury: every stage of that
+  # sequence is fully supplied, but the treasury drains at up to 7 a tick while it is
+  # half-built, so the grant is what a player spends instead of hurrying. Measured, 400
+  # sustains that opening at up to 4 seconds per placement; see docs/PLAYING.md, "Your
+  # second city", whose figures are generated and pinned by
+  # `test/docs/playing_guide_test.exs`.
+  #
+  # Raising this is not a way to make the game more forgiving in general — the health
+  # deadlines are decay rates and no balance buys them off. Measured: the naive opening,
+  # which puts the commercial block up before the plants, collapses identically on 260,
+  # 1000 and 2000. `:tick_interval_ms` is the knob on that axis.
+  @opening_grant 400.0
 
   defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: @opening_grant
 

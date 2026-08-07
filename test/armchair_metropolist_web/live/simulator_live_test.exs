@@ -647,7 +647,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#metrics-treasury")
-      assert view |> element("#metrics-treasury") |> render() =~ "150"
+
+      # Through the accessor, as the reset assertion further down this file already does.
+      # A bare "150" here survived a grep for `opening_grant` and had to be found by
+      # running the suite.
+      assert view |> element("#metrics-treasury") |> render() =~
+               "Treasury: #{trunc(CityMap.opening_grant())}"
     end
 
     # Per-resource satisfaction otherwise lives only in the totals row, which

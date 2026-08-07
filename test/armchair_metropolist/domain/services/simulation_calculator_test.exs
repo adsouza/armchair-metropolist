@@ -406,7 +406,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {advanced, _delta} = Calc.advance_tick(sustainable_city())
       # Two residential produce money now (1.0 each) and consume none, so the
       # grant grows rather than staying put.
-      assert advanced.money == 152.0
+      #
+      # Written as grant + 2.0 rather than as the sum. The literal was 152.0, which is
+      # the grant *derived* — a search for the grant's own value does not find it, and
+      # it is what broke when the grant moved from 150 to 400. The income is the claim
+      # here; the starting balance is incidental.
+      assert advanced.money == CityMap.opening_grant() + 2.0
     end
 
     test "an unpayable upkeep starves the consumer once the treasury is empty" do

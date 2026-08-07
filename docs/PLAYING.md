@@ -118,6 +118,101 @@ number that matters, because each node takes the worst of the resources it consu
 That lowest figure is exactly what the metrics' *Tightest* line reports, so it stays on
 screen with the legend collapsed.
 
+## Your second city
+
+The cheapest city that earns anything is three blocks — one house, one park, one
+commercial, 75 in all, holding at full health and **+28 per tick** (see `park` in the
+reference below). Build that first. It is also a dead end, and the shape of the dead end
+is the most useful thing on this page.
+
+**Nothing you can add to it works.** Not one of the seven:
+
+<!-- generated:opening_wall -->
+| add this to the earner | what overruns |
+|---|---|
+| `commercial` | labour 17/10 |
+| `industrial` | labour 21/10 |
+| `park` | water 56/40 |
+| `power_plant` | water 58/40 |
+| `residential` | power 52/40 |
+| `transit_hub` | power 45/40 |
+| `water_plant` | power 62/40 |
+<!-- /generated:opening_wall -->
+
+Three different walls, and none of them is money. The free baseline is already carrying 37
+of its 40 power and 38 of its 40 water, so five of the seven overrun one of those on the
+tick they go up. `commercial` and `industrial` overrun those too, but they run out of
+something scarcer first: one house and one park staff ten workers, of which the shop you
+already have takes eight, and a second shop wants another eight.
+
+So the way forward is a power plant and a water plant. Those need *each other*: the power
+plant drinks 20 water, the water plant draws 25 power, and neither fits beside the earner.
+What is in the way is the shop. Its 22 power is exactly what leaves only 3 free — take it
+out and the house and park draw 15, leaving 25, which is the water plant's draw to the
+unit. **You cannot own a shop while you build the waterworks.**
+
+That is why the second city is a *sequence* and not a next step, and why it goes up with
+nothing earning:
+
+<!-- generated:opening -->
+| # | place | cost | spent so far | tightest resource | money |
+|---|---|---|---|---|---|
+| 1 | `residential` | 15 | 15 | power 15/40 | +1 |
+| 2 | `park` | 20 | 35 | water 30/40 | −2 |
+| 3 | `water_plant` | 70 | 105 | power 40/40 | −7 |
+| 4 | `power_plant` | 80 | 185 | waste 28/48 | −7 |
+| 5 | `residential` | 15 | 200 | waste 38/48 | −6 |
+| 6 | `park` | 20 | 220 | waste 38/56 | −9 |
+| 7 | `commercial` | 40 | 260 | waste 52/56 | +21 |
+
+Total 260, against an opening grant of 400. The finished city nets +21 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against supply, so `40/40` is at capacity and not over it.
+
+Measured: starting cold from the grant, this holds at full health with up to **4 ticks (4 s) between placements**. Slower than that and the treasury empties mid-sequence.
+<!-- /generated:opening -->
+
+Read the `tightest resource` column downwards and you can watch the binding constraint
+walk: power while the baseline is carrying everything, water once the park is in, power
+again at the knife-edge, then waste for the rest of the run. This is the same "the binding
+constraint moves rather than disappearing" from the section below, seen one block at a
+time.
+
+Two things about that table are worth saying out loud.
+
+**The money column is negative for five stages, and that is fine.** Money is the one
+resource whose surplus survives a tick, and a shortfall it covers costs nothing — the
+treasury is what pays the plants' and parks' upkeep until the shop arrives to take over.
+What the grant buys you here is not blocks, it is the right to take your time.
+
+**The shop goes last.** This sharpens the "one house, then producers, then the rest" rule
+above rather than contradicting it: `commercial` is emphatically "the rest", and putting it
+up early is the one mistake this whole sequence is arranged to avoid.
+
+### If you need longer between clicks
+
+The sequence above has a deadline only because the grant is finite — every stage is fully
+supplied, so nothing is decaying; the treasury is simply draining. Bank more first and the
+deadline goes away.
+
+You cannot bank it with the shop unbuilt, because nothing else earns. So do it the other
+way round: **build the three-block earner, let it run, then sell the shop.** Selling puts
+you back at step 2 of the table above — one house and one park — with a full treasury and
+the same five placements ahead of you. Demolition costs 10, which is the whole price of
+the detour.
+
+<!-- generated:opening_pace -->
+| time between placements | bank this much first |
+|---|---|
+| 10 ticks (10 s) | 600 |
+| 20 ticks (20 s) | 1000 |
+| 30 ticks (30 s) | 1200 |
+| 60 ticks (60 s) | 2000 |
+<!-- /generated:opening_pace -->
+
+Do not use the extra money to take the *other* route, the tempting one that puts the shop
+up before the plants. No size of treasury rescues that: health decays at a rate set by the
+size of the shortfall, and the treasury is not one of the terms. A city short of water
+loses health just as fast with 2000 in the bank as with 20.
+
 ## What a support set can carry
 
 Measured by simulation — add residential until the city no longer holds at full
@@ -406,7 +501,7 @@ water draw are not, so a dead park amplifies nothing while still costing everyth
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-Demolishing anything costs 10, whatever it was. A new city starts with 150.
+Demolishing anything costs 10, whatever it was. A new city starts with 400.
 <!-- /generated:costs -->
 
 ### Health and timing

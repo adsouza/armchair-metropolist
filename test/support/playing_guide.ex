@@ -21,6 +21,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
+  alias ArmchairMetropolist.UseCases.ManageInfrastructure
 
   @resources [:power, :water, :waste, :traffic, :labour, :money]
 
@@ -33,9 +34,319 @@ defmodule ArmchairMetropolist.PlayingGuide do
       "consumption" => consumption_block(),
       "constants" => constants_block(),
       "capacities" => capacities_block(),
-      "costs" => costs_block()
+      "costs" => costs_block(),
+      "opening" => opening_block(),
+      "opening_pace" => opening_pace_block(),
+      "opening_wall" => opening_wall_block()
     }
   end
+
+  # --- the opening sequence -----------------------------------------------
+
+  # The order that keeps every stage fully supplied, and it is not the order a player
+  # reaches for. `commercial` is the only real earner and it goes **last**, because its
+  # 22 power is exactly what would crowd the water plant's 25 out from under the free
+  # baseline of 40: one house and one park draw 15, which leaves 25 and not a unit more.
+  # That knife-edge is why the order is forced rather than chosen, and why the sequence
+  # has to be walked with nothing earning.
+  #
+  # Written down rather than searched for. A search over orderings belongs in a scratch
+  # script, not in a test-suite helper — but `opening_stages/0` measures the consequences
+  # of this order, and `playing_guide_test.exs` fails if any stage stops being supplied,
+  # so a balance patch cannot leave the sequence quietly wrong.
+  @opening_order [
+    :residential,
+    :park,
+    :water_plant,
+    :power_plant,
+    :residential,
+    :park,
+    :commercial
+  ]
+
+  # Money is deliberately not one of these. The sequence runs a money deficit through its
+  # whole middle and leans on the treasury to cover it — that is the mechanic being
+  # documented, not a fault. The five below have no such backstop: a shortfall in any of
+  # them is decay on the very same tick.
+  @physical [:power, :water, :waste, :traffic, :labour]
+
+  # The detour a slower player takes: build the three-block earner first, bank the income,
+  # then sell the shop to get back to stage 2 of the sequence above with money in hand.
+  # Derived from `@opening_order` rather than written out, so the two cannot drift — the
+  # earner really is the first two stages plus the commercial block.
+  @earner_detour Enum.take(@opening_order, 2) ++ [:commercial]
+
+  # Descending, so `Enum.find/3` returns the largest interval that survives.
+  @gap_ladder [30, 25, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1]
+  @slow_gaps [10, 20, 30, 60]
+  @bank_ladder [300, 400, 500, 600, 800, 1000, 1200, 1600, 2000, 2400, 3000, 4000]
+
+  # Long enough for a working sequence to climb back to 100 from the couple of points it
+  # can lose, and far longer than a failing one needs to be unmistakably dead.
+  @settle_ticks 200
+  @recovered 99.9
+
+  @doc """
+  Each stage of the documented opening, with what it costs and what it leaves tightest.
+
+  Measured against the city as it stands *after* that stage, every node at full health —
+  which is the situation the guide describes: a player who keeps up never sees decay, so
+  the question at each stage is whether the blocks placed so far cover each other.
+  """
+  @spec opening_stages() :: [map()]
+  def opening_stages do
+    @opening_order
+    |> Enum.with_index(1)
+    |> Enum.map_reduce(0.0, fn {type, step}, spent ->
+      spent = spent + Node.construction_cost(type)
+      stats = @opening_order |> Enum.take(step) |> city_from() |> Calc.resource_stats()
+
+      stage = %{
+        step: step,
+        type: type,
+        cost: Node.construction_cost(type),
+        spent: spent,
+        tightest: tightest_physical(stats),
+        money_flow: money_flow(stats)
+      }
+
+      {stage, spent}
+    end)
+    |> elem(0)
+  end
+
+  @doc "What the whole documented opening costs to build."
+  @spec opening_cost() :: float()
+  def opening_cost do
+    @opening_order |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
+  end
+
+  @doc "What the finished city nets per tick."
+  @spec opening_income() :: float()
+  def opening_income do
+    @opening_order |> city_from() |> Calc.resource_stats() |> money_flow()
+  end
+
+  @doc """
+  The largest gap between placements the sequence survives, straight from the grant.
+
+  Measured through `ManageInfrastructure.place/4` rather than by putting nodes onto the
+  map directly, because affordability is half of what is being asked: the treasury drains
+  while the sequence is half-built, and a refused placement is exactly the failure this
+  is looking for.
+  """
+  @spec opening_max_gap_ticks() :: non_neg_integer()
+  def opening_max_gap_ticks do
+    Enum.find(@gap_ladder, 0, fn gap ->
+      CityMap.new(40, 30)
+      |> run_sequence(@opening_order, gap)
+      |> finished_healthy?()
+    end)
+  end
+
+  @doc """
+  How much a slower player must bank before selling the shop, per interval between clicks.
+
+  The straight-through sequence has a deadline only because the grant is finite. Bank more
+  first and the deadline goes away — this is the ladder of "more".
+  """
+  @spec slow_opening_rows() :: [%{gap_ticks: pos_integer(), bank: pos_integer()}]
+  def slow_opening_rows do
+    Enum.map(@slow_gaps, fn gap ->
+      bank = Enum.find(@bank_ladder, &slow_route_survives?(&1, gap))
+
+      unless bank do
+        raise "slow_opening_rows: no bank up to #{List.last(@bank_ladder)} sustains " <>
+                "#{gap} ticks between placements — the sell-the-shop route the guide " <>
+                "recommends for slow play no longer works at that pace"
+      end
+
+      %{gap_ticks: gap, bank: bank}
+    end)
+  end
+
+  @doc """
+  What breaks when each type in turn is added to the three-block earner.
+
+  The reason the opening above has to be a *sequence* rather than a next step: the
+  cheapest earning city is a dead end for single additions, and this is the enumeration
+  that says so. Every type overruns something, which is why the way forward is to take
+  the whole run of seven at once.
+  """
+  @spec opening_wall_rows() :: [%{type: atom(), tightest: tuple()}]
+  def opening_wall_rows do
+    for type <- sorted_types() do
+      stats = (@earner_detour ++ [type]) |> city_from() |> Calc.resource_stats()
+      %{type: type, tightest: tightest_physical(stats)}
+    end
+  end
+
+  defp opening_wall_block do
+    rows =
+      for %{type: type, tightest: {resource, demanded, supplied, _}} <- opening_wall_rows() do
+        "| `#{type}` | #{resource} #{num(demanded)}/#{num(supplied)} |"
+      end
+
+    Enum.join(
+      ["| add this to the earner | what overruns |", "|---|---|"] ++ rows,
+      "\n"
+    )
+  end
+
+  defp slow_route_survives?(bank, gap) do
+    CityMap.new(40, 30)
+    |> run_sequence(@earner_detour, 1)
+    |> save_until(bank * 1.0)
+    |> sell(:commercial)
+    |> run_sequence(Enum.drop(@opening_order, 2), gap)
+    |> finished_healthy?()
+  end
+
+  defp opening_block do
+    rows =
+      for stage <- opening_stages() do
+        {resource, demanded, supplied, _satisfaction} = stage.tightest
+
+        "| #{stage.step} | `#{stage.type}` | #{num(stage.cost)} | #{num(stage.spent)} " <>
+          "| #{resource} #{num(demanded)}/#{num(supplied)} | #{signed(stage.money_flow)} |"
+      end
+
+    gap = opening_max_gap_ticks()
+
+    Enum.join(
+      [
+        "| # | place | cost | spent so far | tightest resource | money |",
+        "|---|---|---|---|---|---|"
+      ] ++
+        rows ++
+        [
+          "",
+          "Total #{num(opening_cost())}, against an opening grant of " <>
+            "#{num(CityMap.opening_grant())}. The finished city nets " <>
+            "#{signed(opening_income())} per tick. Every stage is fully supplied on all " <>
+            "five physical resources — the `tightest resource` column is demand against " <>
+            "supply, so `40/40` is at capacity and not over it.",
+          "",
+          "Measured: starting cold from the grant, this holds at full health with up to " <>
+            "**#{gap} ticks (#{num(gap * tick_ms() / 1000)} s) between placements**. " <>
+            "Slower than that and the treasury empties mid-sequence."
+        ],
+      "\n"
+    )
+  end
+
+  defp opening_pace_block do
+    rows =
+      for %{gap_ticks: gap, bank: bank} <- slow_opening_rows() do
+        "| #{gap} ticks (#{num(gap * tick_ms() / 1000)} s) | #{bank} |"
+      end
+
+    Enum.join(
+      ["| time between placements | bank this much first |", "|---|---|"] ++ rows,
+      "\n"
+    )
+  end
+
+  # --- sequence mechanics -------------------------------------------------
+
+  defp run_sequence(city, types, gap) do
+    Enum.reduce(types, city, fn type, city ->
+      city |> place_or_skip(type) |> advance(gap)
+    end)
+  end
+
+  # A refusal is left to show up as a missing block in `finished_healthy?/1` rather than
+  # raised here: "the grant ran out at this pace" is a result, not an error.
+  #
+  # The cell is searched for rather than derived from a loop index. Position has no effect
+  # on the simulation (see "Position does not matter"), so any free cell is as good as any
+  # other — but the slow route runs two sequences over one city and frees a cell in
+  # between, and an index restarting at zero collided with the blocks already standing.
+  # Every placement was then refused as `:occupied`, which reads exactly like "the pace
+  # was too slow".
+  defp place_or_skip(city, type) do
+    {x, y} = first_free_cell(city)
+
+    case ManageInfrastructure.place(city, x, y, type) do
+      {:ok, {city, _node}} -> city
+      {:error, _reason} -> city
+    end
+  end
+
+  defp first_free_cell(city) do
+    Enum.find_value(0..(city.height - 1), fn y ->
+      Enum.find_value(0..(city.width - 1), fn x ->
+        unless CityMap.occupied?(city, x, y), do: {x, y}
+      end)
+    end)
+  end
+
+  defp sell(city, type) do
+    node = city |> CityMap.nodes() |> Enum.find(&(&1.type == type))
+    {:ok, {city, _id}} = ManageInfrastructure.demolish(city, node.x, node.y)
+    city
+  end
+
+  defp save_until(city, bank) do
+    Enum.reduce_while(1..1000, city, fn _, city ->
+      if city.money >= bank, do: {:halt, city}, else: {:cont, advance(city, 1)}
+    end)
+  end
+
+  # Both halves matter. A sequence that lost a block to a refusal is a failure even if
+  # what remains is healthy, and a full set of blocks sitting at 40 health is a failure
+  # too. Checked per node rather than against `avg_health`, so one dead block cannot hide
+  # inside six live ones.
+  defp finished_healthy?(city) do
+    nodes = city |> advance(@settle_ticks) |> CityMap.nodes()
+
+    length(nodes) == length(@opening_order) and
+      Enum.all?(nodes, &(&1.health >= @recovered))
+  end
+
+  defp advance(city, ticks) do
+    Enum.reduce(1..ticks//1, city, fn _, city -> elem(Calc.advance_tick(city), 0) end)
+  end
+
+  # Ranked by demand as a fraction of supply, deliberately *not* by `satisfaction`.
+  # Satisfaction is `min(1.0, supplied / demanded)`, so on a healthy city every resource
+  # reads exactly 1.0 and the clamp throws away the margin — ranking by it made this
+  # column say `power` at all seven stages, which is the first entry in `@physical` and
+  # nothing more. The unclamped ratio is what moves, and what it shows is the binding
+  # constraint walking from power to water to waste as the sequence goes up.
+  #
+  # A ratio at or below 1.0 says the same thing as satisfaction 1.0, and carries how much
+  # room is left as well, which is why `playing_guide_test.exs` asserts on it.
+  defp tightest_physical(stats) do
+    {resource, stat} =
+      @physical
+      |> Enum.map(&{&1, Map.fetch!(stats, &1)})
+      |> Enum.max_by(fn {_resource, stat} -> tightness(stat) end)
+
+    {resource, stat.demanded, stat.supplied, tightness(stat)}
+  end
+
+  # Nothing in the documented sequence reaches here with no supply — every physical
+  # resource but labour has the free baseline, and the sequence opens with the house that
+  # supplies labour. The clause is here so a future stage that does cannot divide by zero
+  # and silently rank itself last.
+  # Guards rather than `%{demanded: 0.0}` patterns, matching `SimulationCalculator`'s own
+  # `satisfaction/2`: a literal 0.0 pattern matches only +0.0 and warns about it.
+  defp tightness(%{demanded: demanded}) when demanded == 0.0, do: 0.0
+  defp tightness(%{supplied: supplied}) when supplied == 0.0, do: :infinity
+  defp tightness(%{demanded: demanded, supplied: supplied}), do: demanded / supplied
+
+  defp money_flow(stats) do
+    money = Map.fetch!(stats, :money)
+    money.supplied - money.demanded
+  end
+
+  defp city_from(types) do
+    types |> Enum.frequencies() |> Enum.to_list() |> city_with()
+  end
+
+  defp signed(value) when value < 0, do: "−#{num(abs(value))}"
+  defp signed(value), do: "+#{num(value)}"
 
   defp costs_block do
     rows = for type <- sorted_types(), do: "| `#{type}` | #{num(Node.construction_cost(type))} |"

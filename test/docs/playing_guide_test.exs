@@ -14,6 +14,8 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
   """
   use ExUnit.Case, async: true
 
+  alias ArmchairMetropolist.Domain.Entities.CityMap
+  alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.PlayingGuide
 
   @guide Path.expand("../../docs/PLAYING.md", __DIR__)
@@ -62,6 +64,90 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
     refute capacities =~ "none",
            "a support set has no viable residential count — its labour demand probably " <>
              "outgrew what its water plants can house"
+  end
+
+  describe "the documented opening sequence" do
+    # These pin the *advice*, not just its rendering. The guide tells a player to place
+    # seven specific blocks in one specific order and promises nothing goes short on the
+    # way; each test below is the arithmetic behind one clause of that promise, so a
+    # balance patch that falsifies the advice fails the build instead of publishing a
+    # sequence that kills the city.
+
+    test "the sequence is a real second rung, not an empty list" do
+      # First, because every `for` assertion below is vacuously true of no stages —
+      # the same trap the capacities test guards against with its "none" refutation.
+      stages = PlayingGuide.opening_stages()
+
+      assert length(stages) == 7
+      assert Enum.map(stages, & &1.type) |> Enum.uniq() |> length() > 3
+    end
+
+    test "every stage is fully supplied on all five physical resources" do
+      # The promise the whole section rests on: a player who keeps up never sees decay.
+      # Fails if `water_plant`'s power draw rises above the 25 that fits under the free
+      # baseline of 40 alongside one house and one park, or if `park`'s waste output
+      # drops below the 8 the last two stages need.
+      # `tightness` is demand ÷ supply, unclamped, and the stage reports whichever of the
+      # five is highest — so `<= 1.0` on that one resource says all five are covered.
+      # Asserted on the ratio rather than on `satisfaction`, which clamps at 1.0 and so
+      # reads the same whether a resource has 60% headroom or none.
+      for stage <- PlayingGuide.opening_stages() do
+        {resource, demanded, supplied, tightness} = stage.tightest
+
+        assert tightness <= 1.0,
+               "stage #{stage.step} (place #{stage.type}) is short of #{resource}: " <>
+                 "#{demanded} demanded against #{supplied} supplied. The documented " <>
+                 "opening would decay here, so the guide's advice is now false."
+      end
+    end
+
+    test "the opening grant covers the whole sequence" do
+      # Nothing earns through the middle of this sequence, so the grant is the only
+      # thing paying for it. Fails if the grant drops back towards 150, which cannot
+      # reach the power plant.
+      assert PlayingGuide.opening_cost() <= CityMap.opening_grant(),
+             "the opening costs #{PlayingGuide.opening_cost()} but the grant is " <>
+               "#{CityMap.opening_grant()} — a player following the guide would be " <>
+               "refused part-way through it"
+    end
+
+    test "the city the sequence builds pays for itself" do
+      # Physical satisfaction is covered above; money is not one of the five, and a
+      # city that is fully supplied while its treasury drains is still doomed. Fails if
+      # commercial's income is cut or the parks' upkeep is raised.
+      assert PlayingGuide.opening_income() > 0.0,
+             "the finished city nets #{PlayingGuide.opening_income()} per tick, so the " <>
+               "treasury drains and the guide is recommending a slow death"
+    end
+
+    test "no single block extends the three-block earner" do
+      # The premise of the whole section: if any one addition worked, the guide should be
+      # recommending that instead of a seven-block run. Fails the moment a balance patch
+      # opens a gentler route — for instance a higher power baseline — at which point the
+      # advice needs rewriting rather than regenerating.
+      rows = PlayingGuide.opening_wall_rows()
+
+      assert length(rows) == length(Node.types())
+
+      for %{type: type, tightest: {resource, demanded, supplied, tightness}} <- rows do
+        assert tightness > 1.0,
+               "adding #{type} to the earner leaves #{resource} at #{demanded}/#{supplied}, " <>
+                 "which is sustainable — so the earner is no longer a dead end and the " <>
+                 "opening sequence is no longer the only way forward"
+      end
+    end
+
+    test "the savings ladder for slower play rises with the time taken" do
+      rows = PlayingGuide.slow_opening_rows()
+
+      assert length(rows) >= 3
+
+      banks = Enum.map(rows, & &1.bank)
+
+      assert banks == Enum.sort(banks) and length(Enum.uniq(banks)) == length(banks),
+             "the ladder is #{inspect(banks)} — taking longer cannot need less money, " <>
+               "so the search that produced this is wrong"
+    end
   end
 
   test "the markers the generator writes into actually exist" do
