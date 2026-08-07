@@ -183,9 +183,35 @@ and the clock resumes on the next pulse with no extra code.
 
 This is reachable, not theoretical. A city of residential blocks alone has **no money demand at
 all** — residential consumes none — so its treasury never drains: measured, three dead houses
-holding 105 still hold exactly 105.0 after twenty ticks. And 80 of it buys a `power_plant`, which
-lifts power supply by 120 and takes the three houses back out of deficit — measured, 10.0 average
-health ten ticks after the placement.
+holding 105 still hold exactly 105.0 after twenty ticks.
+
+**Unfreezing and rescuing are two different things, and an earlier draft of this section conflated
+them.** It claimed 80 of that treasury buys a `power_plant` which "takes the three houses back out
+of deficit — measured, 10.0 average health ten ticks after the placement". The figure was real and
+the conclusion was wrong. Ten ticks after that placement the nodes are:
+
+```
+{residential, 0.0}  {residential, 0.0}  {residential, 0.0}  {power_plant, 40.0}
+```
+
+The houses never moved. `10.0` is `40 ÷ 4` — an average with three zeros hidden inside it, and the
+one non-zero term is the new plant *decaying*. A power plant draws 20 water and 12 waste of its own,
+which takes water from 36/40 to **56/40**; water simply replaces power as the binding constraint, at
+a worse ratio (0.714 against 0.889). It also supplies no labour, so the plant starves from its first
+tick.
+
+Two claims survive that correction, and they are the ones this design rests on:
+
+* **Building anything unfreezes the city**, because the new block starts at full health and
+  `stalled?` requires *every* node to be on the floor. That is all the freeze clause needs — the
+  clock resumes and the player can keep acting.
+* **A demolition is the real rescue, and it is the cheap one.** Measured: three dead houses,
+  demolish one for 10, and the remaining two are inside the `15n ≤ 40` cliff — health 10.0 across
+  both after ten ticks, from a treasury of 0. This is the same fact §2 uses to set the bankruptcy
+  threshold, and it is why that threshold is 10 rather than 15.
+
+Demolition is not a universal escape either: five dead houses minus one leaves four, still 60 power
+against the free baseline of 40, still stalled. The cliff is what decides it, not the act.
 
 That is why §5 gives the solvent case its own wording. "Game over" is reserved for the state where
 the claim is provable.
@@ -629,8 +655,12 @@ derived in the test rather than restated as 10.0, so a balance patch cannot leav
 a healthy engine's is not. Both directions: a freeze that never fires and a freeze that always fires
 are different bugs.
 
-*The freeze is not a lockout* — place a `power_plant` into a stalled solvent city through the engine
-and assert `stalled` is false on the metrics it broadcasts.
+*The freeze is not a lockout* — two cases, because unfreezing and rescuing are different (§3).
+Place a block into a stalled solvent city through the engine and assert `stalled` is false: that
+covers the mechanism, since the new block is at full health. Then demolish one of three dead houses
+for exactly 10 and assert the remaining two recover — that covers the claim the game-over threshold
+rests on. Seed that second case at exactly 10.0: at 9 the command is refused and the test asserts
+nothing at all.
 
 *The reset* — assert nodes empty, `tick == 0` and `money == CityMap.opening_grant()`, each named
 separately so a reset that forgets one is caught. Assert the repository's `delete/1` is called before

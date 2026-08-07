@@ -20,7 +20,7 @@ Copied verbatim from `docs/superpowers/specs/2026-08-06-collapse-end-state-and-c
 - **Button label is exactly `Reset`.** Button classes are exactly `btn btn-xs btn-error text-white min-h-6`. `min-h-6` (24px) satisfies WCAG 2.2's 24×24 target size, which bare `btn-xs` (21px) fails. `text-white` is required: daisyUI's own `--color-error-content` measures 4.08:1 against `--color-error`, below the 4.5 AA floor; white is 4.60:1.
 - **Banner headlines are exactly** `Game over — this city is dead.` and `City stalled — nothing is changing on its own.` (em dash, trailing full stop). Both banners share their second sentence, so the headline is the only text distinguishing them.
 - **Nothing goes inside the `<aside>`.** Its width sets the wrap thresholds documented at length in `SimulatorLive.render/1` (expanded 2335, collapsed 1415 with *zero slack*). Adding anything there invalidates measurements this plan does not re-take.
-- **Run `mix precommit` before every commit** (`compile --warnings-as-errors`, `deps.unlock --unused`, `format`, `test`). A git pre-commit hook runs Sobelow as well.
+- **Run `mix precommit` before every commit** (`compile --warnings-as-errors`, `deps.unlock --unused`, `format`, `test`). `mix precommit` itself does not run Sobelow, but **the commit does**: this repo sets `core.hooksPath` to `.githooks`, and `.githooks/pre-commit` runs `mix sobelow` (line 85). Do not look in `.git/hooks` to check this — the redirect means that directory holds nothing but the stock `.sample` files, which reads as "no hooks" and is wrong. `.sobelow-conf` sets `exit: "low"`, so *any* unannotated finding blocks the commit. The one task that adds a flagged call is Task 6 (`File.rm`), and it runs `mix sobelow` explicitly so the failure surfaces at the verify step rather than at `git commit`.
 
 ---
 
@@ -58,7 +58,10 @@ Copied verbatim from `docs/superpowers/specs/2026-08-06-collapse-end-state-and-c
 
 - [ ] **Step 1: Write the failing test**
 
-Append inside the existing top-level `describe`-less block of `node_test.exs` (match the file's existing style):
+Add a new `describe` block to `node_test.exs`, after the existing
+`describe "construction_cost/1 and demolition_cost/0"` block (every test in that file
+lives in a `describe`; there is no bare top-level block to append to). The file aliases
+`ArmchairMetropolist.Domain.Entities.Node` already and needs nothing else:
 
 ```elixir
 describe "cheapest costs" do
@@ -208,26 +211,37 @@ Expected: FAIL — `key :housing_alive not found in: %ArmchairMetropolist.Domain
 
 In `simulation_metrics.ex`:
 
-Add to the `@type t` map, after `amenity_labour: float()`:
+Extend `@type t`. `amenity_labour: float()` is currently the **last** entry and carries no
+trailing comma, so it needs one — the tail becomes exactly:
 
 ```elixir
+          amenity_labour: float(),
           housing_alive: boolean(),
           bankrupt: boolean()
+        }
 ```
 
-Add to `defstruct`, after `amenity_labour: 0.0`:
+Extend `defstruct` the same way. `amenity_labour: 0.0` is currently the last entry, so the
+tail becomes exactly:
 
 ```elixir
+            amenity_labour: 0.0,
             housing_alive: false,
             bankrupt: false
 ```
 
-In `build/3`'s returned struct, after `amenity_labour: Map.fetch!(amenity, :amenity_labour)`:
+Extend `build/3`'s returned struct. `amenity_labour: Map.fetch!(amenity, :amenity_labour)`
+is currently the last field and carries no trailing comma, so the tail becomes exactly:
 
 ```elixir
+      amenity_labour: Map.fetch!(amenity, :amenity_labour),
       housing_alive: housing_alive?(nodes),
       bankrupt: city_map.money < Node.cheapest_action_cost()
+    }
 ```
+
+`nodes` is already bound at the top of `build/3` (`nodes = CityMap.nodes(city_map)`), and
+`Node` is already aliased in this module.
 
 And add the private helper beside `count_offline_nodes/1`:
 
@@ -268,10 +282,16 @@ git commit -m "feat(domain): report living housing and bankruptcy on the metrics
 **Interfaces:**
 - Consumes: `SimulationMetrics.build/3` from Task 2.
 - Produces: `%SimulationMetrics{stalled: boolean()}` and `SimulationMetrics.game_over?(metrics) :: boolean()`. `build/3`'s third argument is renamed `derived` and now requires a `:stalled` key alongside the three `:amenity*` keys.
+- Breaks, and therefore rewrites in Step 1: the two tests in `simulation_metrics_test.exs`
+  that pass a third argument (`"carries the amenity figures it is given"` and `"raises
+  rather than defaulting when the amenity map is missing a figure"`). They are the only
+  `build/3` call sites in the tree outside `SimulationCalculator.metrics/1`.
 
 - [ ] **Step 1: Write the failing test**
 
-In `simulation_calculator_test.exs`:
+In `simulation_calculator_test.exs`. **The module under test is aliased as `Calc` there**
+(`alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc`), not as
+`SimulationCalculator` — spelling it out in full would not compile:
 
 ```elixir
 describe "stalled" do
@@ -279,19 +299,19 @@ describe "stalled" do
     # `Enum.all?/2` over no nodes is true, and avg_health of an empty city is 0.0 —
     # so an untouched grid satisfies the naive "everything is dead" reading. This is
     # the case the non-empty clause exists for.
-    refute SimulationCalculator.metrics(CityMap.new(40, 30)).stalled
+    refute Calc.metrics(CityMap.new(40, 30)).stalled
   end
 
   test "two dead houses are not stalled — they heal from an empty treasury" do
     # 15 x 2 = 30 power against the free baseline of 40, so they are fully supplied
     # and regenerate. Consumption is not health-scaled, which is what makes the
     # count the deciding factor.
-    refute SimulationCalculator.metrics(dead_houses(2)).stalled
+    refute Calc.metrics(dead_houses(2)).stalled
   end
 
   test "three dead houses are stalled" do
     # 15 x 3 = 45 against 40. The cliff is 15n <= 40.
-    assert SimulationCalculator.metrics(dead_houses(3)).stalled
+    assert Calc.metrics(dead_houses(3)).stalled
   end
 
   test "three starving houses above zero health are not stalled" do
@@ -299,11 +319,13 @@ describe "stalled" do
     # still losing health rather than stuck. This is what separates `health == 0.0`
     # from a status- or threshold-based reading; without it, relaxing the clause to
     # `health < 20.0` would go unnoticed.
-    refute SimulationCalculator.metrics(houses(3, 10.0)).stalled
+    refute Calc.metrics(houses(3, 10.0)).stalled
   end
 end
 
-# Helpers — add beside the file's existing private helpers.
+# Helpers — add beside `map_with/1` and the other module-level private helpers at the top
+# of the file. `map_with/1` is not reused: these need per-node health and status set, and
+# threading that through it would change a helper five other fixtures depend on.
 defp houses(count, health) do
   Enum.reduce(0..(count - 1)//1, CityMap.new(40, 30), fn x, map ->
     CityMap.put_node(map, %Node{
@@ -337,6 +359,59 @@ describe "game_over?/1" do
 end
 ```
 
+**Two tests already in `simulation_metrics_test.exs` pass a third argument, and the new
+required key breaks both.** They must be updated in this same step, not left for the
+executor to discover — `Map.fetch!(derived, :stalled)` raises `KeyError` on a map that
+carries only the three `:amenity*` keys.
+
+Replace `test "carries the amenity figures it is given"` with:
+
+```elixir
+  test "carries the derived figures it is given" do
+    metrics =
+      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
+        amenity: 1.75,
+        amenity_marginal_labour: 5.0,
+        amenity_labour: 15.0,
+        stalled: true
+      })
+
+    assert metrics.amenity == 1.75
+    assert metrics.amenity_marginal_labour == 5.0
+    assert metrics.amenity_labour == 15.0
+
+    # `true` rather than `false`: the struct default is `false`, so a build that dropped
+    # this key on the floor would still satisfy a `refute`.
+    assert metrics.stalled
+  end
+```
+
+And replace `test "raises rather than defaulting when the amenity map is missing a
+figure"` with the version below. **The map must be complete except for exactly one key.**
+Left as it was — missing `amenity_labour` *and* `stalled` — the assertion would go on
+passing even if every remaining `Map.fetch!` were relaxed to a defaulting `Map.get`,
+because `:stalled` alone would still raise. That is the "test that cannot fail" this
+rename would quietly introduce.
+
+```elixir
+  # A partial derived map is a programming error, not a request for defaults: the default
+  # applies to the argument as a whole, so silently filling one missing key would let a
+  # caller that computed three figures out of four ship an amenity-free labour total.
+  #
+  # Exactly one key is withheld, and it is named in the assertion. With two or more
+  # missing, this passes for whichever one `build/3` happens to fetch first and says
+  # nothing about the others.
+  test "raises rather than defaulting when the derived map is missing a figure" do
+    assert_raise KeyError, ~r/:amenity_labour/, fn ->
+      SimulationMetrics.build(CityMap.new(40, 30), %{}, %{
+        amenity: 1.75,
+        amenity_marginal_labour: 5.0,
+        stalled: false
+      })
+    end
+  end
+```
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `mix test test/armchair_metropolist/domain/services/simulation_calculator_test.exs test/armchair_metropolist/domain/entities/simulation_metrics_test.exs`
@@ -362,7 +437,21 @@ Rename the default constant and extend it — replace the `@default_amenity` blo
   }
 ```
 
-Add `stalled: boolean(),` to `@type t` and `stalled: false,` to `defstruct`.
+Add `stalled` to `@type t` and to `defstruct`. Task 2 left `bankrupt` last in both with no
+trailing comma, so the tails become exactly:
+
+```elixir
+          housing_alive: boolean(),
+          bankrupt: boolean(),
+          stalled: boolean()
+        }
+```
+
+```elixir
+            housing_alive: false,
+            bankrupt: false,
+            stalled: false
+```
 
 Rename `build/3`'s third parameter and read the new key — change the head to
 `def build(city_map, resources, derived \\ @default_derived) do`, replace every
@@ -371,6 +460,8 @@ Rename `build/3`'s third parameter and read the new key — change the head to
 ```elixir
       stalled: Map.fetch!(derived, :stalled),
 ```
+
+to the returned struct, beside `housing_alive` and `bankrupt`.
 
 Update `build/3`'s `@doc` so it describes `derived` rather than `amenity`: the map now
 carries `:amenity`, `:amenity_marginal_labour`, `:amenity_labour` and `:stalled`, all
@@ -442,8 +533,9 @@ And add the private predicate, beside `worst_satisfaction/2`:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `mix test test/armchair_metropolist/domain`
-Expected: PASS — including the pre-existing metrics and calculator tests, which must
-not regress from the `amenity` → `derived` rename.
+Expected: PASS — including the two pre-existing `build/3` tests rewritten in Step 1. Those
+two are the only callers in the tree that pass a third argument; every other call site uses
+`build/2` and picks up `@default_derived`, so nothing else moves.
 
 - [ ] **Step 5: Commit**
 
@@ -464,10 +556,15 @@ git commit -m "feat(domain): detect a stalled city and compose the game-over sta
 **Interfaces:**
 - Consumes: `metrics.stalled` from Task 3.
 - Produces: no new public function. Behaviour only: a stalled engine ignores `{:tick, n}`.
+  Also produces the test helper `dead_city(house_count, health)` in `city_engine_test.exs`,
+  which Task 8 reuses — leave it at module level beside the file's other private helpers.
 
 - [ ] **Step 1: Write the failing test**
 
-Add a new `describe` block to `city_engine_test.exs`. Its `setup` already gives `city_id`.
+Add a new `describe` block to `city_engine_test.exs`. Its `setup` already gives `city_id`,
+and the file already has a `broadcast_tick/1` helper (bottom of the module) — use it rather
+than spelling out `Phoenix.PubSub.broadcast/3`, which is what every other tick test here
+does.
 
 ```elixir
 describe "freezing a stalled city" do
@@ -478,7 +575,7 @@ describe "freezing a stalled city" do
     {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
     assert metrics.stalled
 
-    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
+    broadcast_tick(1)
 
     # snapshot/1 is a GenServer.call, so returning means the broadcast above has
     # already been handled — or deliberately ignored.
@@ -496,22 +593,50 @@ describe "freezing a stalled city" do
     {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
     refute metrics.stalled
 
-    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
+    broadcast_tick(1)
 
     {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
     assert city_map.tick == 4
   end
 
   test "a placement unfreezes a stalled city that can still afford one", %{city_id: city_id} do
-    # The freeze is not a lockout. Three dead houses have no money demand at all, so
-    # their treasury never drained; 80 of it buys a power plant, which lifts power
-    # supply by 120 and takes them out of deficit.
+    # The freeze is not a lockout. Three dead houses have no money demand at all —
+    # residential consumes none — so their treasury never drained, and 105 covers the
+    # 80 a power plant costs.
+    #
+    # What unfreezes the city is the *new block's own health*, not a rescue of the
+    # houses: `stalled?` is `Enum.all?`, and a node placed at 100.0 fails the
+    # `health == @min_health` half immediately. Measured, the placement does not in
+    # fact rescue the houses — the plant's own draw takes water from 36/40 to 56/40
+    # and labour supply is 0.0 with no living housing, so ten ticks later the three
+    # houses are still at 0.0 and the plant itself has decayed to 40.0. That is a
+    # worse deficit than the 45/40 power shortfall it replaced. The clock restarting
+    # is the whole claim here; do not restate it as a recovery.
     StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 105.0}}})
     start_supervised!({CityEngine, city_id: city_id})
 
     assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
 
     assert {:ok, _node} = CityEngine.place(city_id, 10, 10, :power_plant)
+
+    assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+  end
+
+  test "demolishing back inside the free baseline unfreezes without building", %{
+    city_id: city_id
+  } do
+    # The other unfreeze, and the one the game-over copy leans on: three dead houses
+    # draw 45 power against the free baseline of 40, two draw 30, so tearing one down
+    # for 10 makes the survivors fully supplied at zero health and they regenerate.
+    #
+    # Seeded at exactly 10.0 — the demolition fee, and the `bankrupt` boundary. At 9
+    # the command is refused and this test would assert nothing about the freeze.
+    StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 10.0}}})
+    start_supervised!({CityEngine, city_id: city_id})
+
+    assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+    assert {:ok, _id} = CityEngine.demolish(city_id, 2, 0)
 
     assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
   end
@@ -535,13 +660,29 @@ end
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `mix test test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
-Expected: FAIL — "ignores the clock once the city has stalled" fails on `assert city_map.tick == 3`, because the tick advanced to 4.
+Expected: FAIL — and only one of the four, "ignores the clock once the city has stalled",
+on `assert city_map.tick == 3`, because the tick advanced to 4. That is the whole of what
+this task's clause changes. "a running city still advances" is the other direction of the
+same assertion and is green either way; the two unfreeze tests are green before the change
+too, because the mutation they exist for is a *lockout* added to `handle_call` rather than
+anything in the freeze clause. They are worth having for that reason and for nothing else
+— do not read their passing here as a missing implementation.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `city_engine.ex`, insert **immediately above** the existing
-`def handle_info({:tick, _clock_pulse}, state) do` clause (keeping the `@impl true`
-attribute on whichever clause comes first):
+In `city_engine.ex`, the tick handler today reads:
+
+```elixir
+  # The clock's pulse number is deliberately discarded: city_map.tick is the
+  # authority.
+  @impl true
+  def handle_info({:tick, _clock_pulse}, state) do
+```
+
+Replace those four lines with the block below, leaving the existing body attached to the
+second head. `@impl true` moves onto the new first clause and must not be repeated on the
+second — Elixir warns on `@impl` for a later clause of the same function, and
+`--warnings-as-errors` turns that into a failed build.
 
 ```elixir
   # A stalled city has reached a fixpoint in health, so advancing it would recompute an
@@ -563,11 +704,14 @@ attribute on whichever clause comes first):
     {:noreply, state}
   end
 
+  # The clock's pulse number is deliberately discarded: city_map.tick is the
+  # authority.
   def handle_info({:tick, _clock_pulse}, state) do
 ```
 
-Delete the now-duplicated `@impl true` and `def handle_info({:tick, _clock_pulse}, state) do`
-line that previously started the clause, so the original body follows the second head above.
+`state.metrics` is `nil` between `init/1` and `handle_continue(:hydrate, …)`, and the map
+pattern above would not match it — but `handle_continue/2` runs before any mailbox message,
+so no tick can reach either clause while it is nil.
 
 Also add a section to the moduledoc, after the "Two tick counters, one authority" section:
 
@@ -775,10 +919,13 @@ In `file_snapshot_store.ex`, after `save/3`:
   # fragment of the discarded city on disk.
   #
   # sobelow_skip ["Traversal.FileModule"]
-  # Annotates the `def`, not a line inside it — that is how the existing skips in this
-  # module are placed, and Sobelow ignores one that is not directly above the definition.
-  # Same justification as the others here: the paths come from `:snapshot_dir` config,
-  # never from a request.
+  # Required, not decorative: `:rm` is on `Traversal.FileModule`'s function list and the
+  # path here is a variable, and `.sobelow-conf` sets `exit: "low"`, so an unannotated
+  # finding fails `mix check`. Sobelow rewrites this comment to `@sobelow_skip [...]` and
+  # pairs it with the next `def` it collects — `@doc` and `@impl` go to a different bucket
+  # and do not break the pairing, but another `def` in between would. Same justification
+  # as the other skips here: the paths come from `:snapshot_dir` config, never from a
+  # request.
   @impl true
   def delete(_city_id) do
     Enum.reduce([primary_path(), backup_path(), tmp_path()], :ok, fn path, outcome ->
@@ -821,8 +968,12 @@ In `test/support/stub_snapshot_repository.ex`:
       calls = [{:delete, city_id} | state.calls]
 
       case Map.get(state, :delete_result, :ok) do
-        # Clears `saves` as well as answering, so `echo_saves/0` behaves like a real
-        # adapter after a delete: there is nothing left to load.
+        # Clears `saves` as well as answering, so a subsequent `saves/0` reports what
+        # the engine wrote *after* the wipe rather than the discarded city's history.
+        # Note this does not make `load/1` report nothing: under `echo_saves/0` an empty
+        # `saves` falls back to whatever `set_initial/1` seeded, which is the old city.
+        # No test relies on that path today; a future one that does needs a real
+        # tombstone here rather than an empty list.
         :ok -> {:ok, %{state | saves: [], calls: calls}}
         error -> {error, %{state | calls: calls}}
       end
@@ -850,6 +1001,13 @@ Also add `delete/1` to `ArmchairMetropolist.FailingSnapshotRepository` at the to
 Run: `mix test test/armchair_metropolist/infrastructure/persistence/ test/armchair_metropolist/infrastructure/simulation/`
 Expected: PASS. Both adapter test files inherit the three new contract cases, so this is
 six new passing tests plus no regressions.
+
+Then run: `mix sobelow`
+Expected: no findings, exit 0. This is the only task that adds a call Sobelow flags
+(`File.rm`). The `.githooks/pre-commit` hook would catch it at `git commit` anyway, but
+running it here separates "my skip annotation is misplaced" from "my commit is broken".
+If it reports `Traversal.FileModule` against `delete/1`, the skip comment is not where
+Sobelow expects it; see the note beside it.
 
 - [ ] **Step 5: Commit**
 
@@ -969,7 +1127,10 @@ git commit -m "feat(use-cases): add the ResetCity use case"
 - Test: `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
 
 **Interfaces:**
-- Consumes: `ResetCity.execute/1` (Task 7), `SnapshotRepository.delete/1` (Task 6).
+- Consumes: `ResetCity.execute/1` (Task 7), `SnapshotRepository.delete/1` and
+  `StubSnapshotRepository.calls/0` / `fail_deletes/1` (Task 6), and the `dead_city/2` test
+  helper Task 4 added to `city_engine_test.exs`. `broadcast_tick/1` and
+  `import ExUnit.CaptureLog` are already in that file.
 - Produces: `CityEngine.reset(city_id) :: :ok`. Broadcasts `:city_reset` then `{:city_metrics, metrics}` on `topic(city_id)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1018,12 +1179,22 @@ describe "reset/1" do
     StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
     start_supervised!({CityEngine, city_id: city_id})
 
-    Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+    subscribe_simulation(city_id)
 
     assert :ok = CityEngine.reset(city_id)
 
-    assert_receive :city_reset
-    assert_receive {:city_metrics, %{node_count: 0, tick: 0}}
+    # Bound in arrival order and matched afterwards, because two separate
+    # `assert_receive`s would *not* pin the order: each scans the whole mailbox, so
+    # `assert_receive :city_reset` followed by `assert_receive {:city_metrics, _}` passes
+    # whichever way round the two arrived. Order is the behaviour worth having — a viewer
+    # clears its stream on `:city_reset` and re-renders on the metrics that follow, so
+    # reversed it paints the new figures over the old grid for a frame. Nothing else
+    # sends to this process: it subscribes to one topic and starts one engine.
+    assert_receive first
+    assert_receive second
+
+    assert first == :city_reset
+    assert {:city_metrics, %{node_count: 0, tick: 0}} = second
   end
 
   test "a reset city ticks again", %{city_id: city_id} do
@@ -1033,7 +1204,7 @@ describe "reset/1" do
 
     assert :ok = CityEngine.reset(city_id)
 
-    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @tick_topic, {:tick, 1})
+    broadcast_tick(1)
 
     {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
     assert city_map.tick == 1
@@ -1377,6 +1548,36 @@ describe "the reset control" do
     assert html =~ "Treasury: #{trunc(CityMap.opening_grant())}"
     refute has_element?(view, "#reset-city")
   end
+
+  @tag :stalled_city
+  test "another viewer's reset clears this one's grid too", %{conn: conn} do
+    # The broadcast path, which the click path above cannot reach: `handle_event("wipe",
+    # …)` clears this view's own stream, so deleting `handle_info(:city_reset, …)`
+    # entirely leaves that test green while every *other* open tab keeps rendering the
+    # city it just watched being wiped. Broadcast directly rather than opening a second
+    # view, matching the removal test above.
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert render(view) =~ ~s{id="0:0"}
+
+    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, :city_reset)
+
+    refute render(view) =~ ~s{id="0:0"}
+  end
+
+  @tag :stalled_city
+  test "is sized and coloured for the contrast and target-size floors", %{conn: conn} do
+    # Every one of these four classes is a measurement, and every one is invisible to a
+    # content assertion — the button is present, labelled `Reset` and clickable without
+    # any of them. `min-h-6` is 24px against bare `btn-xs`'s 21px, which fails WCAG 2.2's
+    # 24x24 target size; `text-white` is 4.60:1 on `--color-error` against
+    # `--color-error-content`'s measured 4.08:1, under the 4.5 floor for small text.
+    # Asserted as one exact string so a reordering or a dropped class both go red, and
+    # scoped to the button's own id so it cannot pass against some other element.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert view |> element("#reset-city") |> render() =~
+             ~s(class="btn btn-xs btn-error text-white min-h-6")
+  end
 end
 
 describe "the collapse banner" do
@@ -1632,7 +1833,15 @@ result. The simulation stops advancing, and the tick counter stops with it.
 Stalling is not the same as being beyond help, and the difference is the treasury. A
 frozen city's balance is frozen too — it no longer drains to the upkeep of water plants,
 transit hubs and parks — so whatever was in the bank when the city stalled is still there.
-Building or demolishing anything restarts the clock.
+
+**Building anything restarts the clock; demolishing restarts it only if it changes the
+arithmetic.** A new block goes up at full health, and "every block at zero" is what the
+stall is, so one placement of any type is enough to start the ticks again — though the new
+block is then subject to the same shortage that killed the rest, and a city that is still
+short will stall again once it dies. A demolition restarts the clock only when it takes
+what is left back inside the free baseline: tear one house out of three and the remaining
+two are supplied and heal, tear one out of five and the remaining four are still over the
+line and nothing moves.
 
 Not every dead-looking city is stalled. One or two houses alone recover from zero health
 with an empty treasury: each draws 15 power against the free baseline of 40, so at `15n ≤
@@ -1670,9 +1879,13 @@ git commit -m "docs: explain stalling, game over, and the reset"
 
 ## Notes for the executor
 
-- **Task order matters.** 1 → 2 → 3 (metrics stack up), 5 → 7 → 8 (reset stack), 6 before 8 (the engine needs `delete/1`), 9 before 10 (the slot must exist before it is filled). 4 is independent once 3 lands. 11 is last.
+- **Task order matters.** 1 → 2 → 3 (metrics stack up), 5 → 7 → 8 (reset stack), 6 before 8 (the engine needs `delete/1`), 9 before 10 (the slot must exist before it is filled). 4 before 8 as well: Task 8's tests reuse the `dead_city/2` helper Task 4 adds to `city_engine_test.exs`. Otherwise 4 is independent once 3 lands. 11 is last.
 - **`mix precommit` before every commit**, not just at the end. It runs
-  `compile --warnings-as-errors`, which is where a `Boundary` violation surfaces.
-- **If a test in an untouched file starts failing**, do not adjust it to pass. The
-  `amenity` → `derived` rename in Task 3 is the one change with reach; a failure there is
-  a real incompatibility to fix at the source, not in the assertion.
+  `compile --warnings-as-errors`, which is where a `Boundary` violation surfaces. Sobelow
+  is not in `precommit` but *is* in `.githooks/pre-commit`, so it gates the commit itself —
+  see Global Constraints, and do not check `.git/hooks` to confirm that.
+- **The `amenity` → `derived` rename in Task 3 is the one change with reach, and its two
+  casualties are named in that task.** `simulation_metrics_test.exs` has exactly two
+  callers of `build/3` — every other call site in the tree uses `build/2` and picks up the
+  default — and both are rewritten in Task 3, Step 1. If a *third* file turns up failing,
+  fix it at the source rather than in the assertion.
