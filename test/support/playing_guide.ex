@@ -475,7 +475,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
         outputs =
           @resources
           |> Enum.filter(&Map.has_key?(produced, &1))
-          |> Enum.map_join(", ", fn r -> "#{r} #{num(Map.fetch!(produced, r))}" end)
+          |> Enum.map_join(", ", fn r -> "#{r} #{signed_num(r, Map.fetch!(produced, r))}" end)
 
         "| `#{type}` | #{outputs} |"
       end
@@ -514,7 +514,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
           Enum.map_join(@resources, " | ", fn r ->
             case Map.get(consumption, r) do
               nil -> "—"
-              amount -> num(amount)
+              amount -> signed_num(r, -amount)
             end
           end)
 
@@ -652,6 +652,18 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp worst_satisfaction(metrics) do
     metrics.resources |> Map.values() |> Enum.map(& &1.satisfaction) |> Enum.min()
+  end
+
+  # A table cell's *displayed* effect on a resource, sign included, matching the legend's
+  # `net/3`. For a negative resource a positive figure means the block adds to the problem:
+  # `industrial` removes 90 waste and renders `-90`, a house emits 10 and renders `+10`.
+  #
+  # ASCII `-`, not U+2212, because that is what `SimulatorLive.signed/1` emits and the guide
+  # must not disagree with the screen it describes.
+  defp signed_num(resource, amount) do
+    amount = if Node.negative_resource?(resource), do: -amount, else: amount
+
+    if amount > 0, do: "+#{num(amount)}", else: num(amount)
   end
 
   # 120.0 reads as noise in a table; 120 does not. Keeps one decimal when it matters.

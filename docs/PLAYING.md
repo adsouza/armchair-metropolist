@@ -431,39 +431,41 @@ Available with no infrastructure placed at all.
 | 40 | 40 | 40 | 40 | 0 | 0 |
 <!-- /generated:baseline -->
 
-### What each type produces
+### Per-block effect, scaled by health
 
-Production is scaled by the node's health, so a plant at 50% health supplies half.
+Each figure is one block's effect on that resource, scaled by the block's health — a plant
+at 50% health delivers half. Power, water, labour and money are goods: you want them to
+rise. Waste and traffic are bads: you want them to fall.
 
 <!-- generated:production -->
 | type | produces |
 |---|---|
-| `commercial` | money 30 |
-| `industrial` | waste 90 |
-| `park` | waste 8 |
-| `power_plant` | power 120 |
-| `residential` | labour 5, money 1 |
-| `transit_hub` | traffic 60 |
-| `water_plant` | water 100 |
+| `commercial` | money +30 |
+| `industrial` | waste -90 |
+| `park` | waste -8 |
+| `power_plant` | power +120 |
+| `residential` | labour +5, money +1 |
+| `transit_hub` | traffic -60 |
+| `water_plant` | water +100 |
 
 Every type produces something.
 <!-- /generated:production -->
 
-### What each type consumes
+### Per-block effect, never scaled by health
 
-Consumption is **never** scaled by health. This is the mechanic behind every death
-spiral.
+The other side of the ledger, and it is **never** scaled by health. This is the mechanic
+behind every death spiral: a dying block draws its full power and emits its full waste.
 
 <!-- generated:consumption -->
 | type | power | water | waste | traffic | labour | money |
 |---|---|---|---|---|---|---|
-| `commercial` | 22 | 8 | 14 | 9 | 8 | — |
-| `industrial` | 40 | 25 | — | 8 | 12 | — |
-| `park` | — | 18 | — | 2 | 1 | 3 |
-| `power_plant` | — | 20 | 12 | 3 | 1 | — |
-| `residential` | 15 | 12 | 10 | 6 | — | — |
-| `transit_hub` | 8 | — | 2 | — | 2 | 4 |
-| `water_plant` | 25 | — | 6 | 2 | 1 | 5 |
+| `commercial` | -22 | -8 | +14 | +9 | -8 | — |
+| `industrial` | -40 | -25 | — | +8 | -12 | — |
+| `park` | — | -18 | — | +2 | -1 | -3 |
+| `power_plant` | — | -20 | +12 | +3 | -1 | — |
+| `residential` | -15 | -12 | +10 | +6 | — | — |
+| `transit_hub` | -8 | — | +2 | — | -2 | -4 |
+| `water_plant` | -25 | — | +6 | +2 | -1 | -5 |
 <!-- /generated:consumption -->
 
 Read `waste` and `traffic` as *capacity*: `industrial` supplies waste processing and
