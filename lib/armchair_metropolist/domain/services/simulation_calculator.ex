@@ -185,7 +185,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   defp total_supply(nodes) do
     supply =
       Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
-        Enum.reduce(Node.effective_production(node), acc, &add_resource/2)
+        Enum.reduce(Node.effective_capacity(node), acc, &add_resource/2)
       end)
 
     Map.update!(supply, :labour, &(&1 * labour_multiplier(nodes)))
@@ -255,7 +255,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   defp total_demand(nodes) do
     Enum.reduce(nodes, @no_resources, fn node, acc ->
       node.type
-      |> Node.consumption()
+      |> Node.load()
       |> Enum.reduce(acc, &add_resource/2)
     end)
   end
@@ -287,7 +287,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # reduction at 1.0 also covers a node type that consumes nothing.
   defp worst_satisfaction(node, stats) do
     node.type
-    |> Node.consumption()
+    |> Node.load()
     |> Enum.reduce(1.0, fn {resource, _amount}, acc ->
       min(acc, Map.fetch!(stats, resource).satisfaction)
     end)

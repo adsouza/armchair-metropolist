@@ -167,9 +167,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       {type,
        %{
          count: length(of_type),
-         rated_production: scale(Node.production(type), length(of_type)),
+         rated_production: scale(Node.capacity(type), length(of_type)),
          actual_production: sum_actual_production(type, of_type),
-         consumption: scale(Node.consumption(type), length(of_type))
+         consumption: scale(Node.load(type), length(of_type))
        }}
     end)
   end
@@ -182,11 +182,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   # the same whether or not any are placed.
   defp sum_actual_production(type, nodes) do
     type
-    |> Node.production()
+    |> Node.capacity()
     |> Map.new(fn {resource, _base} ->
       total =
         Enum.reduce(nodes, 0.0, fn node, acc ->
-          acc + Map.get(Node.effective_production(node), resource, 0.0)
+          acc + Map.get(Node.effective_capacity(node), resource, 0.0)
         end)
 
       {resource, total}

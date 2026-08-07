@@ -468,8 +468,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   defp production_block do
     rows =
-      for type <- sorted_types(), not Enum.empty?(production_of(type)) do
-        produced = production_of(type)
+      for type <- sorted_types(), not Enum.empty?(capacity_of(type)) do
+        produced = capacity_of(type)
 
         # Iterated in the display-order @resources list rather than the raw map's
         # key order: a map's key order is a hash-seed artifact, not a decision
@@ -485,7 +485,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
     non_producers =
       sorted_types()
-      |> Enum.filter(&Enum.empty?(production_of(&1)))
+      |> Enum.filter(&Enum.empty?(capacity_of(&1)))
       |> Enum.map_join(", ", &"`#{&1}`")
 
     # Commercial's money production means every type produces something now, so
@@ -511,7 +511,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
     rows =
       for type <- sorted_types() do
-        consumption = Node.consumption(type)
+        consumption = Node.load(type)
 
         cells =
           Enum.map_join(@resources, " | ", fn r ->
@@ -621,7 +621,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # --- helpers ------------------------------------------------------------
 
   defp sorted_types, do: Enum.sort(Node.types())
-  defp production_of(type), do: Node.production(type)
+  defp capacity_of(type), do: Node.capacity(type)
 
   defp city_with(counts) do
     {city, _} =

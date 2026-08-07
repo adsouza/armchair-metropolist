@@ -760,12 +760,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # Past parity that is negative, which is the honest figure — over-provisioning parks
   # costs labour rather than merely stopping helping.
   defp marginal_cell(:park, :labour, amenity_marginal_labour) do
-    signed(amenity_marginal_labour - Map.get(Node.consumption(:park), :labour, 0.0))
+    signed(amenity_marginal_labour - Map.get(Node.load(:park), :labour, 0.0))
   end
 
   defp marginal_cell(type, resource, _amenity_marginal_labour) do
-    produced = Map.get(Node.production(type), resource)
-    consumed = Map.get(Node.consumption(type), resource)
+    produced = Map.get(Node.capacity(type), resource)
+    consumed = Map.get(Node.load(type), resource)
 
     if is_nil(produced) and is_nil(consumed) do
       "—"

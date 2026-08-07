@@ -72,7 +72,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   rename hydrates as though it had been written after it. A city already in the
   current vocabulary passes through unchanged. Called by both snapshot adapters
   immediately after their `:safe` decode — a city that skips this carries retired
-  atoms into the domain, where `Node.production/1` raises on them.
+  atoms into the domain, where `Node.capacity/1` raises on them.
   """
   def modernize(%{nodes: nodes} = city_map) when is_map(nodes) do
     %{city_map | nodes: Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end)}
