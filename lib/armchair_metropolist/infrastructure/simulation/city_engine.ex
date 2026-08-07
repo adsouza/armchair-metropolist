@@ -37,6 +37,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
+  `:city_reset` on a successful `reset/1`, followed by `{:city_metrics, metrics}`.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
   a shared one would deliver every visitor's deltas to every other visitor.
 
@@ -91,6 +92,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.ResetCity
   alias ArmchairMetropolist.UseCases.SummarizeCity
 
   require Logger
@@ -150,6 +152,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   @spec demolish(String.t(), integer(), integer()) ::
           {:ok, String.t()} | {:error, :empty | :insufficient_funds}
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
+
+  @doc """
+  Discard this city and start a new one on the same grid.
+
+  Deletes the stored snapshot, so the tick-0 city that replaces it is durable
+  immediately rather than unsaveable until it outlives the city it replaced.
+  """
+  @spec reset(String.t()) :: :ok
+  def reset(city_id), do: call(city_id, :reset)
 
   @doc """
   Register `pid` as a viewer of `city_id`.
@@ -291,6 +302,37 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:ok, %{city_map: city_map, metrics: metrics}} = ResetCity.execute(state.city_map)
+
+    # Delete first, then save — and the order is the error handling. `save/3` is
+    # monotonic in tick, so with the old row still present this save at tick 0 is
+    # refused as `{:stale, _}` and lands in `save/2`'s existing warning path, which
+    # already means "this engine's city is older than what is stored". A failed delete
+    # therefore reports itself through a path that exists, with no new branch and no new
+    # error policy. Reversed, the save would be refused *before* the delete and the new
+    # city would never reach storage at all.
+    #
+    # Saving here rather than waiting for the next checkpoint: a player who wipes and
+    # immediately closes the tab would otherwise get the collapsed city back.
+    delete(state.city_id)
+    save(state.city_id, city_map)
+
+    broadcast(state.city_id, :city_reset)
+    broadcast(state.city_id, {:city_metrics, metrics})
+
+    # Re-armed from the new city rather than left as it was, so the next deficit is a
+    # fresh edge. An empty city has no deficit, so this is `false` in practice; deriving
+    # it keeps that a consequence of the city rather than a second thing to remember.
+    {:reply, :ok,
+     %{
+       state
+       | city_map: city_map,
+         metrics: metrics,
+         critical?: critical_resources(metrics) != []
+     }}
   end
 
   def handle_call({:attach, pid}, _from, state) do
@@ -480,6 +522,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   defp log_failed_save(tick, reason) do
     Logger.error("failed to persist city snapshot at tick #{tick}: #{inspect(reason)}")
+
+    :ok
+  end
+
+  # Never raises, and never returns anything but `:ok` — same policy as `save/2`, and for
+  # the same reason: this runs inside a `handle_call`, and a raise here would take the
+  # city down and roll it back to the last checkpoint. The consequence of a swallowed
+  # failure is bounded and visible: the save that follows is refused as stale and logs.
+  defp delete(city_id) do
+    case snapshot_repository().delete(city_id) do
+      :ok -> :ok
+      {:error, reason} -> log_failed_delete(city_id, reason)
+    end
+  rescue
+    exception -> log_failed_delete(city_id, exception)
+  catch
+    kind, value -> log_failed_delete(city_id, {kind, value})
+  end
+
+  defp log_failed_delete(city_id, reason) do
+    Logger.error("failed to delete city snapshot for #{city_id}: #{inspect(reason)}")
 
     :ok
   end

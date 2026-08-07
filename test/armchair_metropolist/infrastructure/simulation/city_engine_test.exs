@@ -1116,6 +1116,81 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "reset/1" do
+    test "clears the city, restores the grant, and returns to tick 0", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+      assert city_map.nodes == %{}
+      assert city_map.tick == 0
+      assert city_map.money == CityMap.opening_grant()
+      refute metrics.stalled
+    end
+
+    test "deletes the stored snapshot before saving the new city", %{city_id: city_id} do
+      # The ordering is the error handling: if the delete fails, the save that follows is
+      # refused as stale and lands in the existing warning path. Reversed, the save is
+      # refused first and then the delete throws the new city away too.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      # Newest first, so the save is ahead of the delete.
+      assert [{:save, ^city_id, 0}, {:delete, ^city_id} | _] = StubSnapshotRepository.calls()
+    end
+
+    test "still resets in memory when the snapshot delete fails", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+      StubSnapshotRepository.fail_deletes(:disk_full)
+
+      log = capture_log(fn -> assert :ok = CityEngine.reset(city_id) end)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.nodes == %{}
+      assert log =~ "disk_full"
+    end
+
+    test "broadcasts the reset and the new metrics", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.reset(city_id)
+
+      # Bound in arrival order and matched afterwards, because two separate
+      # `assert_receive`s would *not* pin the order: each scans the whole mailbox, so
+      # `assert_receive :city_reset` followed by `assert_receive {:city_metrics, _}` passes
+      # whichever way round the two arrived. Order is the behaviour worth having — a viewer
+      # clears its stream on `:city_reset` and re-renders on the metrics that follow, so
+      # reversed it paints the new figures over the old grid for a frame. Nothing else
+      # sends to this process: it subscribes to one topic and starts one engine.
+      assert_receive first
+      assert_receive second
+
+      assert first == :city_reset
+      assert {:city_metrics, %{node_count: 0, tick: 0}} = second
+    end
+
+    test "a reset city ticks again", %{city_id: city_id} do
+      # The freeze from Task 4 must not survive the reset.
+      StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert :ok = CityEngine.reset(city_id)
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
+      assert city_map.tick == 1
+    end
+  end
+
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
   # demand, so every resource sits below full satisfaction.
   defp starved_city do
