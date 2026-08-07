@@ -264,13 +264,123 @@ follows carries everything else.
 
 ## 5. Presentation
 
-Three display states, not two.
+**One button, in the page header, and two status blocks that do not repeat it.**
 
 | Condition | Shown |
 |---|---|
-| `game_over?` | **Game over** banner above the grid, carrying the wipe button |
-| `stalled` and not `bankrupt` | **City stalled** panel above the grid, carrying the wipe button |
-| wipe gate only (below) | wipe button in the sidebar |
+| wipe gate (below) | **Reset** button in the header, beside the wordmark |
+| `game_over?` | **Game over** banner above the grid — status only |
+| `stalled` and not `bankrupt` | **City stalled** panel above the grid — status only |
+
+The gate is a superset of both banner states (see the nesting note below), so the button is always
+present whenever a banner is. The banners therefore name the control — "**Reset** in the header" —
+rather than rendering a second copy of it. One render site, one event handler, one thing to test.
+
+### The button lives in the header, via a new slot
+
+`Layouts.app` gains `slot :actions`, rendered in the header's right-hand group beside the theme
+toggle. `SimulatorLive` fills it. Slot content is compiled into the *caller's* template, so
+`phx-click="wipe"` still targets the LiveView — the layout stays a stateless function component and
+learns nothing about collapse, treasuries or node types.
+
+`SimulatorLive` is the only caller of `Layouts.app`, so the slot is additive and breaks nothing.
+
+**One layout fix is required, and it was found by measuring rather than by reading.** The header's
+right-hand group is `<div class="flex-none">`, and daisyUI's `.flex-none` is `flex: none` — a flex
+*item* property, not `display: flex`. A button inserted there stacks *above* the theme toggle
+instead of sitting beside it, growing the header from 64px to 77px at every viewport width. The
+group must become `flex flex-none items-center gap-2`.
+
+### The button: label, size and colour are all measured, not chosen
+
+```heex
+<button class="btn btn-xs min-h-6 bg-error text-white border-error" phx-click="wipe"
+        title="Clear every block and start a new city — this cannot be undone">Reset</button>
+```
+
+Three properties, each pinned by a measurement rather than by taste:
+
+* **Label "Reset", 49px** — against 69px for "Wipe city". Twenty pixels back is the difference
+  between the wordmark fitting and not at 375 (below). "Reset" reads milder than "Wipe city" for an
+  action that is irreversible and unconfirmed, so the consequence moves into the `title` tooltip and
+  the banner copy, both of which say *this cannot be undone*.
+* **`min-h-6` (24px), not bare `btn-xs` (21px)** — WCAG 2.2 AA target size is 24×24, and 21px fails
+  it. `btn-sm` clears it at 35px but costs 48px of width, which is what pushes the wordmark over.
+  `btn-xs` plus a min-height is 49×24: passes, at the narrow size.
+* **`text-white`, not daisyUI's `btn-error` default** — measured contrast of `--color-error-content`
+  on `--color-error` is **4.08:1 in both themes**, below the 4.5 AA floor for small text. Pure white
+  on the same background is **4.60:1** and passes in both. (`btn-outline` was also tested: 4.22
+  light / 4.33 dark — also fails.) The instrument was validated against a known pair, black on white
+  = 21.00, after a first attempt returned a nonsense 1.00 for a visibly red button.
+
+### The wordmark becomes a two-column grid
+
+Placing the button in the header squeezes the brand, and the *subtitle* is what suffers: today it
+sits in the same column as the title, so it gets only the title's 152px while needing 146px, and any
+squeeze wraps it onto two lines. The fix is to let it span the full brand width, starting under the
+logo, right-aligned so it shares a right edge with the title:
+
+```heex
+<a class="grid w-fit grid-cols-[auto_min-content] items-center gap-x-3 gap-y-0.5">
+  <.city_mark />
+  <span class="text-base font-semibold tracking-tight">Armchair Metropolist</span>
+  <span class="col-span-2 text-right text-[11px] opacity-60">city infrastructure simulator</span>
+</a>
+```
+
+The title stays in column 2, beside the logo, wrapping to two lines there — wanted, not tolerated.
+Only the subtitle moves to its own full-width row.
+
+**`min-content` on the second column is load-bearing, and `1fr` is the trap.** `text-align: right`
+aligns to the *column box*, not to the text inside it. With `1fr` the column stretches to fill the
+brand — 146px wide at 375, while the wrapped title only inks 82px of it — so right-aligning pushed
+the subtitle **64px past** the visible title. `min-content` sizes the column to the longest word
+("Metropolist"), so the box edge and the ink edge coincide and the alignment is exact.
+
+Measured at both ends, subtitle-right-edge minus title-right-edge:
+
+| column | 375 viewport | 1932 viewport |
+|---|---|---|
+| `1fr`, left-aligned | +16 | −54 |
+| `1fr`, right-aligned | **+64** | 0 |
+| **`min-content`, right-aligned** | **0** | **0** |
+
+It also makes the brand *narrower* — 146px instead of 194 (375) and 200 (1932) — which hands the
+header back width rather than spending it.
+
+### Measured: line counts, and the sidebar is untouched
+
+Measured 2026-08-06 against the running app, with the header group corrected to a flex row and the
+grid applied via inline styles (the utility classes are absent from source, so a class-based mock is
+a no-op — see the method note in §6).
+
+At viewport **375**, the narrowest case, counting rendered lines against a forced-single-line clone:
+
+| variant | title lines | subtitle lines | header height | button |
+|---|---|---|---|---|
+| today, no button *(baseline)* | 1 | 1 | 64 | — |
+| today + "Wipe city" | 2 | **2** | 87 | 69×24 |
+| today + "Reset" | 2 | 1 | 76 | 49×24 |
+| **grid + "Reset"** | **2 (beside logo)** | **1** | **71** | **49×24** |
+
+The chosen row restores the baseline's single-line subtitle with the button present, and costs 7px
+of header height on a city that is dead anyway.
+
+At viewport **1932** the grid holds and nothing else moves:
+
+| | baseline | with the button and the grid |
+|---|---|---|
+| header height | 64 | 71 |
+| wordmark width | 200 | 146 |
+| header overflows | no | no |
+| **aside width** | **1360** | **1360** |
+
+**The aside figure is the point, and only its equality matters** — the absolute number tracks what
+the legend currently contains and will differ between cities. Unchanged with and without the button
+means the wrap thresholds documented in `SimulatorLive.render/1` — expanded 2335, collapsed 1415
+with *zero slack* — are not merely protected but structurally out of scope. Nothing in this design
+goes inside the `<aside>`, and no threshold needs re-measuring. The banners sit above the grid, also
+outside it.
 
 ### The wipe gate
 
@@ -296,29 +406,47 @@ Note the nesting, which is why the banner and panel need no separate condition: 
 every node to health 0.0, hence every residential to 0.0, hence `not housing_alive`, and it requires
 `node_count > 0`. So the gate holds in both banner states automatically.
 
-### The banner's wording states a mechanism, not a verdict
+### The banners are exactly as wide as the grid
 
-The game-over claim is provable and should read that way: ticks are ignored while stalled, so health,
-tick and money are all constant; every `place` needs at least 15 and every `demolish` needs 10, both
-above the treasury; therefore nothing but the wipe can change the city.
+```heex
+<div style={"width: #{@width * @cell_size}px"} class="max-w-full box-border …">
+```
 
-The stalled-but-solvent panel says the opposite thing just as plainly — the city has stopped changing
-on its own, the treasury still holds *N*, and building or demolishing restarts the clock. That
-sentence is the whole reason the two states are separated.
+Same expression the grid itself uses in `render/1`, so the two cannot drift — 960px today, and
+automatically correct if the grid dimensions or `@cell_size` ever change. A `max-w-*` prose measure
+such as `72ch` would have been a second, unrelated number that merely looked close.
 
-### The button participates in the measured wrap thresholds
+`max-w-full` and `box-border` are both required. Measured at 375, the banner clamps to the
+container's 343px instead of overflowing to 960; the grid keeps its own pre-existing horizontal
+overflow, which this does not touch. Without `box-border` the padding and border would push it past
+the grid's right edge at every width.
 
-The wipe button and any prose beside it live in the `<aside>`, whose width sets the wrap thresholds
-documented at length in `SimulatorLive.render/1`. Those are decided on **max-content** — the widest
-unbroken line the aside contains — and the collapsed threshold (1415) currently has **zero slack**,
-because `W_col == W_row` there.
+### The copy, verbatim
 
-So: new prose in the sidebar must be short or wrappable, and if any line added there exceeds the
-current binding widths (1198px expanded, 359px collapsed) both thresholds need re-measuring by the
-procedure that comment describes — fresh page load at each candidate width, not a resize into it.
+**Game over** (`game_over?`):
 
-The banner and panel sit **above the grid**, outside the aside, precisely so their longer prose
-cannot touch those thresholds.
+> **Game over — this city is dead.**
+> Every block is dead and starving, so the clock has stopped. Building costs at least 15 and
+> demolishing costs 10, and the treasury holds *N* — so nothing can restart it. **Reset** in the
+> header clears the grid and starts a new city. This cannot be undone.
+
+**City stalled** (`stalled`, solvent):
+
+> **City stalled — nothing is changing on its own.**
+> Every block is dead and starving, so the clock has stopped. The treasury still holds *N*:
+> building or demolishing restarts it. Or **Reset** in the header to start over.
+
+The headline is a verdict and the sentence under it is the mechanism, deliberately in that order. A
+verdict is what a player wants first, and this one is *earned* rather than asserted — ticks are
+ignored while stalled, so health, tick and money are all constant; every `place` needs at least 15
+and every `demolish` needs 10, both above the treasury; therefore nothing but the reset can change
+the city. That proof is what the second sentence carries, and it is what keeps "dead" from being the
+kind of unbacked classification that has gone stale in this project's prose before.
+
+The two headlines are opposites on purpose, and that contrast is the whole reason the states are
+separated: one says nothing *can* change, the other says nothing *is* changing but you can still
+act. Both name the treasury figure, because that number is what decides which of the two a player is
+looking at.
 
 ### Events
 
@@ -333,6 +461,31 @@ Single click, no confirmation — see §7.
 
 Every figure in this document came from running the domain, not from reading it. Recorded here so
 the implementation can be checked against the same numbers.
+
+**Method note, for whoever re-measures the header.** Every layout figure here was taken by injecting
+into the running page, and three separate readings had to be thrown away first:
+
+* **Utility classes assigned at runtime do nothing.** Tailwind emits only what it finds in *source*,
+  so `grid`, `grid-cols-[auto_1fr]` and `btn-error` were all inert when set from the console — the
+  first mock produced an accidental stacked layout that looked plausible and was not the proposal.
+  Mock with inline styles, and assert the effect (`getComputedStyle(el).display === 'grid'`) before
+  believing any measurement. The same classes written into the `.heex` compile normally.
+* **A stylesheet scan is the wrong instrument for "does this class exist".** Matching
+  `rule.selectorText` against `.btn` reported *false* for every daisyUI class including ones
+  demonstrably styling the page, because daisyUI v5 wraps its selectors in `:where()`. Measure the
+  effect, not the mechanism.
+* **Viewport emulation persists across resizes, and `window.innerWidth` lies under it.** After a
+  mobile preset, a later resize left the header laying out at 375px while `window.innerWidth`
+  reported 1012 — and under the preset itself the *layout* width of 375 is correct while
+  `innerWidth` is the wrong one. So do not assert `header.width ≈ window.innerWidth`: assert
+  `header.width === <the width you meant to test>`, and reload after every resize.
+* **Mutations survive between probes.** Several readings were taken against a brand that an earlier
+  probe had already restructured, so the "original" snapshot was not original and one run threw
+  `appendChild: parameter 1 is not of type 'Node'`. Reload before each mock and assert the pristine
+  shape (`a.children.length === 2`) before capturing anything.
+* **LiveView patches injected DOM away on the next tick.** Disconnect the socket
+  (`liveSocket.disconnect()`) before mocking, and hide `#flash-group` — the disconnect banner lands
+  exactly over the header's right-hand group.
 
 **Cheapest action.** Construction: residential 15, park 20, transit_hub 40, commercial 40,
 industrial 60, water_plant 70, power_plant 80. Demolition 10, flat. `cheapest_action_cost` = 10.0.
@@ -357,7 +510,7 @@ richer than it started. That is the evidence for keeping `stalled` and `bankrupt
 ## 7. Rejected alternatives
 
 **A confirmation step on the wipe.** Proposed as a two-click arm-then-commit, because the gate fires
-before the city is dead — the third row of §6 aside, a city can have no living housing while blocks
+before the city is dead: setting aside §6's third row, a city can have no living housing while blocks
 still stand and the treasury holds real money. Rejected on the explicit instruction that a single
 click is truer to the requirement. The risk is recorded in §8.
 
@@ -387,6 +540,12 @@ predicate is available.
 money remains, there is no confirmation, and the delete makes it unrecoverable. Accepted on
 instruction; the mitigation is that the button is hidden entirely while any housing is alive, which
 is the state a player who is still playing normally is in.
+
+**Putting it in the header sharpens that slightly**, because it lands beside the theme toggle — a
+control people click casually and repeatedly — rather than in a sidebar nobody clicks by accident.
+The gate is what keeps this acceptable: the button is absent from the chrome during ordinary play,
+so it never becomes part of the furniture the way the toggle is. It should be styled as destructive
+(`btn-error`) rather than as neutral chrome, so it does not read as another settings control.
 
 **Partial fixpoints are not detected.** A live house beside a permanently dead water plant never
 changes again, but it has positive average health, so it is neither stalled nor frozen and the engine
@@ -487,7 +646,30 @@ callback exists.
 
 *The wipe gate* — four cases: healthy city (hidden), no living housing with blocks standing (shown),
 empty grid with 9 money (shown, the dead end), fresh city (hidden). Dropping either disjunct reddens
-one of the middle two.
+one of the middle two. Asserted against the header button's own id, which is the single render site.
+
+*The banners do not duplicate the button* — assert that a game-over render contains exactly one wipe
+control. Without this, a later edit that helpfully adds a button back into the banner ships duplicate
+DOM ids and a second untested event path, and nothing else in the suite would notice.
+
+*The layout slot* — assert the header renders the button beside the theme toggle rather than above
+it. This is the `flex-none` finding from §5 and it is invisible to every content assertion: the
+button is present, clickable and correctly labelled in both arrangements, so only a geometric or
+class-level check can see it. A class assertion on the group (`flex` present) is the cheap version
+and is enough to stop a regression that drops it.
+
+*The wordmark grid* — same category, same blind spot. Assert the subtitle span carries
+`col-span-2` and `text-right`, and that the brand carries `grid-cols-[auto_min-content]`. Every one
+of those is invisible to a content assertion, and dropping `min-content` for `1fr` silently
+un-aligns the subtitle by 64px without changing a single rendered character.
+
+*The banner width* — assert the banner's inline width is derived from `@width * @cell_size` rather
+than a literal 960, so a grid-dimension change moves both together.
+
+*The two headlines are distinguishable* — assert the game-over render contains "this city is dead"
+and the stalled-solvent render does not. Both banners share their second sentence, so an assertion
+on the shared prose passes against the wrong state; the headline is the only text that separates
+them.
 
 ### Not needed
 
