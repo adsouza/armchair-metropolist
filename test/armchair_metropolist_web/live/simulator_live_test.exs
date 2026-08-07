@@ -901,6 +901,70 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       assert has_element?(view, ~s{[data-cell="residential-cost"][title="costs 15"]})
     end
+
+    # The whole point of the change: waste and traffic are bads, so a block that
+    # removes them reads negative and a block that emits them reads positive.
+    test "a negative resource shows removal as negative and emission as positive",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Nothing placed, so these are the per-block marginal figures and the test
+      # needs no treasury.
+      assert view |> element(~s{[data-cell="industrial-waste"]}) |> render() =~ "-90"
+      assert view |> element(~s{[data-cell="residential-waste"]}) |> render() =~ "+10"
+
+      # Traffic is the second negative resource, and it is not a copy of waste in
+      # the code — only in `@negative_resources`. Without these two lines, shipping
+      # the list as `[:waste]` passes the whole suite.
+      assert view |> element(~s{[data-cell="transit_hub-traffic"]}) |> render() =~ "-60"
+      assert view |> element(~s{[data-cell="residential-traffic"]}) |> render() =~ "+6"
+
+      # Positive resources in the same test. A flip applied to *every* resource
+      # rather than the negative ones satisfies all six assertions above.
+      assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~ "+120"
+      assert view |> element(~s{[data-cell="residential-power"]}) |> render() =~ "-15"
+    end
+
+    # Three houses at 15 each is 45, inside the opening grant, but the treasury is
+    # raised so the fixture does not depend on the grant's current value.
+    @tag treasury: 1_000.0
+    test "a negative resource's city total flips too, not only the per-block figure",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view
+      |> element(~s{button[phx-click="select_type"][phx-value-type="residential"]})
+      |> render_click()
+
+      for {x, y} <- [{1, 1}, {2, 1}, {3, 1}] do
+        view
+        |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="#{y}"]})
+        |> render_click()
+      end
+
+      # Asserted on `.font-semibold` — the total line's own class — and not on the
+      # cell: the cell's text also holds the `+10` marginal, so a cell-level
+      # assertion silently matches whichever of the two lines the flip reached.
+      #
+      # This exercises `total_cell/4`'s `is_nil(produced)` branch, which is the
+      # branch that fires for every emitter, because no type both produces and
+      # consumes waste. Flipping only the main branch leaves this reading `-30`.
+      cell = view |> element(~s{[data-cell="residential-waste"] .font-semibold}) |> render()
+      assert cell =~ "+30", "three houses must total +30 waste emitted"
+    end
+
+    test "a decaying remover shows its capacity failing, rated → actual", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_industrial_waste(90.0, 45.0)})
+      render(view)
+
+      # Both nets flip, not just the rated one. The mutation that flips `rated_net`
+      # and leaves `actual_net` alone renders "-90 → +45", which an assertion on
+      # either figure alone accepts.
+      assert view |> element(~s{[data-cell="industrial-waste"] .font-semibold}) |> render() =~
+               "-90 → -45"
+    end
   end
 
   # Distinct values per resource on purpose: with every resource at 1.0 a test cannot
@@ -953,6 +1017,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       rated_production: %{power: rated},
       actual_production: %{power: actual},
       consumption: %{water: 20.0, waste: 12.0, traffic: 3.0}
+    })
+  end
+
+  # The negative-resource counterpart to `metrics_with_power_production/2`. Industrial's
+  # waste entry is *removal* capacity, and removal is health-scaled, so this is the
+  # divergence a decaying incinerator actually produces. Written directly for the same
+  # reason: placing real nodes cannot produce an exact rated/actual gap.
+  defp metrics_with_industrial_waste(rated, actual) do
+    metrics = empty_city_metrics()
+
+    put_in(metrics.by_type[:industrial], %{
+      count: 1,
+      rated_production: %{waste: rated},
+      actual_production: %{waste: actual},
+      consumption: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0}
     })
   end
 

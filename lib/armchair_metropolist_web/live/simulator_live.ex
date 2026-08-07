@@ -763,7 +763,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     if is_nil(produced) and is_nil(consumed) do
       "—"
     else
-      signed((produced || 0.0) - (consumed || 0.0))
+      signed(net(resource, produced || 0.0, consumed || 0.0))
     end
   end
 
@@ -804,11 +804,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         nil
 
       is_nil(produced) ->
-        signed(-consumed)
+        signed(net(resource, 0.0, consumed))
 
       true ->
-        rated_net = produced - (consumed || 0.0)
-        actual_net = actual - (consumed || 0.0)
+        rated_net = net(resource, produced, consumed || 0.0)
+        actual_net = net(resource, actual, consumed || 0.0)
 
         # Compared as displayed rather than as floats: production scales continuously
         # with health, so most of the time the two differ by a fraction of a unit that
@@ -837,6 +837,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
           "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
     end
+  end
+
+  # The sign convention, in one place. For a negative resource a positive figure means
+  # the type adds to the problem: `industrial` reads -90 because it removes 90 waste,
+  # a house reads +10 because it emits 10.
+  #
+  # One function rather than a flip at each call site, deliberately. `marginal_cell/3`
+  # and both branches of `total_cell/4` read the same two tables, and the
+  # `is_nil(produced)` branch is the one that fires for most types on a negative
+  # resource — no type both produces and consumes waste, and none does for traffic. So
+  # a partial patch leaves every emitter rendering backwards while the two removers
+  # look right, which is the shape of defect this legend has shipped before.
+  defp net(resource, produced, consumed) do
+    if Node.negative_resource?(resource),
+      do: consumed - produced,
+      else: produced - consumed
   end
 
   defp signed(value) do
