@@ -294,7 +294,7 @@ follows carries everything else.
 
 | Condition | Shown |
 |---|---|
-| wipe gate (below) | **Reset** button in the header, beside the wordmark |
+| wipe gate (below) | **Reset** button in the header, beside the theme toggle |
 | `game_over?` | **Game over** banner above the grid — status only |
 | `stalled` and not `bankrupt` | **City stalled** panel above the grid — status only |
 

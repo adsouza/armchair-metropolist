@@ -1854,7 +1854,7 @@ house, at 15, so below 10 no command is affordable — and because the clock has
 balance will never rise again. Nothing can change. See "Running out of money" above: the
 escape has to be bought while there is still something to buy it with.
 
-Both states put a **Reset** button in the page header, beside the app name. It clears every
+Both states put a **Reset** button in the page header, beside the theme toggle. It clears every
 block, returns the treasury to the opening grant, sets the tick back to zero and discards
 the stored city. There is no confirmation and no undo.
 ```
