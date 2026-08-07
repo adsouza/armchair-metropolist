@@ -532,9 +532,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
     # cell contradict its own two halves. Money supplied 13, demanded 23, but a
     # treasury of 487 (carried) brings the balance-inclusive `satisfaction` to
-    # 1.0 -- exactly the case that used to render "13/23 · 100.0%", where dividing
+    # 1.0 -- exactly the case that used to render "23/13 · 100.0%", where dividing
     # the two numbers shown gives 57%, not 100%. The cell must read the flow-only
-    # figure instead, so 56.5% (13/23) is what belongs beside 13/23.
+    # figure instead, so 56.5% (13/23) is what belongs beside 23/13.
     test "the money totals cell reads the flow-only percentage, not the balance-inclusive one",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
