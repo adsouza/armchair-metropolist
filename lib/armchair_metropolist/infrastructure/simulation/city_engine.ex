@@ -418,8 +418,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # When the stop came from handle_info(:linger_expired, ...), this is a second save
   # following the :DOWN handler's. Whether it saves an unchanged city_map now depends on
   # whether the city is stalled — the per-visitor design's "a frozen city does not
-  # advance" was written about the no-viewer case below, before this branch gave
-  # "frozen" its own meaning for a stalled city's tick.
+  # advance" was written about the no-viewer case covered in the next paragraph, before
+  # this branch gave "frozen" its own meaning for a stalled city's tick.
   #
   # An unstalled city keeps ticking while abandoned: the engine stays subscribed to
   # "city_tick" throughout the linger, so a full linger window's worth of ticks (~30 at
@@ -506,13 +506,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         :ok
 
       # Not a failure — the adapter refused to move the city backwards. Worth a warning
-      # rather than silence, because reaching here has two causes. One is a
+      # rather than silence, because reaching here has three causes. One is a
       # crash-and-replay, where this engine hydrated from an older snapshot than the
-      # one stored — the exact case the guarantee exists for. The other is an ordinary
+      # one stored — the exact case the guarantee exists for. Another is an ordinary
       # shutdown of a stalled city: its tick never advances, so the :DOWN handler's
       # save and terminate/2's save both carry the same tick, and the second is always
-      # refused. In that second case nothing is wrong — the city is already durable at
-      # this tick, and the warning is noise rather than a signal.
+      # refused. The third is `handle_call(:reset, …)` when its preceding `delete/1`
+      # failed: the old row is still there at its old tick, so the reset's save at
+      # tick 0 lands here too — see that handler's comment. None of the three is a
+      # problem: the city is already durable, either at the tick already stored or at
+      # the tick this call just tried to write, and the warning is noise rather than a
+      # signal.
       {:stale, stored_tick} ->
         Logger.warning(
           "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
