@@ -500,22 +500,33 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="transit_hub-water"]}) |> render() =~ "—"
     end
 
-    test "the totals row reports supply, demand and satisfaction per resource",
+    test "the totals row reports demand against capacity, and satisfaction per resource",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       send(view.pid, {:city_metrics, metrics_with_distinct_satisfaction()})
       render(view)
 
-      # Supply and demand are half the cell and were asserted nowhere: the whole
-      # "supplied/demanded · " prefix could be deleted and the suite stayed green.
-      # The fixture's two figures differ, and differ per resource, so a transposed
-      # pair reads as wrong rather than as itself.
-      assert view |> element(~s{[data-total="power"]}) |> render() =~ "150/120"
-      assert view |> element(~s{[data-total="water"]}) |> render() =~ "35/70"
+      # Demand first, capacity second, for every resource. The fixture's two figures
+      # differ per resource, so a transposed pair reads as wrong rather than as itself.
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "120/150"
+      assert view |> element(~s{[data-total="water"]}) |> render() =~ "70/35"
+
+      # The negative resources take the *same* order — that is the point of unifying
+      # on demand-first. An ordering swap applied only to waste and traffic passes the
+      # two assertions below and fails the two above; one applied only to the positive
+      # resources does the reverse. Both pairs are needed.
+      assert view |> element(~s{[data-total="waste"]}) |> render() =~ "80/60"
+      assert view |> element(~s{[data-total="traffic"]}) |> render() =~ "100/25"
 
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
       assert view |> element(~s{[data-total="water"]}) |> render() =~ "50.0%"
+      assert view |> element(~s{[data-total="waste"]}) |> render() =~ "75.0%"
+      assert view |> element(~s{[data-total="traffic"]}) |> render() =~ "25.0%"
+
+      # The header names the order. It is a decision, so a silent revert to
+      # supplied/demanded must redden something.
+      assert render(view) =~ "demanded/supplied · met this tick"
     end
 
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
@@ -532,7 +543,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       render(view)
 
       cell = view |> element(~s{[data-total="money"]}) |> render()
-      assert cell =~ "13/23"
+      assert cell =~ "23/13"
       assert cell =~ "56.5%"
       refute cell =~ "100.0%"
     end

@@ -589,7 +589,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                     short, with money's total sitting under `labour` and the last
                     resource getting no column at all. Adding an always-visible column
                     means incrementing this by hand and looking at the table. --%>
-              <th class="text-left" colspan="3">supplied/demanded · met this tick</th>
+              <th class="text-left" colspan="3">demanded/supplied · met this tick</th>
               <th
                 :for={resource <- @resources}
                 data-total={resource}
@@ -823,18 +823,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   # `resources` is populated from mount via SummarizeCity, so there is no empty-map
   # case to guard here beyond ordinary defensiveness.
+  #
+  # Demand first, capacity second, for every resource regardless of polarity. This is
+  # what lets one header sentence cover both: for power it reads "drawing 120 of 150
+  # available", for waste "generating 80 against 60 of processing". It is also the
+  # order `docs/PLAYING.md` already uses for its `tightest resource` column, so the
+  # guide and the app no longer disagree about which figure comes first.
   defp totals_cell(resources, resource) do
     case Map.get(resources, resource) do
       nil ->
         "—"
 
       stats ->
-        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are supplied
-        # and demanded, both flow-only, so the percentage beside them has to be
+        # `flow_satisfaction`, not `satisfaction`: the two numbers shown are demanded
+        # and supplied, both flow-only, so the percentage beside them has to be
         # computed on that same basis or it stops being derivable from what's on
         # screen. For money, `satisfaction` also counts the treasury and would make
-        # this cell contradict its own two halves (13/23 while reading 100%).
-        "#{round(stats.supplied)}/#{round(stats.demanded)} · " <>
+        # this cell contradict its own two halves (23/13 while reading 100%).
+        "#{round(stats.demanded)}/#{round(stats.supplied)} · " <>
           "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
     end
   end
