@@ -1749,7 +1749,7 @@ Add the component and helper, after `render/1` and before `legend/1`:
       </p>
       <p :if={not SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. The treasury still holds
-        {trunc(@metrics.money)}: building or demolishing restarts it. Or <strong>Reset</strong>
+        {trunc(@metrics.money)}: building always restarts it, and demolishing can too. Or <strong>Reset</strong>
         in the header to start over.
       </p>
     </div>
