@@ -694,29 +694,35 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
     # stayed alongside it.
     #
-    # The values are not the wrap points themselves but points chosen to sit safely inside
-    # the window where the sidebar fits beside the grid. Collapsed, 1415 is the midpoint of
-    # a measured window [1415, 1415] — degenerate, so it is the only legal value rather than
-    # a midpoint with slack. Expanded, 2763 was re-measured 2026-08-07 after the
-    # negative-polarity reword raised the totals footnote's max-content width from 1198px to
-    # 1626px: rather than a fresh binary search, the prior constant (2335, itself the
-    # midpoint of a measured [2254, 2415] window) was raised by that same delta,
-    # ceil(1626 - 1198) = 428, then confirmed at the boundary pixel — 2763 keeps the legend
-    # beside the grid, 2762 drops it below. If a legitimate content change moves the
-    # footnote again, re-measure in the browser and shift this value by the new delta, or
-    # re-run the full binary search from the comment in `render/1` if the margin looks thin.
+    # The values are midpoints of measured windows, not the wrap points themselves.
+    # Collapsed, 1415 is the midpoint of a measured window [1415, 1415] — degenerate, so
+    # it is the only legal value rather than a midpoint with slack.
+    #
+    # Expanded, 2424 was re-measured 2026-08-07 (fix round) after the negative-polarity
+    # footnote was reworded a second time, to a shorter sentence than the first draft: the
+    # first draft's 1626px pushed the threshold past 2560px, a common monitor width,
+    # dropping the legend below the grid there where it previously sat beside it. The
+    # shorter wording measures 1288px, and the threshold was re-derived by the same
+    # binary-search method as the comment in `render/1` — forcing `flexDirection` on the
+    # real inner div and reloading fresh at each candidate viewport (never resizing into
+    # it; that reads differently because of the scrollbar) — rather than by shifting the
+    # prior constant by a measured delta, which is what put this test into a fix round in
+    # the first place. That search found window [2343, 2505] (2343 = W_col, the boundary
+    # forcing `column`; 2505 = W_row, forcing `row`), whose midpoint is exactly 2424. If a
+    # legitimate content change moves the footnote again, re-measure in the browser and
+    # move this value to the *new* midpoint — do not derive it from this one plus a guess.
     test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2763px]:flex-row"
+      assert expanded =~ "max-[2424px]:flex-row"
       refute expanded =~ "max-[1415px]:flex-row"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       collapsed = view |> element(~s{aside div.flex}) |> render()
       assert collapsed =~ "max-[1415px]:flex-row"
-      refute collapsed =~ "max-[2763px]:flex-row"
+      refute collapsed =~ "max-[2424px]:flex-row"
     end
 
     # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
