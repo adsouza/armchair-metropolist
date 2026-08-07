@@ -64,17 +64,20 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
 
   describe "negative_resource?/1" do
     test "is true for the bads and false for the goods" do
-      # Both halves, in one test. A predicate hardcoded to `true` satisfies the
-      # first loop alone; one hardcoded to `false` satisfies the second alone.
-      # This is also the assertion that forces a polarity decision if a seventh
-      # resource is ever added, rather than letting it default to positive.
-      for resource <- [:waste, :traffic] do
-        assert Node.negative_resource?(resource), "#{resource} must be negative"
-      end
+      # Both halves are needed, and neither is redundant: a predicate hardcoded to
+      # `true` empties `positives`, one hardcoded to `false` empties `negatives`.
+      #
+      # Both lists are derived from `Node.resources/0` rather than written out twice,
+      # which is what actually forces the polarity decision the old literal-list
+      # version only claimed to: add a seventh resource to `@resources` and it lands
+      # in one of these two lists automatically, reddening `positives` (it defaults
+      # into the false/positive bucket) until someone classifies it in
+      # `@negative_resources`.
+      negatives = Enum.filter(Node.resources(), &Node.negative_resource?/1)
+      positives = Enum.reject(Node.resources(), &Node.negative_resource?/1)
 
-      for resource <- [:power, :water, :labour, :money] do
-        refute Node.negative_resource?(resource), "#{resource} must be positive"
-      end
+      assert negatives == [:waste, :traffic]
+      assert positives == [:power, :water, :labour, :money]
     end
   end
 

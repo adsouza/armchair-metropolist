@@ -343,12 +343,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 only raise a flex item's hypothetical size, never lower it), and measured
                 here that is the widest unbroken line it contains: expanded, the totals
                 footnote at 1288px against the nine-column matrix's 927px; collapsed, the
-                re-entry sentence at 359px against 173px of matrix. Both edges of both
-                windows moved between the last measurement and this one, and the resource
-                vocabulary was not why — a sentence added to the footnote and a re-entry
-                block added by an unrelated change were. Re-measure when *any* line in the
-                aside grows, not only when the table does, and move the value to the new
-                midpoint rather than to whichever edge you happened to measure.
+                re-entry sentence at 359px against 173px of matrix. The expanded window
+                moved between the last measurement and this one, and this time the resource
+                vocabulary is exactly why: the footnote below was reworded for the
+                negative-polarity change, and that reword is what shifted the boundary to
+                today's `[2343, 2505]`. The collapsed window did not move at all — its own
+                re-entry sentence was untouched by this change, so it is still
+                `[1415, 1415]`. Re-measure when *any* line in the aside grows, not only when
+                the table does, and move the value to the new midpoint rather than to
+                whichever edge you happened to measure.
 
                 Collapsed, `W_col == W_row`: the re-entry sentence is wider than either
                 inner arrangement (173px stacked, 349px in a row), so the arrangement no
@@ -859,6 +862,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # resource — no type both produces and consumes waste, and none does for traffic. So
   # a partial patch leaves every emitter rendering backwards while the two removers
   # look right, which is the shape of defect this legend has shipped before.
+  #
+  # Not a complete inventory of every site that touches sign, though: the two
+  # `{:park, :labour}` clauses (`marginal_cell/3` above and `total_cell/4` below) bypass
+  # this function entirely, because labour is a positive resource and their special
+  # casing is about the amenity multiplier, not polarity. That bypass is deliberate —
+  # flagged here so a future negative resource with its own special-cased clause has to
+  # decide whether it can bypass `net/3` too, rather than assuming the park precedent
+  # means it can.
   defp net(resource, produced, consumed) do
     if Node.negative_resource?(resource),
       do: consumed - produced,

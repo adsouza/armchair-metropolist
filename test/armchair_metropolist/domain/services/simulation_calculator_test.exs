@@ -202,7 +202,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     # Finding 1's fix: the legend's totals cell reads `flow_satisfaction`, not
     # `satisfaction`, precisely so a treasury covering a deficit cannot make the
-    # cell's two halves (supplied/demanded) contradict its own percentage.
+    # cell's two halves (demanded/supplied) contradict its own percentage.
     test "a treasury covering a deficit makes flow_satisfaction and satisfaction diverge" do
       # One park: money demand 3/tick, no income. A treasury of 100 fully covers it
       # (available 100 vs demand 3), but the flow itself is 0 supplied against 3

@@ -940,8 +940,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="transit_hub-traffic"]}) |> render() =~ "-60"
       assert view |> element(~s{[data-cell="residential-traffic"]}) |> render() =~ "+6"
 
-      # Positive resources in the same test. A flip applied to *every* resource
-      # rather than the negative ones satisfies all six assertions above.
+      # Positive resources in the same test. A flip applied to *every* resource rather
+      # than the negative ones satisfies the four assertions above; these two are what
+      # catch that broader mutation.
       assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~ "+120"
       assert view |> element(~s{[data-cell="residential-power"]}) |> render() =~ "-15"
     end

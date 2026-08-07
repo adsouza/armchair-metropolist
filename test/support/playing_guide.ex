@@ -345,6 +345,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
     types |> Enum.frequencies() |> Enum.to_list() |> city_with()
   end
 
+  # Typographic minus (U+2212), because this is prose (money flow, opening income) rather
+  # than a table cell mirroring the screen — contrast `signed_num/2` below, which renders
+  # ASCII `-` specifically to match `SimulatorLive`'s own cells.
   defp signed(value) when value < 0, do: "−#{num(abs(value))}"
   defp signed(value), do: "+#{num(value)}"
 
@@ -659,7 +662,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # `industrial` removes 90 waste and renders `-90`, a house emits 10 and renders `+10`.
   #
   # ASCII `-`, not U+2212, because that is what `SimulatorLive.signed/1` emits and the guide
-  # must not disagree with the screen it describes.
+  # must not disagree with the screen it describes. Contrast this module's own `signed/1`
+  # above, which uses the typographic minus for prose that never sits beside a screen cell.
   defp signed_num(resource, amount) do
     amount = if Node.negative_resource?(resource), do: -amount, else: amount
 

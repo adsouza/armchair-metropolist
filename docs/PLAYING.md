@@ -32,10 +32,13 @@ The legend — to the right of the grid on a wide enough window, stacked below i
 otherwise — lists every type with how many you have placed, what it costs to build, and
 its net effect on each resource. Where a type produces a resource and its buildings are
 damaged, the cell shows both figures — `+360 → +210` means 360 rated, 210 actually
-supplied at current health. A dash means the type does not touch that resource at all,
-which is different from netting to zero. The totals row gives city-wide supply, demand and
-satisfaction, per tick. Four of the six resources have a free baseline of 40 built into
-that supply; labour and money have none, deliberately — see below.
+supplied at current health. For a bad, that same arrow can rise while the situation
+worsens: a decaying `industrial` reads `-90 → -45`, which is less waste removed, not
+more of the problem. A dash means the type does not touch that resource at all,
+which is different from netting to zero. The totals row gives city-wide demand, supply
+and satisfaction, per tick. Four of the six resources have a free baseline of 40 built
+in — supply for power and water, absorption for waste and traffic; labour and money
+have none, deliberately — see below.
 
 **Show detail / Hide detail** collapses the legend to its type, count and cost columns,
 which is how you make the window narrower — the six resource columns are most of its
