@@ -1,7 +1,13 @@
-# Ring-growth grid
+# Growing grid
 
-A new city starts on a 2×2 grid and opens a new outer ring each time it fills past 70%,
-up to a 32×32 cap. Replaces the fixed 40×30 grid every city has started on until now.
+A new city starts on a 2×2 grid and opens two more rows and columns each time it fills
+past 70%, up to a 32×32 cap. Replaces the fixed 40×30 grid every city has started on
+until now.
+
+> **Growth is anchored at the origin.** An earlier draft of this design recentred the
+> city, adding a cell on all four sides so the city stayed in the middle of the map. That
+> is abandoned — see §9 for why, since the reason is not obvious and the abandoned version
+> is the one the feature was first described as.
 
 ## Why
 
@@ -21,8 +27,8 @@ and occupancy checks. `docs/PLAYING.md` already states this from the player's si
 
 Two consequences, and both are load-bearing for the rest of this document:
 
-1. Every generated figure in the playing guide is independent of grid size. Grid growth
-   cannot move a health curve, an income figure or an opening deadline.
+1. Every generated figure in the playing guide is independent of grid size. Growth cannot
+   move a health curve, an income figure or an opening deadline.
 2. The grid is *capacity plus presentation*, nothing more. There is exactly one place in
    the domain where capacity is read, and it is named in §5.
 
@@ -50,12 +56,33 @@ Three attributes on `CityMap`, beside the existing `@opening_grant`:
   * `node_count * @fill_denominator > @fill_numerator * width * height`
 
 `max(width, height)` rather than `width` alone is what protects stored 40×30 cities: 40
-exceeds the cap, so they never join the square ladder and never re-key. This is a real
-case, not a hypothetical — every city saved before this change is 40×30.
+exceeds the cap, so they never join the ladder. This is a real case, not a hypothetical —
+every city saved before this change is 40×30.
 
-Growth is **one-way**. Demolishing below 70% does not close a ring. A shrink path would
-have to decide what happens to blocks standing in the ring being closed, and would let
+Growth is **one-way**. Demolishing below 70% does not take rows away. A shrink path would
+have to decide what happens to blocks standing in the rows being removed, and would let
 grid size oscillate while a player rearranges.
+
+### Growth is anchored, so nothing is re-keyed
+
+```elixir
+defp grow(map), do: %{map | width: map.width + 2, height: map.height + 2}
+```
+
+Two rows and two columns appear at the right and bottom edges. **Every existing node keeps
+its `x`, `y` and `id`.** The `nodes` map is not rebuilt, not re-keyed, and not touched at
+all; growth is a two-field update on the struct.
+
+This is the property the rest of the design leans on, and it is worth naming because it is
+easy to destroy. A coordinate is only a name, and its meaning comes from the grid it
+indexes. Because growth adds cells without moving the origin, `(3, 4)` denotes the same
+cell before and after, forever. That is what makes it safe for a click — which carries
+`phx-value-x` / `phx-value-y` baked into the DOM at render time, not a node identity — to
+be interpreted against a grid that has since grown. Anything that moved the origin would
+reinterpret coordinates already in flight, and since old and new coordinate sets overlap
+those commands would not fail, they would hit **a different cell**. §9 has the case.
+
+**Do not change growth to move the origin without reading §9.**
 
 ### The ladder
 
@@ -83,28 +110,15 @@ blocks, roughly 9,500 in construction costs at the cheapest rate — far past an
 player reaches, which is the intent: the cap is a bound on the data structure, not a
 game mechanic.
 
-### Recentring
-
-A ring adds one cell on all four sides, so the old origin moves: a node at `(0,0)`
-becomes `(1,1)`. Every node's `x`, `y` **and `id`** change, and `id` is both the key in
-`CityMap.nodes` and the LiveView stream's `dom_id`.
-
-`Node.translate(node, dx, dy)` performs the shift and rebuilds the id through
-`Node.id/2`, so `id` cannot desync from the coordinates it encodes. `CityMap.grow/1`
-rebuilds the `nodes` map from the translated nodes; it must rebuild rather than update in
-place, because the old and new key sets overlap and an in-place update can overwrite a
-node that has not moved yet.
-
 ## 2. Where growth is applied
 
 In `UseCases.ManageInfrastructure.place/4`, after a successful `put_node`.
 
 **Not** in `CityMap.put_node/2`. Fixtures call `put_node` directly with hundreds of nodes
 — `PlayingGuide.city_with/1` builds cities of arbitrary size that way — and growth there
-would re-key them mid-build and change every id those fixtures assume.
+would change the dimensions those fixtures assume mid-build.
 
-`place/4` keeps its `{:ok, {city_map, node}}` shape. Both values are post-growth, so the
-returned node is already translated and no caller can hold a stale id.
+`place/4` keeps its `{:ok, {city_map, node}}` shape.
 
 `CityEngine` detects growth by comparing `city_map.width` against the map it already
 holds in its state. No `:grew` flag is threaded through the use case, and the use-case
@@ -112,99 +126,34 @@ contract does not change.
 
 ```elixir
 if city_map.width != state.city_map.width do
-  broadcast(state.city_id, {:city_grew, city_map})
-else
-  broadcast(state.city_id, {:city_node_placed, node})
+  broadcast(state.city_id, {:city_grew, city_map.width, city_map.height})
 end
+broadcast(state.city_id, {:city_node_placed, node})
 broadcast(state.city_id, {:city_metrics, metrics})
 ```
 
-`{:city_grew, …}` carries the whole map. Every node id changed, so there is no
-incremental patch to send. It must be a broadcast rather than only a reply, because the
-re-entry code lets a second browser join the same city and both viewers must resize.
+`{:city_grew, …}` carries only the dimensions. Because no id changed, subscribers need no
+node data — the existing stream entries stay valid and the placed node arrives through the
+ordinary `{:city_node_placed, …}` that follows. Both messages are sent on a growing
+placement, in that order, so a subscriber sizes the grid before the new node lands on it.
+
+It must be a broadcast rather than only a reply: the re-entry code lets a second browser
+join the same city, and both viewers must resize.
 
 ### Dropping the reply-side `stream_insert`
 
 `handle_event("place", …)` currently does `stream_insert(socket, :nodes, node)` from
-`place/4`'s reply, *and* receives `{:city_node_placed, node}` on the broadcast — the
-insert is already redundant, and idempotent, so nothing today reveals the duplication.
+`place/4`'s reply, *and* receives `{:city_node_placed, node}` on the broadcast. The insert
+is redundant, and idempotent, so nothing today reveals the duplication.
 
-Leaving it in breaks on the growth click. `handle_event` returns and renders before the
-broadcast is handled, so there is one frame where the translated node is positioned at
-`(2,2)` on a grid still sized 2×2 — outside its own container. Removing it makes place
-and demolish symmetrical, both driven entirely by the broadcast, and removes the frame.
+Removing it makes place and demolish symmetrical, both driven entirely by the broadcast.
 
-This is the one part of this change that alters existing behaviour, so it needs its own
-test: placing a block still renders it, with the reply-side insert gone.
-
-### The coordinate-space fence
-
-Clicks carry coordinates, not identities — `phx-value-x={x}` / `phx-value-y={y}` on the
-grid cell, and `phx-value-x={node.x}` / `phx-value-y={node.y}` on the node — baked into
-the DOM at render time. Recentring reinterprets those coordinates, so **a command issued
-against a pre-growth DOM addresses the wrong cell**, and because the old and new key sets
-overlap it does not merely fail. On a 2×2 holding nodes at `(0,0)` and `(1,1)`, growth
-moves them to `(1,1)` and `(2,2)`; a demolish click on `(1,1)` then destroys the node that
-used to be at `(0,0)`. Money is spent, the wrong block is gone, and no error is raised.
-
-Two ways in, and they need separating because only one is a narrow race:
-
-* **Same viewer.** Phoenix delivers one connection's events in order to one LiveView
-  process, and the engine call is synchronous, so a second click can only overtake the
-  growth broadcast if it lands in the window between the call being issued and the engine
-  broadcasting. That is microseconds on a small city — but the window contains
-  `summarize/1` over every node, so it *widens with city size*, and the later growths are
-  the ones with hundreds of nodes.
-* **Second viewer.** Deterministic and easy to hit. The re-entry code puts two browsers on
-  one city. A's placement grows the grid; B's DOM is stale for a full network round trip,
-  and every click B makes in that window carries old coordinates.
-
-**The fence goes in `CityEngine`, not the LiveView.** Both mutating commands carry the
-grid width the DOM was rendered at, and the engine refuses the command unless it matches
-`state.city_map.width`:
-
-```elixir
-def handle_call({:place, x, y, type, grid_width}, _from, state) do
-  if grid_width != state.city_map.width do
-    {:reply, {:error, :stale_grid}, state}
-  else
-    # … as before
-  end
-end
-```
-
-`width` is a sufficient generation token without adding a persisted field: growth is
-one-way and monotone, and coordinate meaning is a total function of it. Adding a
-`grid_generation` field would mean a `SnapshotVocabulary.modernize/1` entry, a
-`normalize_city_map/1` default and committed old-vocabulary fixtures — real cost for no
-extra safety on this hazard.
-
-The fence must not live in the LiveView, and the reason is specific rather than a
-generality about clients. A LiveView is a server process, so a check against its own
-assigns *is* server-side — but it is a check against a replica, and the replica is stale
-in exactly the case that matters. In the second-viewer case that LiveView's assigns are
-fresh while its browser's DOM is stale, so the check would work. In the same-viewer case
-the LiveView has not processed the growth broadcast either: payload stale, assigns stale,
-check passes, bug survives. Only the process that owns the map can arbitrate.
-
-**Reject rather than translate.** The offset is exactly `+1, +1`, so the engine *could*
-compute what the player "meant" and place there. That guesses which of two things the
-click aimed at — the logical cell or the screen position — and after a recentring those
-are different cells, because the ring is added around the outside and every pixel now
-shows a different coordinate. The LiveView ignores `{:error, :stale_grid}` silently: the
-growth broadcast is already in flight and will resynchronise the view, so a flash message
-would explain a discarded click the player has no way to act on.
-
-**Accepted limitation.** A reset from a 2×2 to a 2×2 has matching widths, so a click that
-crosses it is accepted and places a block in the new city at the coordinate clicked. That
-is the right cell, in an unintended city, for 15. Every reset from a grown city is fenced,
-since the width differs. Closing the 2×2 case is what a dedicated monotonic counter would
-buy, and it is not worth a snapshot migration.
-
-**This hazard is the price of recentring**, and it did not exist before this change: a
-fixed grid was the only thing making a coordinate a stable global name, and nothing in the
-code recorded that it was doing that job. An anchored, append-only growth has no
-re-keying, no overlap and no fence. See §9.
+**This is a de-duplication and nothing more.** The recentring draft justified it by a
+rendering glitch — a translated node painting outside its container for one frame — and
+with anchored growth that glitch does not exist, because a placed node's coordinates are
+inside the old grid whether or not it grew. So this carries no correctness argument, only
+tidiness, and it is the one part of this change that alters existing behaviour. It needs
+its own test: placing a block still renders it with the reply-side insert gone.
 
 ## 3. Cell size
 
@@ -215,8 +164,13 @@ Replaces `@cell_size 24` with three attributes and a function:
 @max_cell 128
 @target_px 768
 
-defp cell_size(n), do: min(@max_cell, max(@min_cell, div(@target_px, n)))
+defp cell_size(width, height) do
+  min(@max_cell, max(@min_cell, div(@target_px, max(width, height))))
+end
 ```
+
+`max(width, height)` rather than the width alone, so the bound holds on the longer axis
+and a rectangular legacy city cannot exceed the target footprint on its taller side.
 
 Footprint: **256px (2×2) → 512px (4×4) → 768px (6×6)**, then held between 748px and
 768px while cells shrink to 24px at the cap. With the 70% rule those three sizes land on
@@ -235,7 +189,8 @@ nothing else, which was correct while a reset kept its grid and is wrong the mom
 
 `simulator_live.ex`'s moduledoc claims the background grid "is never re-diffed on its
 own, since nothing in a tick ever changes `@grid_cells`". Still true per tick, false
-across a placement. It must be rewritten, not left alone.
+across a placement. It must be rewritten, not left alone. Its opening line — "a 40x30
+grid" — is also now wrong.
 
 ### Why 128, measured
 
@@ -321,18 +276,21 @@ interval of thresholds that would pass it, and only the intersection is narrow:
 
 Stopping after the 2×2 test would leave a quarter of the threshold range passing, which
 is the trap: the smallest fixture is the easiest to write and pins the least.
-* A node at `(0,0)` is at `(1,1)` with id `"1:1"` after growth, and `"0:0"` is absent
-  from `nodes` — kills translating `x` but not `y`, and kills updating `x`/`y` without
-  rebuilding `id`.
-* A 2×2 holding nodes at all four corners grows to a 4×4 whose four nodes are the inner
-  2×2, with no node lost — kills an in-place key update that overwrites an unmoved node.
+
+The rest:
+
+* Growth adds 2 to both dimensions — kills adding 1, and kills growing one axis only.
+* **A 2×2 holding nodes at all four corners grows to a 4×4 whose nodes are still at
+  `(0,0)`, `(1,0)`, `(0,1)`, `(1,1)` with those exact ids, and `nodes` is unchanged by
+  `==`** — kills any reintroduction of translation. This is the anchoring invariant and
+  it is the test that stops §9's hazard coming back.
 * Growth is refused at 32×32 — kills dropping the cap.
 * A **30×40** city with 841 nodes does not grow — kills `width < @max_size` in place of
   `max(width, height) < @max_size`. The fixture has to be 30×40 and not the legacy 40×30
   shape: with width 40 both predicates are already false, so a 40×30 test cannot separate
   them. Only `width < 32 ≤ height` makes the mutant grow where the correct code refuses.
 * A 40×30 city with 841 nodes does not grow either — the legacy shape, asserted for its
-  own sake, since not re-keying stored cities is the point of the cap check.
+  own sake, since leaving stored cities alone is the point of the cap check.
 * Demolishing a 4×4 down to 3 nodes leaves it 4×4 — kills a shrink path.
 * `reset/1` on a 12×12 returns a 2×2 — kills `new(map.width, map.height)`.
 
@@ -344,46 +302,42 @@ to. If the operator is worth pinning, it takes one test at 10×10 with 70 nodes 
 no growth, and 71 asserting growth. Integer arithmetic does not change this; it removes
 float comparison, which is a different benefit.
 
+**Cell size**
+
+* 2×2 → 128, 4×4 → 128, 6×6 → 128, 8×8 → 96, 32×32 → 24 — kills dropping either clamp.
+  The three 128s look redundant and are not: they are the flat top of the ramp, and a
+  missing `min` shows up only there.
+* 40×30 → 24, and the rendered grid is 960×720 — kills a regression for stored cities,
+  and pins the "pixel-identical to today" claim.
+* A hypothetical 20×40 → 19 clamped to 24, driven by the **height** — kills
+  `div(@target_px, width)` in place of `max(width, height)`.
+
 **Use case and engine**
 
-* `place/4` returns a translated node whose id matches its position in the grown map's
-  `nodes` — kills returning the pre-growth node.
-* The engine broadcasts `{:city_grew, map}` on the growing placement and
-  `{:city_node_placed, node}` otherwise — kills broadcasting both, or neither.
-* `{:city_metrics, …}` still follows in both branches — kills an early return that skips
-  it.
-
-**The coordinate-space fence.** These assert on *state*, not on the return value. A test
-that only checks `{:error, :stale_grid}` came back passes against a fence that returns the
-error after mutating, so each of these reads the node set afterwards.
-
-* Given a 2×2 with nodes at `(0,0)` and `(1,1)`, grow it, then demolish at `(1,1)` with
-  `grid_width: 2`. Assert **both nodes are still present** — kills the unfenced code, which
-  destroys the node translated from `(0,0)`. This is the wrong-block case and it is the one
-  test that must exist; a stale coordinate landing on an *empty* cell fails anyway and
-  proves nothing, so a fixture with only one node cannot discriminate.
-* Same setup, place at `(1,1)` with `grid_width: 2`. Assert the node count is unchanged and
-  `money` is unchanged — kills a fence that refuses the placement after debiting.
-* A command carrying the current width succeeds — kills a fence that rejects everything,
-  which every test above would otherwise pass.
-* A command carrying a width *greater* than current is refused too — kills `<` in place of
-  `!=`. Not reachable in the app, since growth is one-way, but the comparison should not
-  encode an assumption the fence does not need.
-* The LiveView renders no flash on `{:error, :stale_grid}` — kills surfacing a discarded
-  click the player cannot act on.
+* `place/4` on a crowded map returns a grown map, and the placed node is present in it —
+  kills growing before the put, which would place into the new dimensions and change which
+  cell is legal.
+* The engine broadcasts `{:city_grew, 4, 4}` **before** `{:city_node_placed, node}` on a
+  growing placement — kills the reverse order, which would land a node on an unsized grid.
+* No `{:city_grew, …}` on a non-growing placement — kills broadcasting it unconditionally.
+* `{:city_metrics, …}` still follows in both cases — kills an early return that skips it.
 
 **LiveView**
 
-* Placing a block renders it with the reply-side `stream_insert` removed — kills removing
-  the broadcast handler instead.
+* Placing a block still renders it with the reply-side `stream_insert` removed — kills
+  removing the broadcast handler instead.
 * On growth, `@width` becomes 4 and the rendered grid has 16 cells — kills reassigning
   `:width` without recomputing `:grid_cells`.
-* On growth, the node layer renders the translated ids and not the old ones — kills
-  omitting `reset: true` on the stream.
+* On growth, the already-placed nodes are still rendered, at unchanged ids — kills a
+  gratuitous `reset: true` on the stream, which would work but discards the whole point
+  of anchoring.
+* On growth from 2×2 to 4×4, the collapse banner's width goes 256px → 512px — kills
+  recomputing `:width` without `:cell_size`, since 4 × 128 is the same arithmetic either
+  way only if `cell_size` also moved.
 * On `:city_reset` from a grown city, `@width` is back to 2 — kills leaving that handler
   as it is today, which is the live bug.
-* The collapse banner renders at `width: 256px` on a 2×2 — kills decoupling the banner
-  from the grid width, and pins the measured relationship in §3.
+* The collapse banner renders at `width: 256px` on a 2×2 — pins the measured relationship
+  in §3.
 
 **Regression**
 
@@ -399,10 +353,10 @@ otherwise a future reader will helpfully migrate it to `new/0` and change what t
 measures.
 
 `docs/PLAYING.md` states no grid dimensions anywhere, so there is nothing to correct.
-It gains one new passage: ring growth is a mechanic the player meets on their third
-placement, and the guide should say what happens and that the city recentres. The
+It gains one new passage: the grid grows, the player meets it on their third placement,
+and it extends to the right and downwards rather than moving what is already built. The
 opening sequence's own table needs no change — one growth occurs during those seven
-blocks either way, since a 4×4 next opens at 12.
+blocks, since a 4×4 next opens at 12.
 
 `config/config.exs`'s `grid_width: 40, grid_height: 30` and `CityEngine`'s
 `@default_grid_width` / `@default_grid_height` are the only config readers, used solely
@@ -421,40 +375,50 @@ the struct and a literal in `new/2` desynced on a path only cold loads exercised
   why it binds. A character-count assertion would fail loudly on a lengthened headline
   and is worth considering, but it is a proxy for width and would not catch a reworded
   headline of equal length using wider words.
-* **Re-keying is O(nodes) per growth**, fifteen times over a city's life, at most 631
-  nodes on the last one. Negligible, but it is a full stream reset in the LiveView, so
-  the growth click repaints the whole node layer. Expected and correct — every id
-  changed.
 * **`grow_if_crowded/1` is only called from `place/4`.** A city that somehow arrives over
   threshold by another route — a hand-edited snapshot, a future bulk-place — will not
-  grow until the next placement. Acceptable; growth on load would mean re-keying during
-  hydration, and no such route exists today.
-* **Every future coordinate-addressed command inherits the fence requirement.** The fence
-  is a rule about the command path, not a property of `place`/`demolish`, and nothing in
-  the type system enforces it. A later feature that takes an `x, y` — bulldoze a region,
-  drag to place, an undo — is wrong by default until it carries the width.
+  grow until the next placement. Acceptable, and harmless: an over-threshold grid is a
+  normal, playable state, not a broken one.
+* **The grid grows down as well as right**, so the page gets taller as the city grows —
+  256px to 768px over the first three growths. The legend sits beside or below the grid
+  depending on window width (§4), so a taller grid can push it further down. Worth a look
+  at the 768px maximum, though it is 48px taller than today's 720px and today's layout is
+  fine.
 
-## 9. The recentring decision, reopened
+## 9. Why growth is anchored and not centred
 
-Recentring was chosen over anchoring at top-left early in the design, on the stated
-grounds that anchoring "is not really a ring" while a stable-coordinate variant was "more
-machinery than either option". §2's fence is the bill for that, and it was not in the
-estimate:
+The feature was first described as opening "a new outer ring", and the first draft of this
+design did that literally: a cell on all four sides, so `(0,0)` became `(1,1)` and the
+city stayed centred as the map grew around it. It is the better-looking option and it was
+abandoned for a correctness reason that is not visible from the description.
 
-| | recentre | anchor top-left |
-|---|---|---|
-| node ids on growth | all rewritten | unchanged |
-| in-flight commands | old and new key sets overlap, so a stale click hits the **wrong** node | coordinates never change meaning |
-| generation fence | required on every coordinate-addressed command, now and in future | not required |
-| LiveView on growth | full stream reset | grid assigns only |
-| city position | stays centred | drifts toward the top-left |
+Recentring rewrites every node's `x`, `y` and `id`. Clicks carry coordinates baked into
+the DOM at render time, so a command issued against a pre-growth DOM is interpreted in the
+new coordinate space — and because the old and new coordinate sets **overlap**, such a
+command does not fail. It hits a different cell. Concretely: a 2×2 holding nodes at
+`(0,0)` and `(1,1)` grows them to `(1,1)` and `(2,2)`; a demolish click on `(1,1)` then
+destroys the node that used to be at `(0,0)`. Money spent, wrong block gone, no error.
 
-Anchoring dissolves §2's entire fence section, its five tests, and the standing obligation
-on future commands. What it costs is the visual property that motivated the feature: the
-city stays put as the map grows around it, instead of the map growing away from it.
+Two ways in, and the second is what settled it:
 
-**This is a decision to retake, not something to settle here.** The comparison that chose
-recentring priced it as "rebuild a map, re-render a stream" and the real price is a
-concurrency invariant. Recentring remains defensible — the fence is about forty lines and
-five tests, the hazard is fully understood, and the visual payoff is the whole point of the
-change. But it should be chosen against an honest bill.
+* **Same viewer.** Phoenix delivers one connection's events in order to one LiveView
+  process and the engine call is synchronous, so a second click has to land in the window
+  between the call being issued and the engine broadcasting. Microseconds on a small city
+  — but the window contains `summarize/1` over every node, so it widens with city size.
+* **Second viewer.** Deterministic and easy to hit. The re-entry code puts two browsers on
+  one city. A's placement grows the grid; B's DOM is stale for a full network round trip,
+  and every click B makes in that window carries old coordinates.
+
+Fixing it needs the command to carry the grid generation it was composed against, with the
+engine refusing a mismatch. Not in the LiveView: its assigns are a replica, and in the
+same-viewer case the replica is stale too — payload stale, assigns stale, check passes.
+That is roughly forty lines, five tests, and a standing obligation that every *future*
+coordinate-addressed command carries the generation, which nothing in the type system
+enforces.
+
+Anchoring dissolves all of it. Coordinates never change meaning, so there is nothing to
+fence and nothing for a future command to forget. The cost is the visual property: the
+city drifts toward the top-left corner instead of staying centred.
+
+**If anyone reinstates centred growth, the fence comes back with it.** The anchoring test
+in §6 is what makes that impossible to do quietly.
