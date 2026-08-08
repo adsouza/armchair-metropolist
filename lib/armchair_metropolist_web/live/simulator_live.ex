@@ -1,17 +1,21 @@
 defmodule ArmchairMetropolistWeb.SimulatorLive do
   @moduledoc """
-  The city dashboard: a 40x30 grid, live infrastructure, and live metrics.
+  The city dashboard: a growing grid, live infrastructure, and live metrics.
 
   ## Rendering strategy
 
-  The background grid (1,200 cells) is a plain comprehension computed once in
-  `mount/3` and rendered from a static assign — it is never re-diffed on its
-  own, since nothing in a tick ever changes `@grid_cells`. Placed
-  infrastructure is tracked separately in `stream(:nodes, ...)`, keyed by the
-  node's own `"x:y"` id via `dom_id: & &1.id`. Every tick only touches the
-  handful of nodes that actually changed, so only those stream entries are
-  patched — the grid underneath never moves. Nodes are absolutely positioned
-  over the grid so the two layers stay independent.
+  The background grid is a plain comprehension over `@grid_cells`, so it re-renders
+  whenever the grid's dimensions change and is otherwise untouched — nothing in a tick
+  changes `@grid_cells`. Placed infrastructure is tracked separately in
+  `stream(:nodes, ...)`, keyed by the node's own `"x:y"` id via `dom_id: & &1.id`. Every
+  tick only touches the handful of nodes that actually changed, so only those stream
+  entries are patched. Nodes are absolutely positioned over the grid so the two layers
+  stay independent.
+
+  **A growth is the exception, and it re-streams every node.** Growth is anchored at the
+  origin, so no id changes — but cell size shrinks as the grid grows, and a LiveView
+  stream does not re-render existing entries when an assign changes. `{:city_grew, ...}`
+  therefore passes `reset: true`; see `handle_info/2`.
 
   ## Where the figures come from
 
@@ -142,8 +146,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     type = socket.assigns.selected_type
 
     case CityEngine.place(socket.assigns.city_id, x, y, type) do
-      {:ok, node} ->
-        {:noreply, stream_insert(socket, :nodes, node)}
+      {:ok, _node} ->
+        # No `stream_insert` here. The engine broadcasts `{:city_node_placed, node}` on
+        # every successful placement and this view is subscribed to it, so inserting from
+        # the reply as well did the same work twice. Demolish is the same shape below.
+        {:noreply, socket}
 
       {:error, :insufficient_funds} ->
         {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics.money))}
@@ -158,8 +165,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     y = String.to_integer(y)
 
     case CityEngine.demolish(socket.assigns.city_id, x, y) do
-      {:ok, id} ->
-        {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
+      {:ok, _id} ->
+        {:noreply, socket}
 
       {:error, :insufficient_funds} ->
         {:noreply,
@@ -200,8 +207,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
   end
 
-  def handle_info(:city_reset, socket) do
-    {:noreply, stream(socket, :nodes, [], reset: true)}
+  # Carries the whole map, and re-streams every node rather than patching. Nothing is
+  # re-keyed by a growth — the origin does not move, so every node keeps its id — but
+  # cell size shrinks as the grid grows, and a LiveView stream does not re-render existing
+  # entries when an assign changes. Without `reset: true` the nodes keep the pixel
+  # geometry they were first rendered with: from 6x6 -> 8x8 that is 128px boxes on a 96px
+  # grid.
+  #
+  # Unconditional, not "only when cell size actually moved". That condition is true at
+  # every growth from 6x6 upward, and getting it wrong is silent.
+  def handle_info({:city_grew, city_map}, socket) do
+    {:noreply,
+     socket
+     |> assign_grid(city_map)
+     |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
+  end
+
+  def handle_info({:city_reset, city_map}, socket) do
+    # The grid resizes too: a reset returns the city to a 2x2 whatever it had grown to.
+    {:noreply,
+     socket
+     |> assign_grid(city_map)
+     |> stream(:nodes, [], reset: true)}
   end
 
   @impl true

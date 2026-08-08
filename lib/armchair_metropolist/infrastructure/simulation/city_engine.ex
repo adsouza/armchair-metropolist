@@ -37,7 +37,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
-  `:city_reset` on a successful `reset/1`, followed by `{:city_metrics, metrics}`.
+  `{:city_grew, city_map}` immediately *before* `{:city_node_placed, …}` on a placement
+  that opened the grid — the view has to resize before the node is painted on it.
+  `{:city_reset, city_map}` on a successful `reset/1`, followed by `{:city_metrics,
+  metrics}`; it carries the map because a reset returns the city to a 2x2 grid.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
   a shared one would deliver every visitor's deltas to every other visitor.
 
@@ -154,7 +157,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
 
   @doc """
-  Discard this city and start a new one on the same grid.
+  Discard this city and start a new one on a fresh starting grid.
 
   Deletes the stored snapshot, so the tick-0 city that replaces it is durable
   immediately rather than unsaveable until it outlives the city it replaced.
@@ -279,6 +282,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
         metrics = summarize(city_map)
+
+        # Detected by comparing widths against the map this engine already holds, so
+        # `ManageInfrastructure.place/4` needs no `:grew` flag in its return and its
+        # contract does not change.
+        #
+        # Sent *before* the node, so a subscriber sizes the grid before the new node lands
+        # on it. Carries the whole map because the view must re-stream every node: a
+        # LiveView stream does not re-render existing entries when an assign changes, so
+        # nodes keep their old pixel geometry across a cell-size change.
+        if city_map.width != state.city_map.width do
+          broadcast(state.city_id, {:city_grew, city_map})
+        end
+
         broadcast(state.city_id, {:city_node_placed, node})
         # Commands change the city, so subscribers need the new figures now. Without
         # this the legend's counts would not move until the next tick — and in tests,
@@ -320,7 +336,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     delete(state.city_id)
     save(state.city_id, city_map)
 
-    broadcast(state.city_id, :city_reset)
+    broadcast(state.city_id, {:city_reset, city_map})
     broadcast(state.city_id, {:city_metrics, metrics})
 
     # Re-armed from the new city rather than left as it was, so the next deficit is a

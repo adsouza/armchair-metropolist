@@ -143,6 +143,27 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # The same city with money in the bank — stalled, but a rescue is still affordable.
   defp initial_snapshot(%{stalled_solvent_city: true}), do: {:ok, {0, stalled_city(105.0)}}
 
+  # `@tag :stalled_tiny_city` seeds the stalled city on the starting 2x2 grid, so the
+  # banner's width can be pinned at the smallest grid the game ever renders. Three dead
+  # residential blocks draw 45 power against the free baseline of 40, so they starve at zero
+  # health and stay there.
+  #
+  # Seeded through `put_node/2` rather than placed, deliberately: three nodes on a 2x2 is
+  # over the growth threshold, so a city built by placing them would arrive as a 4x4 and
+  # render at 512px, and this test would pin the wrong number while still passing.
+  defp initial_snapshot(%{stalled_tiny_city: true}) do
+    city =
+      Enum.reduce([{0, 0}, {1, 0}, {0, 1}], CityMap.new(), fn {x, y}, map ->
+        CityMap.put_node(map, %Node{
+          Node.new(x, y, :residential)
+          | health: 0.0,
+            status: :offline
+        })
+      end)
+
+    {:ok, {0, %{city | money: 0.0}}}
+  end
+
   # `@tag :locked_city` seeds the insolvency softlock: one house at full health beside one
   # park, treasury empty. Ceiling 1 against 3 of upkeep, so the treasury can never rise; the
   # house draws only power/water/waste/traffic, every one inside the free baseline, so it
@@ -1270,9 +1291,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
-      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, :city_reset)
+      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, CityMap.new()})
 
       refute render(view) =~ ~s{id="0:0"}
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
     end
 
     @tag :stalled_city
@@ -1503,5 +1525,90 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       assert has_element?(view, ~s{[style*="width: 960px; height: 720px;"]})
     end
+  end
+
+  describe "the view resizes when the grid grows" do
+    test "an existing node's geometry follows the new cell size", %{conn: conn} do
+      # 6x6 -> 8x8 and NOT 2x2 -> 4x4. This is the whole point of the test: cell size is
+      # 128 at 2x2, 4x4 and 6x6, so across those growths correct and broken code emit
+      # byte-identical geometry and the test cannot fail. 6x6 -> 8x8 is the first growth
+      # that moves cell size, 128 -> 96.
+      #
+      # A LiveView stream does not re-render existing entries when an assign changes --
+      # `LiveStream`'s Enumerable reduces over pending inserts only -- so without an
+      # explicit re-stream this node keeps `width: 128px` on a 96px grid.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      six = CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park))
+      broadcast({:city_grew, six})
+      assert rendered_node(render(view), "1:1") =~ "width: 128px"
+
+      eight = %{six | width: 8, height: 8}
+      broadcast({:city_grew, eight})
+
+      html = rendered_node(render(view), "1:1")
+      assert html =~ "width: 96px"
+      assert html =~ "left: 96px"
+      refute html =~ "128px"
+    end
+
+    test "the background grid and the banner follow too", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      broadcast({:city_grew, CityMap.new(4, 4)})
+
+      # 16 cells, so :grid_cells was recomputed and not merely :width reassigned.
+      assert cell_count(render(view)) == 16
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+    end
+
+    @tag :stalled_city
+    test "the collapse banner is as wide as the grown grid", %{conn: conn} do
+      # A 40x30 stalled city (cell 24, banner 960px) broadcast straight to 8x8. Correct code
+      # gives 8 * 96 = 768; a mutant that reassigns :width without :cell_size keeps cell 24
+      # and gives 8 * 24 = 192. Separated either way -- but note the mutant's figure is 192,
+      # not 1024: there is no 6x6 step here, so :cell_size never held 128.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      broadcast({:city_grew, %{CityMap.new(8, 8) | nodes: stalled_city(0.0).nodes}})
+
+      assert has_element?(view, ~s{#collapse-banner[style*="width: 768px"]})
+    end
+
+    @tag :stalled_tiny_city
+    test "the collapse banner is as wide as the starting grid", %{conn: conn} do
+      # Pins spec section 3's measured relationship at the smallest grid the game renders:
+      # 2 * 128 = 256px, which is what the `:locked` headline's 245px two-line threshold
+      # bought. If this reads 192px, someone set @max_cell back to 96.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#collapse-banner[style*="width: 256px"]})
+    end
+
+    test "a reset takes the grid back to 2x2", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      broadcast({:city_grew, CityMap.new(12, 12)})
+      assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
+
+      broadcast({:city_reset, CityMap.new()})
+
+      # 2 * 128. Before this change the reset handler cleared the stream and left the grid
+      # assigns alone, which was correct only while a reset preserved its grid.
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+      assert cell_count(render(view)) == 4
+    end
+  end
+
+  defp broadcast(message) do
+    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, message)
+  end
+
+  # How many background cells the grid rendered. A plain regex over the markup rather than
+  # a DOM query: this project has no Floki dependency (LiveView 1.2 uses `lazy_html`), so
+  # `Floki.find/2` would not compile. Background cells are the only elements carrying
+  # `phx-click="place"`; a placed node carries `phx-click="demolish"`.
+  defp cell_count(html) do
+    Regex.scan(~r/phx-click="place"/, html) |> length()
   end
 end
