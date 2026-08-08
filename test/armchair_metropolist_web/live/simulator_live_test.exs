@@ -199,6 +199,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # projection horizon, so there is no window to show.
   defp initial_snapshot(%{early_insolvent_city: true}), do: {:ok, {0, house_and_park(400.0)}}
 
+  # `@tag :crowded_six_by_six` seeds a 6x6 city holding 25 nodes -- one below the 26 that
+  # opens it: `crowded?/1` is `nodes * 10 > 7 * width * height`, so 25 nodes gives
+  # `250 > 252` (false) and 26 gives `260 > 252` (true). Seeded via `put_node/2` in a loop
+  # rather than by placing, so growth cannot fire while this fixture is being built -- a
+  # city built by placing 25 residentials would cross the 26-node threshold on the very
+  # placement this test means to drive itself, through a real click, afterwards.
+  #
+  # Laid out by index across the 6x6 grid (rows y = 0..3 filled, plus (0, 4)), which
+  # leaves (1, 4) free for the real click below. `residential` at 15 each is comfortably
+  # affordable at the seeded balance, for both the 25 free nodes and the one placed live.
+  defp initial_snapshot(%{crowded_six_by_six: true}) do
+    city =
+      Enum.reduce(0..24, CityMap.new(6, 6), fn i, map ->
+        CityMap.put_node(map, Node.new(rem(i, 6), div(i, 6), :residential))
+      end)
+
+    {:ok, {0, %{city | money: 1_000.0}}}
+  end
+
   defp initial_snapshot(_context), do: {:error, :not_found}
 
   # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
@@ -1560,6 +1579,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, ~s{[style*="width: 960px; height: 720px;"]})
+
+      # Every existing cell_count assertion elsewhere in this file is on a square grid
+      # (2x2 or 4x4), so a mutation swapping `city_map.height` for `city_map.width` in
+      # `assign_grid/2`'s comprehension survives the rest of the suite untouched. On this
+      # non-square 40x30 city that mutation renders 40 * 40 = 1600 background cells
+      # instead of the correct 40 * 30 = 1200 — 400 extra clickable divs whose clicks are
+      # silently refused `:out_of_bounds`.
+      assert cell_count(render(view)) == 1200
     end
   end
 
@@ -1652,10 +1679,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     end
 
     test "placing the third block grows the grid the player is looking at", %{conn: conn} do
-      # The only test that crosses the whole seam: real clicks -> ManageInfrastructure ->
-      # CityEngine's growth detection -> the broadcast -> the view's handler. Every other
-      # growth test drives one side with a synthetic message, so the two sides could agree
-      # with each other and both be wrong about the message they exchange.
+      # Crosses the whole seam: real clicks -> ManageInfrastructure -> CityEngine's growth
+      # detection -> the broadcast -> the view's handler. Every other growth test above
+      # drives one side with a synthetic message, so the two sides could agree with each
+      # other and both be wrong about the message they exchange.
+      #
+      # This crosses 2x2 -> 4x4, where cell_size is 128 on both sides of the growth, so it
+      # proves the message name, the payload shape, :width, :height and :grid_cells cross
+      # the seam correctly -- but not :cell_size, since correct and broken code emit
+      # byte-identical geometry at this particular boundary. The test below drives the
+      # first growth that actually moves cell size, 6x6 -> 8x8, through the same real-click
+      # path.
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
@@ -1675,6 +1709,33 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # everything above while still painting a 2x2's worth of background cells behind it.
       assert cell_count(render(view)) == 16
     end
+
+    @tag :crowded_six_by_six
+    test "a real click that grows 6x6 to 8x8 refreshes an already-placed node's geometry",
+         %{conn: conn} do
+      # The seam test above never drives a growth where cell size actually moves, since
+      # cell_size is 128 at both 2x2 and 4x4 -- so it cannot tell correct code from a
+      # handler that resizes the container but never re-streams the nodes on it. 6x6 -> 8x8
+      # is the first growth that moves cell size (128 -> 96), and this is the real-click
+      # version of it.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # 6 * 128, and already at the ceiling clamp -- see cell_size/2.
+      assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
+      assert rendered_node(render(view), "0:0") =~ "width: 128px"
+
+      place(view, :residential, 1, 4)
+
+      # 8 * 96 happens to read the same 768px as before -- see the cell_size moduledoc
+      # comment on the footprint holding "between 748px and 768px" across this whole
+      # stretch of the ramp -- so this assertion alone cannot tell a real resize from a
+      # handler that silently did nothing. The node assertion below is the part that
+      # actually crosses the seam: it can only pass if CityEngine's growth detection fired,
+      # broadcast the post-put map, and the view re-streamed every node at the new cell
+      # size, rather than merely resizing the container around stale geometry.
+      assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
+      assert rendered_node(render(view), "0:0") =~ "width: 96px"
+    end
   end
 
   defp broadcast(message) do
@@ -1682,8 +1743,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   # How many background cells the grid rendered. A plain regex over the markup rather than
-  # a DOM query: this project has no Floki dependency (LiveView 1.2 uses `lazy_html`), so
-  # `Floki.find/2` would not compile. Background cells are the only elements carrying
+  # a DOM query — not because a parser is unavailable: `cost_text/2` above uses `LazyHTML`
+  # for exactly this kind of parsing. Counting is what makes the regex the right choice
+  # here regardless: this only needs the number of `phx-click="place"` attribute
+  # occurrences, which needs no parse tree at all, whereas `LazyHTML.text/1` throws away
+  # the very attribute this helper counts. Background cells are the only elements carrying
   # `phx-click="place"`; a placed node carries `phx-click="demolish"`.
   defp cell_count(html) do
     Regex.scan(~r/phx-click="place"/, html) |> length()
