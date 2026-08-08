@@ -56,19 +56,56 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           amenity_labour: float(),
           housing_alive: boolean(),
           bankrupt: boolean(),
+          money_ceiling: float(),
+          insolvent: boolean(),
+          escape: escape() | nil,
+          rescue_window: non_neg_integer() | nil,
           stalled: boolean()
         }
+
+  @typedoc """
+  The cheapest single action that would end the city's insolvency, with its price.
+
+  `:multiple` means no single action closes the gap — the copy must say so rather than
+  naming an action that would not work — and carries the price of *starting*, not of
+  finishing. `nil` on a solvent city, where there is nothing to escape.
+  """
+  @type escape ::
+          {:place, Node.node_type(), float()}
+          | {:demolish, Node.node_type(), float()}
+          | {:multiple, float()}
+
+  # How close the rescue window has to get before the player is told. Twelve ticks, which at
+  # the configured `:tick_interval_ms` of 1,000 is twelve seconds to read the banner and
+  # click once.
+  #
+  # A midpoint, not an edge. The binding constraint is stage 6 of the opening sequence in
+  # `docs/PLAYING.md`, where the treasury holds 180 against a 40-cost shop and drains 9 a
+  # tick: measured, that city's window is 16 ticks, so anything up to 15 keeps the tutorial
+  # quiet and 16 warns during it. 12 leaves four ticks of margin. `playing_guide_test` asserts
+  # no stage of that generated sequence warns, so a balance patch which moves the sequence
+  # fails the build rather than quietly alarming players mid-tutorial.
+  @reaction_ticks 12
 
   # A city with no parks has no amenity, so the identity multiplier and zero labour from it
   # are the correct values rather than filler, and a city with no nodes is not stalled. The
   # default exists because `build/2` has a dozen call sites in tests; the one production
   # caller, `Domain.Services.SimulationCalculator.metrics/1`, always passes real figures,
   # and a test on that wiring is what stops this default reaching a player.
+  #
+  # The solvency four default to a city that is in no trouble: nothing earned, nothing owed,
+  # nothing to escape from. `insolvent: false` is the safe direction — the failure it causes
+  # if it ever reached a player is a missing banner, whereas `true` would put "City locked"
+  # on a healthy city.
   @default_derived %{
     amenity: 1.0,
     amenity_marginal_labour: 0.0,
     amenity_labour: 0.0,
-    stalled: false
+    stalled: false,
+    money_ceiling: 0.0,
+    insolvent: false,
+    escape: nil,
+    rescue_window: nil
   }
 
   defstruct tick: 0,
@@ -84,6 +121,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             amenity_labour: 0.0,
             housing_alive: false,
             bankrupt: false,
+            money_ceiling: 0.0,
+            insolvent: false,
+            escape: nil,
+            rescue_window: nil,
             stalled: false
 
   @doc """
@@ -94,9 +135,18 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   (what one more park would add to it), `:amenity_labour` (what the *already placed*
   parks are contributing to it) and `:stalled` (whether the city has reached a health
   fixpoint). The amenity pair answers different questions and the legend shows both,
-  stacked. All four are computed by `Domain.Services.SimulationCalculator`, which this
-  module cannot call — `Domain` has `deps: []` — so they arrive as an argument rather
-  than being derived here.
+  stacked.
+
+  It also carries the solvency four: `:money_ceiling` (what the city could earn with every
+  earner at full health), `:insolvent` (whether upkeep exceeds that ceiling),
+  `:escape` (the cheapest single action that would end the insolvency) and `:rescue_window`
+  (how many ticks the treasury can still afford it). `:rescue_window` is the reason these
+  travel this way rather than being derived here even though the first two look local: it is
+  computed by projecting the city forward with `advance_tick/2`.
+
+  All eight are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
+  here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
   def build(city_map, resources, derived \\ @default_derived) do
     nodes = CityMap.nodes(city_map)
@@ -126,23 +176,77 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       # the coverage that actually protects this line lives in `node_test.exs`, which
       # characterizes `cheapest_action_cost/0` against the tables directly.
       bankrupt: city_map.money < Node.cheapest_action_cost(),
+      money_ceiling: Map.fetch!(derived, :money_ceiling),
+      insolvent: Map.fetch!(derived, :insolvent),
+      escape: Map.fetch!(derived, :escape),
+      rescue_window: Map.fetch!(derived, :rescue_window),
       stalled: Map.fetch!(derived, :stalled)
     }
   end
 
   @doc """
-  Whether this city can never change again.
+  Whether this city's treasury can never rise again — and so whether the player can never
+  act again, since both commands have a price.
 
-  Both halves are needed and neither implies the other. `stalled` means the clock has
-  stopped, but a stalled city holding money can still be rescued — one demolition is
-  enough to take three dead houses back under the free baseline. `bankrupt` means no
-  command is affordable, but a running city that is merely broke still earns.
+  `bankrupt` is necessary: while any command is affordable the player still has a move, and
+  neither `stalled` nor `insolvent` is beyond help on its own. A stalled city holding money
+  can be rescued by one demolition, which takes three dead houses back under the free
+  baseline; an insolvent city holding money can buy the shop that ends the insolvency.
+
+  Given bankruptcy, either of two conditions makes the treasury's floor permanent, and
+  neither implies the other:
+
+    * `stalled` — every block is on the floor, so production, which is health-scaled, is
+      zero and the engine has stopped ticking. The *rated* ceiling may be far above upkeep
+      the whole time: a dead shop is still rated +30.
+
+    * `insolvent` — upkeep exceeds what the city could earn at full health, so the balance
+      is strictly decreasing however healthy the city looks. Measured, one house at 100
+      health beside one park holds that health for 2000 ticks while its treasury stays at
+      zero, so `stalled` never fires and the old two-term predicate never fired either.
 
   Defined here, once, rather than composed at each call site: the template and
   `docs/PLAYING.md` both describe this state and must not be able to disagree about it.
   """
   @spec game_over?(t()) :: boolean()
-  def game_over?(%__MODULE__{stalled: stalled, bankrupt: bankrupt}), do: stalled and bankrupt
+  def game_over?(%__MODULE__{stalled: stalled, insolvent: insolvent, bankrupt: bankrupt}),
+    do: bankrupt and (stalled or insolvent)
+
+  @doc """
+  Whether the city is insolvent and close enough to losing its escape to be told about it.
+
+  Four terms, and each excludes a state that would make the countdown a lie:
+
+    * `insolvent` — a solvent city's treasury is not on a one-way trip, so there is nothing
+      to count down to. A city merely spending faster than it earns today recovers as its
+      earners heal.
+
+    * `not stalled` — **`insolvent` and `stalled` are not mutually exclusive.** A single dead
+      water plant has a money ceiling of 0 against 5 of upkeep, so it is insolvent; with 50
+      in the bank it is not bankrupt either. But `CityEngine` runs no tick while stalled, so
+      that 50 never moves and a countdown in ticks describes something that will not happen.
+      The stalled banner already says the true thing about such a city.
+
+    * `not bankrupt` — past that point there is nothing left to warn about and
+      `game_over?/1` has taken over. Keeping them disjoint is what lets the banner render
+      exactly one thing.
+
+    * a `rescue_window` inside `@reaction_ticks` — `nil` means the projection found no
+      deadline within its horizon, which is the *good* case and must not be compared
+      numerically.
+
+  `@reaction_ticks` is 12, so at the configured 1,000 ms tick this is at least twelve
+  seconds to read the banner and click once. "At least" is literal: `rescue_window` is
+  projected with the real tick function rather than extrapolated from the current drain, so
+  a city whose income is collapsing gets its warning earlier in treasury terms rather than
+  later in time.
+  """
+  @spec warning?(t()) :: boolean()
+  def warning?(%__MODULE__{insolvent: false}), do: false
+  def warning?(%__MODULE__{stalled: true}), do: false
+  def warning?(%__MODULE__{bankrupt: true}), do: false
+  def warning?(%__MODULE__{rescue_window: nil}), do: false
+  def warning?(%__MODULE__{rescue_window: window}), do: window <= @reaction_ticks
 
   defp calculate_avg_health([]), do: 0.0
 

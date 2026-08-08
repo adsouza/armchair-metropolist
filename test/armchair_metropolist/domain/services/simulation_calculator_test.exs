@@ -740,6 +740,212 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
   end
 
+  describe "insolvency" do
+    test "money_ceiling is the rated sum, not the health-scaled one" do
+      # One house at 20% health beside a full-health shop. Rated: 1 + 30 = 31. Scaled:
+      # 0.2 + 30 = 30.2. A fixture at full health cannot tell those apart, which is the
+      # whole distinction this field exists to make.
+      city =
+        map_with([
+          %Node{Node.new(0, 0, :residential) | health: 20.0, status: :degraded},
+          Node.new(1, 0, :commercial)
+        ])
+
+      assert Calc.metrics(city).money_ceiling == 31.0
+    end
+
+    test "a house beside a park is insolvent — upkeep 3 against a ceiling of 1" do
+      assert Calc.metrics(map_with([Node.new(0, 0, :residential), Node.new(1, 0, :park)])).insolvent
+    end
+
+    test "a lone house is solvent — it has upkeep of nothing" do
+      # Kills a gate that reads bare bankruptcy: this city at an empty treasury earns
+      # 1/tick against no upkeep and is over the line in ten ticks.
+      refute Calc.metrics(map_with([Node.new(0, 0, :residential)])).insolvent
+    end
+
+    test "a city whose shop is merely sick is solvent, though it is draining today" do
+      # THE mutation this block exists to catch: comparing `supplied` against `demanded`
+      # instead of the rated ceiling. Measured, this city's money flow is 2.5 against 3
+      # of upkeep, so a flow-based gate condemns it — and it recovers to 9832 within 400
+      # ticks, because the shop heals to a rated 30.
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          %Node{Node.new(1, 0, :commercial) | health: 5.0, status: :offline},
+          Node.new(2, 0, :park)
+        ])
+
+      metrics = Calc.metrics(%{city | money: 0.0})
+
+      assert metrics.resources.money.supplied < metrics.resources.money.demanded
+      refute metrics.insolvent
+    end
+
+    test "an empty grid is solvent — no upkeep and no income" do
+      # `0.0 < 0.0` is false, so this needs no special casing; the test pins that it
+      # stays that way. An empty grid already has its own Reset affordance via
+      # `node_count`/`bankrupt`, and calling it insolvent would put a "City locked"
+      # banner on a fresh city.
+      refute Calc.metrics(CityMap.new(40, 30)).insolvent
+    end
+  end
+
+  describe "escape" do
+    test "nil on a solvent city — there is nothing to escape" do
+      refute Calc.metrics(map_with([Node.new(0, 0, :residential)])).escape
+    end
+
+    test "prefers a demolition when one alone closes the gap" do
+      # Gap 2: upkeep 3 (one park) against a ceiling of 1 (one house). Demolishing the
+      # park removes 3 of upkeep, which covers 2, and costs 10 — cheaper than the 40 shop
+      # that would also cover it. Kills returning the first candidate found, and kills
+      # returning `cheapest_action_cost` unconditionally, since that would name no type.
+      city = map_with([Node.new(0, 0, :residential), Node.new(1, 0, :park)])
+
+      assert Calc.metrics(city).escape == {:demolish, :park, 10.0}
+    end
+
+    test "names the shop when no single demolition closes the gap" do
+      # Gap 7: a water plant's 5 and a park's 3 against a ceiling of 1. Neither single
+      # demolition covers 7 — 5 < 7 and 3 < 7 — so the cheapest sufficient action is the
+      # shop's +30 at 40. Asymmetric upkeep on purpose: with two parks the two candidate
+      # demolitions would be indistinguishable and the test could not tell "no single
+      # demolition is enough" from "demolitions are not considered".
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          Node.new(1, 0, :water_plant),
+          Node.new(2, 0, :park)
+        ])
+
+      assert Calc.metrics(city).escape == {:place, :commercial, 40.0}
+    end
+
+    test "will not name a placement it cannot make on a full grid" do
+      # `ManageInfrastructure.place/4` refuses every occupied coordinate, so on a full grid
+      # a priced placement is an instruction the player cannot follow.
+      #
+      # The fixture has to be chosen with care, because demolition at 10 is strictly
+      # cheaper than the cheapest construction at 15 — pinned by `node_test.exs` — so a
+      # placement can never *outbid* a demolition. The free-cell filter therefore only
+      # changes the answer where no single demolition qualifies and a placement does.
+      #
+      # Gap 7: one house's ceiling of 1 against a water plant's 5 and a park's 3. No single
+      # demolition covers 7 (5 < 7, 3 < 7), while the shop's +30 does. On an open grid this
+      # city answers `{:place, :commercial, 40.0}`; full, the honest answer is that no one
+      # action will do it.
+      city = full_grid_gap_of_seven()
+
+      assert length(CityMap.nodes(city)) == 40 * 30
+      assert Calc.metrics(city).escape == {:multiple, 10.0}
+    end
+
+    test "names the shop for that same city once a single cell is free" do
+      # The other half of the pair: identical but for one demolished cell, so the only
+      # thing that can explain the difference is the free-cell test. Without it both
+      # cities answer `{:place, :commercial, 40.0}` and the test above is the only one
+      # that fails — with it, this one pins that the filter has not been made
+      # unconditional.
+      city = CityMap.delete_node(full_grid_gap_of_seven(), 39, 29)
+
+      assert length(CityMap.nodes(city)) == 40 * 30 - 1
+      assert Calc.metrics(city).escape == {:place, :commercial, 40.0}
+    end
+
+    test "reports :multiple when no single action closes the gap" do
+      # Eleven parks are 33 of upkeep against a ceiling of 1: the shop's +30 is not
+      # enough and no single park demolition's 3 is either. The copy has to say "more
+      # than one block" rather than name an action that would not work.
+      city = map_with([Node.new(0, 0, :residential) | for(i <- 1..11, do: Node.new(i, 0, :park))])
+
+      assert Calc.metrics(city).escape == {:multiple, 10.0}
+    end
+  end
+
+  describe "rescue_window" do
+    test "nil on a solvent city" do
+      refute Calc.metrics(map_with([Node.new(0, 0, :residential)])).rescue_window
+    end
+
+    test "counts the ticks until the escape stops being affordable" do
+      # One house, one park: ceiling 1 against upkeep 3, so the treasury loses 2 a tick and
+      # the escape is the park demolition at 10. From 30 the projection reaches 10 after 10
+      # ticks and drops under it on the 11th.
+      #
+      # The two figures differ (30, 2, 10 -> 11) so no transposition of them lands on the
+      # same answer, and the count is of the *escape* threshold rather than of zero — from
+      # 30 the treasury does not empty for 15 ticks.
+      assert house_and_park(30.0).rescue_window == 11
+    end
+
+    test "nil beyond the horizon rather than a large number" do
+      # 400 in the bank against a 2-a-tick drain is roughly 195 ticks to the escape price,
+      # well past the 60-tick horizon. The projection stops rather than running it out.
+      refute house_and_park(400.0).rescue_window
+    end
+
+    test "is zero once the escape is already unaffordable" do
+      # Bank 9 is below the park demolition's 10, so there is no window left at all. Zero
+      # and not nil: nil means "not within the horizon", which is the opposite situation,
+      # and a single `nil` for both would make the banner unable to tell them apart.
+      assert house_and_park(9.0).rescue_window == 0
+    end
+
+    test "survives a city whose income falls while the treasury drains" do
+      # THE mutation this block exists to catch: computing the window as
+      # `money / (demanded - supplied)` from the *current* drain.
+      #
+      # One house, one shop and eleven parks. Ceiling 31 against 33 of upkeep, so today's
+      # drain is 2 — but the parks draw 198 water against a baseline of 40, so the shop
+      # starves and its health-scaled income falls every tick. Measured, income goes
+      # 31 -> 24.9 and the drain grows 2 -> 8.07 over five ticks.
+      #
+      # A division by today's drain reports (35 - 10) / 2 = 12 ticks. The truth is 5. The
+      # assertion is on the exact projected figure, so the division cannot satisfy it.
+      assert Calc.metrics(collapsing_income_city(35.0)).rescue_window == 5
+    end
+
+    test "nil for a stalled city, whose treasury the engine has already frozen" do
+      # A single dead water plant: ceiling 0 against 5 of upkeep, so insolvent; 50 in the
+      # bank, so not bankrupt; and stalled, because it is at zero health and starved of
+      # labour. `CityEngine` runs no tick while stalled, so that 50 never moves and any
+      # countdown in ticks describes something that will not happen.
+      city = %{
+        map_with([%Node{Node.new(0, 0, :water_plant) | health: 0.0, status: :offline}])
+        | money: 50.0
+      }
+
+      metrics = Calc.metrics(city)
+
+      assert metrics.stalled
+      assert metrics.insolvent
+      refute metrics.bankrupt
+      refute metrics.rescue_window
+    end
+
+    test "stops projecting at the tick the city stalls" do
+      # Three dead houses stall (45 power against a baseline of 40) and hold whatever they
+      # had. A projection that ignored the engine's tick-skip would keep draining them
+      # past the freeze and report a window; the freeze is what makes the honest answer
+      # nil. Their upkeep is nothing though, so to be insolvent at all this city needs a
+      # park — which the two-house cliff keeps out, so the fixture uses the park's own
+      # upkeep and lets the houses do the stalling.
+      city = %{
+        map_with([
+          %Node{Node.new(0, 0, :residential) | health: 0.0, status: :offline},
+          %Node{Node.new(1, 0, :residential) | health: 0.0, status: :offline},
+          %Node{Node.new(2, 0, :residential) | health: 0.0, status: :offline},
+          %Node{Node.new(3, 0, :park) | health: 0.0, status: :offline}
+        ])
+        | money: 50.0
+      }
+
+      assert Calc.metrics(city).stalled
+      refute Calc.metrics(city).rescue_window
+    end
+  end
+
   describe "waste as an accumulating stock" do
     test "unprocessed waste carries into the next tick" do
       city = five_houses()
@@ -911,4 +1117,56 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # four emit exactly 40, leave nothing, and would make every waste-stock
   # assertion read the same whether the mechanic exists or not.
   defp five_houses, do: map_with(for i <- 0..4, do: Node.new(i, 0, :residential))
+
+  # One house and one park: a rated ceiling of 1 against 3 of upkeep, so insolvent by 2,
+  # with the park demolition at 10 as the escape. Nothing here starves — the house's draws
+  # and the park's 18 water all sit inside the free baseline — so income holds at 1 and the
+  # drain holds at 2. That makes it the fixture where the projection and a naive division
+  # agree, which is exactly why it is not the only fixture in the block.
+  defp house_and_park(money) do
+    Calc.metrics(%{
+      map_with([Node.new(0, 0, :residential), Node.new(1, 0, :park)])
+      | money: money
+    })
+  end
+
+  # One house, one shop and eleven parks. The money side is nearly balanced — a rated
+  # ceiling of 31 against 33 of upkeep — while the water side is not remotely: eleven parks
+  # draw 198 against a baseline of 40. So the shop starves, its health-scaled income falls
+  # every tick, and the drain grows. The count is eleven because that is what puts the gap
+  # at 2, small enough that a division by today's drain reports a comfortable window.
+  defp collapsing_income_city(money) do
+    nodes =
+      [Node.new(0, 0, :residential), Node.new(1, 0, :commercial)] ++
+        for i <- 0..10, do: Node.new(i, 1, :park)
+
+    %{map_with(nodes) | money: money}
+  end
+
+  # Every one of the 1,200 cells filled, with a money gap of exactly 7: one house supplying
+  # a rated ceiling of 1 against a water plant's 5 and a park's 3 of upkeep.
+  #
+  # The 1,197 fillers alternate `power_plant` and `industrial` because those are the only
+  # two types that touch money in neither table — net 0 each — so the gap is set by the
+  # three named blocks alone and stays 7 however many fillers there are. That is also what
+  # makes deleting the last cell a money-neutral edit, which the paired test relies on.
+  #
+  # 7 and not some smaller gap: it has to exceed every single type's money load (the water
+  # plant's 5 is the largest) so that no lone demolition qualifies, while staying under the
+  # shop's +30 so a placement does. That gap is the only shape in which the free-cell filter
+  # can change the answer.
+  defp full_grid_gap_of_seven do
+    for y <- 0..29, x <- 0..39, reduce: CityMap.new(40, 30) do
+      map ->
+        type =
+          case y * 40 + x do
+            0 -> :residential
+            1 -> :water_plant
+            2 -> :park
+            index -> if rem(index, 2) == 0, do: :power_plant, else: :industrial
+          end
+
+        CityMap.put_node(map, Node.new(x, y, type))
+    end
+  end
 end

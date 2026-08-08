@@ -89,6 +89,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @amenity_per_housing 1.0
   @max_amenity_ratio 1.0
 
+  # How far ahead `rescue_window/3` will project before giving up and reporting `nil`.
+  #
+  # A bound on cost, not a judgement about the player: an insolvent city 200 ticks from
+  # trouble shows no countdown rather than "200 ticks", which costs nothing worth having —
+  # the figure only matters in the range where acting matters. Measured, the full horizon
+  # costs 0.46 ms on 12 nodes, 2.1 ms on 50 and 37.6 ms on a full 1,200-node grid, and it is
+  # only paid while the city is insolvent.
+  @runway_horizon 60
+
   @regen_per_tick 1.0
   @decay_per_tick 6.0
   @min_health 0.0
@@ -151,9 +160,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   signature changed.
   """
   @spec advance_tick(CityMap.t()) :: {CityMap.t(), delta()}
-  def advance_tick(city_map) do
-    stats = resource_stats(city_map)
+  def advance_tick(city_map), do: advance_tick(city_map, resource_stats(city_map))
 
+  # Split from `advance_tick/1` so the projection in `rescue_window/3` can compute
+  # `resource_stats/1` once per step and spend it twice — on the stall check and on the
+  # advance — rather than paying for it twice per projected tick.
+  defp advance_tick(city_map, stats) do
     {nodes, delta} =
       Enum.reduce(city_map.nodes, {%{}, %{}}, fn {key, node}, {nodes, delta} ->
         advanced = advance_node(node, stats)
@@ -186,15 +198,161 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   def metrics(city_map) do
     nodes = CityMap.nodes(city_map)
     stats = resource_stats(city_map)
+    stalled = stalled?(nodes, stats, city_map.waste_stock)
 
-    derived = %{
-      amenity: labour_multiplier(nodes),
-      amenity_marginal_labour: marginal_amenity_labour(nodes),
-      amenity_labour: placed_amenity_labour(nodes),
-      stalled: stalled?(nodes, stats, city_map.waste_stock)
-    }
+    derived =
+      %{
+        amenity: labour_multiplier(nodes),
+        amenity_marginal_labour: marginal_amenity_labour(nodes),
+        amenity_labour: placed_amenity_labour(nodes),
+        stalled: stalled
+      }
+      |> Map.merge(solvency(city_map, nodes, stats, stalled))
 
     SimulationMetrics.build(city_map, stats, derived)
+  end
+
+  # The solvency group: the rated money ceiling, whether it falls short of upkeep, the
+  # cheapest way out and how long the treasury can still buy it.
+  #
+  # Computed here rather than in `SimulationMetrics.build/3` for the same reason `stalled`
+  # and the amenity figures are: `Domain.Entities` has `deps: []`, and the projection in
+  # `rescue_window/4` needs `advance_tick/2`.
+  #
+  # The ceiling is the *rated* sum — every earner as though at full health — and that is the
+  # load-bearing choice in the whole mechanic. Demand is never health-scaled and the node set
+  # cannot change while the player cannot afford a command, so `supply <= ceiling < demand`
+  # makes the balance strictly decreasing and the state provably terminal. Comparing the
+  # health-scaled `supplied` instead would condemn any city whose earners are merely sick:
+  # measured, a house beside a 5%-health shop and a park reads 2.5 against 3 of upkeep and
+  # recovers to 9832 within 400 ticks.
+  defp solvency(city_map, nodes, stats, stalled) do
+    ceiling = rated_money_capacity(nodes)
+    gap = Map.fetch!(stats, :money).demanded - ceiling
+
+    if gap > 0.0 do
+      escape = escape(city_map, nodes, gap)
+
+      %{
+        money_ceiling: ceiling,
+        insolvent: true,
+        escape: escape,
+        rescue_window: rescue_window(city_map, escape_price(escape), stalled)
+      }
+    else
+      %{money_ceiling: ceiling, insolvent: false, escape: nil, rescue_window: nil}
+    end
+  end
+
+  defp escape_price({:multiple, cost}), do: cost
+  defp escape_price({_action, _type, cost}), do: cost
+
+  # How many ticks the treasury can still afford `price`, by **projecting the city forward**
+  # rather than dividing the balance by today's drain.
+  #
+  # The division is what this replaced, and it was wrong by a factor of two on a real city:
+  # income is health-scaled, so a city whose earners are starving loses income while it
+  # loses money, and the drain is the one term in that formula guaranteed to move. Measured
+  # on one house, one shop and eleven parks at a treasury of 35 — the parks draw 198 water
+  # against a baseline of 40, so the shop starves — income fell 31 -> 24.9 while the drain
+  # grew 2 -> 8.07, and the escape became unaffordable on tick 5 where the division promised
+  # 12.
+  #
+  # Projecting is exact rather than merely tighter: `advance_tick/2` is pure and
+  # deterministic, and the projection's premise — that the player does nothing — is
+  # precisely what a countdown predicts. `price` holds still throughout, because it derives
+  # from the gap between money demand and the *rated* ceiling, and both are count-based
+  # rather than health-scaled, so neither moves while the node set does not.
+  #
+  # Measured cost, only paid while insolvent: 0.46 ms for the full horizon on 12 nodes,
+  # 2.1 ms on 50, 37.6 ms on a pathological 1,200, against a 1,000 ms tick.
+  defp rescue_window(_city_map, _price, true = _stalled), do: nil
+
+  defp rescue_window(city_map, price, _stalled) do
+    Enum.reduce_while(0..@runway_horizon, city_map, fn elapsed, projected ->
+      cond do
+        projected.money < price ->
+          {:halt, elapsed}
+
+        # A stalled city runs no tick, so its treasury stops falling here and the escape
+        # stays affordable forever. Without this the projection would keep draining a
+        # balance `CityEngine` has already frozen and report a deadline that never arrives.
+        # This is the same defect as the clause above, one step further out.
+        elapsed == @runway_horizon or projected_stall?(projected) ->
+          {:halt, nil}
+
+        true ->
+          {:cont, elem(advance_tick(projected, resource_stats(projected)), 0)}
+      end
+    end)
+  end
+
+  defp projected_stall?(city_map) do
+    nodes = CityMap.nodes(city_map)
+
+    # The cheap necessary condition first: `stalled?/3` can only be true when every node is
+    # on the floor, and computing `resource_stats/1` to discover otherwise would double the
+    # cost of every projected tick in the common case.
+    Enum.all?(nodes, &(&1.health == @min_health)) and
+      stalled?(nodes, resource_stats(city_map), city_map.waste_stock)
+  end
+
+  # Rated rather than effective: `Node.capacity/1`, not `Node.effective_capacity/1`.
+  defp rated_money_capacity(nodes) do
+    Enum.reduce(nodes, 0.0, fn node, acc ->
+      acc + Map.get(Node.capacity(node.type), :money, 0.0)
+    end)
+  end
+
+  # The cheapest single action that would close `gap`, so the banner can name one thing to
+  # do rather than describing the problem.
+  #
+  # Placing one node of type `t` moves the gap by `-net(t)`; demolishing one moves it by
+  # `+net(t)`, where `net(t)` is that type's money capacity minus its money load. One
+  # formula covers both directions because demolishing removes the load *and* the capacity.
+  #
+  # Demolition is strictly cheaper than the cheapest construction — 10 against 15, a
+  # property `node_test.exs` pins rather than assumes — so a placement can never outbid a
+  # demolition. `min_by` is still the right shape: it is what makes the *placement* choice
+  # (a house at 15 where +1 is enough, the shop at 40 where it is not) come out cheapest.
+  defp escape(city_map, nodes, gap) do
+    candidates = placements(city_map, nodes, gap) ++ demolitions(nodes, gap)
+
+    case Enum.min_by(candidates, &elem(&1, 2), fn -> nil end) do
+      nil -> {:multiple, Node.cheapest_action_cost()}
+      action -> action
+    end
+  end
+
+  # Only where a cell is free. `UseCases.ManageInfrastructure.place/4` refuses every occupied
+  # coordinate, so on a full grid a priced placement is an instruction the player cannot
+  # follow — the real route is a demolition and *then* a construction, which is two actions
+  # and a different price. Without this the banner would name the shop on a grid with nowhere
+  # to put it.
+  defp placements(city_map, nodes, gap) do
+    if length(nodes) < city_map.width * city_map.height do
+      for type <- Node.types(),
+          money_net(type) >= gap,
+          do: {:place, type, Node.construction_cost(type)}
+    else
+      []
+    end
+  end
+
+  # Only types actually standing in the city — `escape/3` must not offer to demolish
+  # something that is not there.
+  defp demolitions(nodes, gap) do
+    nodes
+    |> Enum.map(& &1.type)
+    |> Enum.uniq()
+    |> Enum.filter(&(-money_net(&1) >= gap))
+    |> Enum.map(&{:demolish, &1, Node.demolition_cost()})
+  end
+
+  # Positive for a type that earns more than it costs to run, negative for one that is a net
+  # drain. Reads both tables because a type can appear in either or both.
+  defp money_net(type) do
+    Map.get(Node.capacity(type), :money, 0.0) - Map.get(Node.load(type), :money, 0.0)
   end
 
   # Baseline capacity plus health-scaled capacity from every node, with labour then

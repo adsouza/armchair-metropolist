@@ -20,6 +20,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
 
@@ -111,6 +112,33 @@ defmodule ArmchairMetropolist.PlayingGuide do
       }
 
       {stage, spent}
+    end)
+    |> elem(0)
+  end
+
+  @doc """
+  The solvency state at each stage of the documented opening, with the treasury the grant
+  actually leaves at that point.
+
+  Separate from `opening_stages/0` because it needs a *treasury*, and that function's cities
+  are built by `city_from/1`, which deliberately starts broke to make its own decay window
+  tight. Here the balance is the whole subject: the opening sequence is insolvent for five of
+  its seven stages — money has no free baseline, and the shop that pays for the plants and
+  parks goes up last — so a warning keyed off insolvency alone would fire right through the
+  tutorial. What keeps it quiet is that the grant leaves a wide rescue window at every stage.
+  """
+  @spec opening_solvency() :: [
+          %{step: pos_integer(), type: Node.node_type(), metrics: SimulationMetrics.t()}
+        ]
+  def opening_solvency do
+    @opening_order
+    |> Enum.with_index(1)
+    |> Enum.map_reduce(0.0, fn {type, step}, spent ->
+      spent = spent + Node.construction_cost(type)
+      city = @opening_order |> Enum.take(step) |> city_from()
+      metrics = Calc.metrics(%{city | money: CityMap.opening_grant() - spent})
+
+      {%{step: step, type: type, metrics: metrics}, spent}
     end)
     |> elem(0)
   end

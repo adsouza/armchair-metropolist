@@ -142,6 +142,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # The same city with money in the bank — stalled, but a rescue is still affordable.
   defp initial_snapshot(%{stalled_solvent_city: true}), do: {:ok, {0, stalled_city(105.0)}}
 
+  # `@tag :locked_city` seeds the insolvency softlock: one house at full health beside one
+  # park, treasury empty. Ceiling 1 against 3 of upkeep, so the treasury can never rise; the
+  # house draws only power/water/waste/traffic, every one inside the free baseline, so it
+  # holds 100 health forever and `housing_alive` never goes false. Measured, this city is
+  # unchanged after 2000 ticks — and under the old `stalled and bankrupt` it had no end state.
+  defp initial_snapshot(%{locked_city: true}), do: {:ok, {0, house_and_park(0.0)}}
+
+  # The same city inside the warning band: 30 in the bank, a rescue window of 11 ticks
+  # against a reaction budget of 12. Not bankrupt, so the player can still demolish the park.
+  defp initial_snapshot(%{warned_city: true}), do: {:ok, {0, house_and_park(30.0)}}
+
+  # And the same city too far out to warn: 400 buys some 195 ticks, past the 60-tick
+  # projection horizon, so there is no window to show.
+  defp initial_snapshot(%{early_insolvent_city: true}), do: {:ok, {0, house_and_park(400.0)}}
+
   defp initial_snapshot(_context), do: {:error, :not_found}
 
   # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
@@ -151,6 +166,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # ... should be grouped together" warning it would otherwise raise never gates the
   # build — but it is a real warning worth not having, and `mix test` prints it on
   # every run, which is reason enough to keep the clauses together.
+  defp house_and_park(money) do
+    city =
+      CityMap.new(40, 30)
+      |> CityMap.put_node(Node.new(0, 0, :residential))
+      |> CityMap.put_node(Node.new(1, 0, :park))
+
+    %{city | money: money}
+  end
+
   defp stalled_city(money) do
     city =
       Enum.reduce(0..2, CityMap.new(40, 30), fn x, map ->
@@ -1332,6 +1356,111 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#collapse-banner", "Reset")
+    end
+  end
+
+  describe "insolvency" do
+    @tag :locked_city
+    test "the reset control appears on a locked city that still has living housing",
+         %{conn: conn} do
+      # The defect this whole feature exists to fix. `show_reset?/1` was
+      # `not housing_alive and (...)`, and this city's house sits at 100 health forever, so
+      # the button was unreachable from a city the player can never act in again.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#reset-city")
+    end
+
+    @tag :locked_city
+    test "the banner says locked, not dead", %{conn: conn} do
+      # A house at 100 health makes "this city is dead" a false sentence. Both directions
+      # asserted, because the two banners share their closing advice and an assertion on
+      # that alone would pass against the wrong copy.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render(view)
+      assert html =~ "City locked"
+      refute html =~ "this city is dead"
+    end
+
+    @tag :stalled_city
+    test "a stalled bankrupt city still says dead rather than locked", %{conn: conn} do
+      # Banner precedence. A stalled city is *also* insolvent whenever its upkeep outruns
+      # its ceiling, so both new and old copy qualify and the order decides. Dead is the
+      # more specific truth when every block is on the floor. Kills swapping the two rows.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render(view)
+      assert html =~ "Game over — this city is dead."
+      refute html =~ "City locked"
+    end
+
+    @tag :warned_city
+    test "warns before bankruptcy and names the escape with its price", %{conn: conn} do
+      # 30 in the bank, an 11-tick window, and the park demolition at 10 as the way out.
+      # The price matters as much as the verdict: "demolish something" without the 10 does
+      # not tell the player whether they can still afford it.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render(view)
+      assert html =~ "Upkeep outruns income"
+      assert html =~ "11 ticks"
+      assert html =~ "park"
+      assert html =~ "10"
+    end
+
+    @tag :warned_city
+    test "a warned city gets no reset control, because it is still rescuable", %{conn: conn} do
+      # The warning is an invitation to fix the city, not to abandon it — and the 2026-08-06
+      # design's misclick mitigation is exactly that the button stays away from cities the
+      # player can still play. `docs/PLAYING.md` claims this in prose; this is what stops the
+      # claim going stale.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#collapse-banner")
+      refute has_element?(view, "#reset-city")
+    end
+
+    @tag :warned_city
+    test "the rescue window appears in the metrics panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#metrics-rescue", "Rescue window: 11 ticks")
+    end
+
+    @tag :early_insolvent_city
+    test "an insolvent city far from trouble gets neither banner nor rescue line",
+         %{conn: conn} do
+      # Insolvent but 195 ticks out, past the projection horizon. This is the state the
+      # guide's own opening sequence spends five of its seven stages in, so a warning here
+      # would fire right through the tutorial.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      refute has_element?(view, "#collapse-banner")
+      refute has_element?(view, "#metrics-rescue")
+      refute has_element?(view, "#reset-city")
+    end
+
+    @tag :locked_city
+    test "a locked city shows no rescue window, because there is no rescue", %{conn: conn} do
+      # `rescue_window` is `0` for this city, and `0` is truthy in Elixir — so a line gated
+      # on the bare value renders "Rescue window: 0 ticks" underneath a banner that has just
+      # explained the city is over. The figure is a warning device; once the warning is moot
+      # it is noise, and "0 ticks to rescue" invites a player to look for the rescue.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert html = render(view)
+      assert html =~ "City locked"
+      refute has_element?(view, "#metrics-rescue")
+    end
+
+    test "a healthy city has no rescue line at all", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "select_type", %{"type" => "residential"})
+      render_click(view, "place", %{"x" => "1", "y" => "1"})
+
+      refute has_element?(view, "#metrics-rescue")
     end
   end
 end
