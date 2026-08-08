@@ -658,10 +658,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert is_binary(title)
       assert body =~ "power at 18% of demand"
 
-      # Ten commercial nodes against baseline capacity alone: labour 0/80 (no
-      # housing at all, so 0%), power 40/220, waste 40/140, traffic 40/90,
-      # water 40/80. The order is the severity signal the operator reads
-      # first, so it is pinned, not incidental.
+      # Ten commercial nodes against baseline capacity alone, as plain ratios:
+      # labour 0/80 (no housing at all, so 0%), power 40/220, waste 40/140,
+      # traffic 40/90, water 40/80. The order below is the severity signal the
+      # operator reads first, so it is pinned, not incidental — but it is not
+      # simply those ratios sorted, because waste is not a plain ratio here.
       #
       # Waste sorts ahead of labour despite labour being wholly unsupplied: a
       # backlog drives satisfaction *below* zero (here -0.429) while an unmet

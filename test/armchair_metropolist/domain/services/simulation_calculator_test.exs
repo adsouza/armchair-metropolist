@@ -803,6 +803,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {next, _} = Calc.advance_tick(city)
 
       assert_in_delta next.waste_stock, 20.0, 0.001
+
+      # A forward tripwire, not the catch: `%CityMap{}` has no `:traffic_stock`
+      # key today and never has, so this cannot fail on its own. What actually
+      # catches `:traffic` being added to `@carryover` is the `carried == 0.0`
+      # assertion below.
       refute Map.has_key?(next, :traffic_stock)
       assert Calc.resource_stats(next).traffic.carried == 0.0
     end
@@ -831,11 +836,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       dead = for i <- 0..4, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
       assert Calc.metrics(%{map_with(dead) | waste_stock: 60.0}).stalled
 
-      # Every emitter demolished: demand 0 against the baseline's 40, so the next
-      # deficit is max(0, 0 - 40 + 60) = 20 < 60 and the landfill is draining.
-      # The engine skips ticks for a stalled city, so calling THIS stalled would
-      # freeze the stock permanently — the deadlock this clause exists to prevent.
-      refute Calc.metrics(%{map_with([]) | waste_stock: 60.0}).stalled
+      # Two dead houses, not an empty grid: `stalled?([], _, _)` short-circuits to
+      # false before the stock conjunct is reached, so an empty city cannot
+      # observe this clause at all. These two emit 20 against the baseline's 40,
+      # so at stock 60 the next deficit is 40 — draining, and therefore not
+      # stalled. The engine skips ticks while stalled, so calling this stalled
+      # would freeze the landfill permanently.
+      dead = for i <- 0..1, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
+      refute Calc.metrics(%{map_with(dead) | waste_stock: 60.0}).stalled
     end
 
     test "a settled dead city is still stalled" do

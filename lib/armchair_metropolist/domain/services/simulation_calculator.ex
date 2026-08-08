@@ -6,7 +6,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        capacity for `r`, plus whatever balance `r` carried over from the
-       previous tick (every resource but money carries nothing). Labour is then
+       previous tick (only money and waste carry anything; see step 10 for
+       waste's balance, which is negated). Labour is then
        multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
        both sides health-weighted — so parks raise the workforce their housing
        supplies without producing labour themselves. With no housing the
