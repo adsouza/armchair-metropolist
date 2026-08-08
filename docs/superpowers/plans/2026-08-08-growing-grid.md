@@ -1342,8 +1342,8 @@ moves, and no block changes its coordinates — the map grows away from the corn
 started in, rather than shifting your city around.
 
 The cells themselves shrink as the grid grows, so the whole map stays a comfortable size
-on screen rather than running off the edge: it reaches its full width at 6×6 and stays
-there.
+on screen rather than running off the edge: it reaches close to its full width at 6×6 and
+stays around there from then on.
 ```
 
 Do **not** state a figure that a generator could produce instead — the growth thresholds
