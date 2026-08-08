@@ -11,8 +11,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   "what is damaging the city right now". `flow_satisfaction` is the same ratio
   computed over `supplied` alone, ignoring `carried` entirely — the figure the
   legend's totals cell renders, answering "is my per-tick economy balanced".
-  Most resources carry nothing (`carried: 0.0`), so the two agree; money is the
-  one treasury, and they diverge exactly when savings are covering a deficit.
+  Most resources carry nothing (`carried: 0.0`), so the two agree. Money and
+  waste are the two that do, and they diverge in opposite directions: money's
+  carried balance is a treasury, so `satisfaction` can only sit *above*
+  `flow_satisfaction` — savings covering a flow deficit. Waste's carried
+  balance is a backlog, entered negated (see `carried/2`), so `satisfaction`
+  can only sit *below* `flow_satisfaction` — a landfill making this tick worse
+  than its own flow would otherwise read.
   """
   @type resource_stats :: %{
           supplied: float(),
@@ -43,6 +48,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           offline_count: non_neg_integer(),
           by_type: %{Node.node_type() => type_stats()},
           money: float(),
+          waste_stock: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
           amenity_labour: float(),
@@ -70,6 +76,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             offline_count: 0,
             by_type: %{},
             money: 0.0,
+            waste_stock: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
             amenity_labour: 0.0,
@@ -104,6 +111,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       offline_count: offline_count,
       by_type: build_by_type(nodes),
       money: city_map.money,
+      waste_stock: city_map.waste_stock,
       amenity: Map.fetch!(derived, :amenity),
       amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
       amenity_labour: Map.fetch!(derived, :amenity_labour),

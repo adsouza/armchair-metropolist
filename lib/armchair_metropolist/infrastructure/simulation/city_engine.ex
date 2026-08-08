@@ -590,7 +590,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   defp notify(resources) do
     body =
       Enum.map_join(resources, ", ", fn {resource, stats} ->
-        "#{resource} at #{round(stats.satisfaction * 100)}% of demand"
+        # Clamped at the display layer only — see SimulatorLive.tightest_resource/1
+        # for the identical reasoning. critical_resources/1's own filter and sort,
+        # just above, stay on the signed value so waste still ranks first.
+        "#{resource} at #{max(0, round(stats.satisfaction * 100))}% of demand"
       end)
 
     case notifier().notify("City resources in deficit", body) do

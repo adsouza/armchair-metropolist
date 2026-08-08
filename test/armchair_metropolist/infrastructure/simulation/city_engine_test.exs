@@ -757,6 +757,38 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert_receive {:notified, _, _}, 1_000
     end
+
+    # Ten houses emit 100 waste against the free baseline's 40. `AdvanceCityTick`
+    # computes metrics from the *post*-tick map (see its own moduledoc), and
+    # `SimulationCalculator.advance_tick/1` writes this same tick's waste deficit
+    # (100 demanded - 40 supplied = 60) into that post-tick map before metrics are
+    # built from it — so the very first notified tick already reads the backlog:
+    # available (40 - 60 = -20) over demand (100) is -0.2, not merely short of 1.0.
+    #
+    # This is why the fixture is ten houses and not fewer: at six (the free
+    # baseline covers most of a 60-demand load) the first tick's deficit is only
+    # 20, available stays positive at 20, and satisfaction lands at +0.33 — a
+    # deficit, but not the negative one this test exists to clamp. Measured by
+    # running `SimulationCalculator.advance_tick/1` by hand for six through
+    # twelve houses: nine is the first count whose first-tick satisfaction goes
+    # negative, and ten was chosen over nine only to match this file's own
+    # `starve/1` idiom of ten placements.
+    test "a waste backlog is reported at 0% rather than a negative percentage",
+         %{city_id: city_id} do
+      seed_funded_city()
+      start_supervised!({CityEngine, city_id: city_id})
+      Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :residential) end)
+
+      broadcast_tick(1)
+      assert_receive {:notified, _title, body}, 1_000
+
+      assert body =~ "waste at 0% of demand"
+
+      # The clamp is the point: unclamped this reads "waste at -20% of demand".
+      # Asserted on the whole body rather than on the substring above, because a
+      # negative figure for any other resource would be the same defect.
+      refute body =~ "-"
+    end
   end
 
   describe "isolation between cities" do
