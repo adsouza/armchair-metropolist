@@ -1624,6 +1624,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert cell_count(render(view)) == 4
     end
 
+    test "a brand new city starts on the 2x2 grid", %{conn: conn} do
+      # The fresh-mount counterpart to "the background grid and the banner follow too"
+      # above: that test's 16-cell assertion guards the broadcast path (:grid_cells
+      # recomputed from a {:city_grew, ...} message), but nothing guarded hydration
+      # itself — a mount that sizes the container from the hydrated width while
+      # computing :grid_cells from something else would still render 256x256 with the
+      # wrong cell count, and nothing here would have gone red.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+      assert cell_count(render(view)) == 4
+    end
+
     test "placing the third block grows the grid the player is looking at", %{conn: conn} do
       # The only test that crosses the whole seam: real clicks -> ManageInfrastructure ->
       # CityEngine's growth detection -> the broadcast -> the view's handler. Every other
@@ -1643,6 +1656,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # cell size has not changed yet (128 up to 6x6).
       assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
       assert render(view) =~ ~s{id="0:1"}
+
+      # A handler that resizes the container without recomputing :grid_cells would pass
+      # everything above while still painting a 2x2's worth of background cells behind it.
+      assert cell_count(render(view)) == 16
     end
   end
 
