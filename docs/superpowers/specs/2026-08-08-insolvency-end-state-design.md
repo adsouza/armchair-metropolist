@@ -1,7 +1,16 @@
 # Insolvency: a city that can never pay for its own escape — design
 
 **Date:** 2026-08-08
-**Status:** designed, not yet implemented
+**Status:** designed, revised after adversarial review, not yet implemented
+**Revision:** an adversarial review found three defects in the first draft, all confirmed by
+measurement and all fixed here rather than accepted. (1) `insolvent` and `stalled` are not
+mutually exclusive, so the warning counted down a treasury the engine had already frozen —
+§3.5, and the banner now uses an explicit precedence order in §5.2. (2) The escape could price a
+placement onto a full grid, which `ManageInfrastructure.place/4` refuses — §3.4. (3) The warning
+band was computed as `escape_cost + 12 × current_drain` and claimed to be 12 ticks wide "by
+construction"; measured, a city with falling income got 4 — §3.3, now an exact forward
+projection. The third is the one that mattered: the tripwire test the draft relied on used only
+fully-supplied fixtures, which is precisely where the broken formula was correct.
 **Discharges:** the "partial fixpoints are not detected" accepted consequence of
 `2026-08-06-collapse-end-state-and-city-reset-design.md`, §8. That spec deferred the case on
 two stated grounds — "the player can still act there, income is still arriving". Measured,
@@ -136,15 +145,47 @@ rather than extended — its sentence "a running city that is merely broke still
 premise this design refutes, and leaving it beside the new disjunct would leave the module
 contradicting itself.
 
-### 3.3 `runway/1`
+### 3.3 `rescue_window`, by projection rather than by division
 
-`trunc(money / drain)` where `drain = demanded - supplied`, and `nil` when not insolvent.
+**Superseded design, recorded because the reasoning is the point.** The first version of this
+section computed `trunc(money / drain)` from the current drain, and §4 claimed the warning
+band was "12 ticks wide by construction". Measured, on one house, one shop and eleven parks at
+a treasury of 35: quiet at tick 0, warning at tick 1, escape unaffordable at **tick 5**.
 
-The division needs no guard, and the reason is structural rather than defensive: `supplied`
-is a sum of health-scaled capacities and so never exceeds `money_ceiling`, and `insolvent`
-means `money_ceiling < demanded`, so `drain > 0` strictly. Gating on `insolvent` is
-therefore what makes the arithmetic safe *and* what makes the figure honest — a sick-but-
-recovering shop also drains, and a countdown there would be a prediction the city disproves.
+Income is health-scaled and the parks' 198 water demand starves the shop, so income fell
+31 → 24.9 while drain grew 2 → 8.07 over those five ticks. `cost + N × current_rate` buys N
+ticks only where the rate is constant, and the rate was the one term guaranteed to move.
+
+The replacement is exact rather than bounded: **project the city forward with
+`advance_tick/1`** — the simulation is deterministic and pure, so "what will the treasury be
+in 8 ticks if the player does nothing" has an exact answer, and doing nothing is precisely
+what a countdown is predicting.
+
+`rescue_window` is the number of ticks until `money < escape_cost`, or `nil` when that does
+not happen inside `@runway_horizon` (60) ticks, or when the city is solvent or stalled.
+
+Three properties make the projection sound:
+
+* **`escape_cost` is constant across the projection.** It derives from `gap = demanded -
+  money_ceiling`, and both terms are count-based rather than health-scaled, so neither moves
+  while the node set is fixed — which it is, since the projection assumes no player action.
+  There is no fixpoint to iterate to.
+* **The projection must stop when the projected city stalls.** `CityEngine` runs no tick while
+  stalled, so a projection that kept draining past that point would predict a fall the engine
+  will never perform. This is the same defect as §3.5's, one step further out.
+* **Cost is measured, not assumed.** A 13-tick projection costs 0.12 ms at 12 nodes, 0.57 ms
+  at 50, 1.59 ms at 200 and 9.05 ms at a pathological 1200; a 60-tick one costs 0.46 / 2.1 /
+  6.44 / 37.6 ms. Against a 1000 ms tick, and only computed while insolvent, the exact answer
+  is cheaper than the error in the estimate was.
+
+To avoid computing `resource_stats/1` twice per projected tick — once for the stall check and
+once inside `advance_tick/1` — extract a private `advance_tick(city_map, stats)` and let
+`advance_tick/1` delegate to it. The projection then computes stats once per step and uses it
+for both.
+
+Because the projection lives in `Domain.Services.SimulationCalculator` (the only module that
+may call `advance_tick/1`), the whole solvency group is computed there and arrives through
+`derived`, exactly as `stalled` and the three amenity figures already do. See §3.6.
 
 ### 3.4 `escape/1`
 
@@ -154,11 +195,23 @@ The cheapest single action that would end the insolvency, derived from the table
 Let `gap = demanded - money_ceiling` and `net(t) = capacity(t)[:money] - load(t)[:money]`.
 Placing one `t` moves the gap by `-net(t)`; demolishing one moves it by `+net(t)`. So:
 
-* candidate placements: every `t` with `net(t) >= gap`, at `Node.construction_cost(t)`
-* candidate demolitions: every `t` with `by_type[t].count > 0` and `-net(t) >= gap`, at
+* candidate placements: every `t` with `net(t) >= gap`, at `Node.construction_cost(t)` —
+  **only when the grid has a free cell**
+* candidate demolitions: every `t` with `count(t) > 0` and `-net(t) >= gap`, at
   `Node.demolition_cost()`
 * cheapest of those; `{:multiple, ...}` when the list is empty, so the copy can say honestly
   that one block will not be enough rather than naming an action that would not work
+
+**The free-cell condition is load-bearing, not defensive.** `ManageInfrastructure.place/4`
+refuses every occupied coordinate, so on a full grid a priced `{:place, :commercial, 40.0}` is
+an instruction the player cannot follow: the real route is a demolition *then* a construction,
+which costs more and may already be unaffordable. Filtering on
+`node_count < width * height` is what keeps `escape/1`'s contract — "the cheapest single action
+that would end the insolvency" — true rather than nearly true. A full 1200-cell grid is
+remote but not unreachable, and the cost of the guard is one comparison.
+
+This is why the derivation takes `city_map` rather than only `by_type`: the free-cell count is
+not derivable from the metrics struct, which carries no dimensions.
 
 Measured nets: `commercial` +30 (cost 40), `residential` +1 (15), `power_plant` and
 `industrial` 0, `park` −3 (20), `transit_hub` −4 (40), `water_plant` −5 (70).
@@ -172,16 +225,46 @@ input can produce.
 
 ### 3.5 `warning?/1`
 
-`insolvent and not bankrupt and money < escape_cost + @reaction_ticks * drain`.
+`insolvent and not stalled and not bankrupt and rescue_window != nil and rescue_window <=
+@reaction_ticks`.
 
-`not bankrupt` keeps the warning and the terminal state disjoint, so the banner has exactly
-one variant to render at a time.
+**`not stalled` is required, and its absence was a real defect in the first draft.**
+`insolvent` and `stalled` are not mutually exclusive: a single dead water plant has a money
+ceiling of 0 against 5 of demand, so it is insolvent; with 50 in the bank it is not bankrupt;
+and measured, the first draft's `warning?/1` returned `true` for it and the panel would have
+counted down 10 ticks. `CityEngine` runs no tick while stalled, so that treasury sits at 50
+forever and every number in that countdown is false. The existing stalled-but-solvent banner
+already describes this city correctly — "the treasury still holds 50 — enough to demolish, and
+demolishing sometimes restarts the clock" — so the fix is precedence, not new copy.
+
+### 3.6 The solvency group, and where each piece lives
+
+`SimulationCalculator.metrics/1` computes one `solvency` group and passes it through `derived`
+alongside `stalled` and the amenity figures, for the same architectural reason those travel
+that way: `Domain.Entities` has `deps: []` and cannot reach `Domain.Services`, and the
+projection needs `advance_tick/1`.
+
+| figure | computed in | why not in `build/3` |
+|---|---|---|
+| `money_ceiling` | calculator | grouped with the rest; it is the input to all three below |
+| `insolvent` | calculator | derived from `money_ceiling` and money demand |
+| `escape` | calculator | needs `city_map` dimensions for the free-cell test, and feeds the projection |
+| `rescue_window` | calculator | needs `advance_tick/1` |
+
+`SimulationMetrics` stores all four as fields and exposes `game_over?/1` and `warning?/1` over
+them. Keeping the *predicates* in the entity is what stops the template and `docs/PLAYING.md`
+composing the conditions differently, which is the reason `game_over?/1` exists at all.
 
 ## 4. `@reaction_ticks`, and the test that pins it
 
-`@reaction_ticks 12`. The warning band is 12 ticks wide by construction — the threshold is
-the escape price plus 12 ticks of drain — which at the configured `tick_interval_ms: 1000`
-is 12 seconds to read a banner and click once.
+`@reaction_ticks 12`. The warning fires when the projection says the escape becomes
+unaffordable within 12 ticks, which at the configured `tick_interval_ms: 1000` is at least 12
+seconds to read a banner and click once.
+
+"At least" is now literal rather than aspirational. Because `rescue_window` is projected with
+the real tick function rather than extrapolated from the current drain, a city whose income is
+collapsing gets its warning *earlier* in treasury terms, not later in time — which is the
+whole correction described in §3.3.
 
 **A tick threshold alone would have been backwards.** Runway-in-ticks and can-I-afford-the-
 rescue are on different scales. At stage 6 of the guide's opening sequence the city has only
@@ -190,41 +273,59 @@ softlock city has a 20-tick runway at 40 in the bank and is four placements from
 Pricing the escape is what separates them.
 
 12 is a midpoint, not an edge. The binding constraint is stage 6 of the generated opening
-sequence in `docs/PLAYING.md` — bank 180, escape a shop at 40, drain 9/tick:
+sequence in `docs/PLAYING.md`, where the treasury holds 180 against a 40-cost shop and drains
+9/tick. Measured against the implemented projection, every stage of that sequence stays quiet,
+and stage 6 is the closest call:
 
-| `@reaction_ticks` | threshold at stage 6 | slack vs bank 180 | warning the softlock city gets |
-|---|---|---|---|
-| 4 | 76 | 2.4× | 4 ticks |
-| **12** | **148** | **1.22×** | **12 ticks** |
-| 15 | 175 | 1.03× | 15 ticks |
-| 16 | 184 | **fires during the guide's opening** | — |
+<!-- measured against the implementation; re-run test/docs figures after any balance patch -->
 
-Measured at 12, every stage of that sequence stays quiet:
+| stage | escape | bank | `rescue_window` | verdict |
+|---|---|---|---|---|
+| 1 `residential` | — | 385 | — | solvent |
+| 2 `park` | demolish park, 10 | 365 | beyond horizon | quiet |
+| 3 `water_plant` | place commercial, 40 | 295 | 37 | quiet |
+| 4 `power_plant` | place commercial, 40 | 215 | 26 | quiet |
+| 5 `residential` | place commercial, 40 | 200 | 27 | quiet |
+| 6 `park` | place commercial, 40 | 180 | **16** | quiet |
+| 7 `commercial` | — | 140 | — | solvent |
 
-| stage | gap | drain | escape | threshold | bank | verdict |
-|---|---|---|---|---|---|---|
-| 1 `residential` | — | — | — | — | 385 | solvent |
-| 2 `park` | 2 | 2 | demolish park, 10 | 34 | 365 | quiet |
-| 3 `water_plant` | 7 | 7 | place commercial, 40 | 124 | 295 | quiet |
-| 4 `power_plant` | 7 | 7 | place commercial, 40 | 124 | 215 | quiet |
-| 5 `residential` | 6 | 6 | place commercial, 40 | 112 | 200 | quiet |
-| 6 `park` | 9 | 9 | place commercial, 40 | 148 | 180 | quiet |
-| 7 `commercial` | — | — | — | — | 140 | solvent |
+So `@reaction_ticks` may rise to 15 before stage 6 warns. 12 keeps four ticks of margin at the
+tightest stage — the same 1.22× in treasury terms the earlier draft had, since at full health
+the projection and the division agree; what changed is that the figure is now also right when
+they do not.
 
 **The tripwire matters more than the value.** A test asserts that no stage of the opening
 sequence warns, built from the same generator that writes that table into the guide, so a
 balance patch which moves the sequence fails the build instead of quietly alarming players
-mid-tutorial. Without it this constant is a hand-maintained mirror of figures that live
-somewhere else, and it will drift.
+mid-tutorial.
+
+**That tripwire is necessary but not sufficient, and the first draft treated it as sufficient.**
+Every stage of the opening sequence is fully supplied, which is exactly the condition under
+which the superseded division was correct — so the tripwire shared the bug's blind spot and
+would have passed over it. It is paired with an adversarial fixture that *can* break the
+assumption: one house, one shop and eleven parks, whose water shortage makes income fall while
+the treasury drains. That fixture asserts the escape is still affordable for all
+`@reaction_ticks` ticks after the warning first fires, which is the property the design
+promises and the property the tutorial fixture cannot see.
 
 ## 5. Presentation
 
 ### 5.1 Metrics panel
 
-One line, `<p id="metrics-runway">Runway: N ticks</p>`, rendered `:if={@metrics.insolvent}`,
-placed after Treasury and before Landfill so the three money-adjacent figures read together.
-Plain text, never styled as an alert — the same treatment as `metrics-tightest`, which is
-also conditional and also a glance figure.
+One line, `<p id="metrics-rescue">Rescue window: N ticks</p>`, rendered when `insolvent and
+not stalled` and the projection returned a figure, placed after Treasury and before Landfill so
+the three money-adjacent figures read together. Plain text, never styled as an alert — the same
+treatment as `metrics-tightest`, which is also conditional and also a glance figure.
+
+**"Rescue window", not "Runway", and the rename is a correctness fix rather than a preference.**
+The number counts ticks until the *escape* becomes unaffordable, not ticks until the treasury
+empties. The two differ by `escape_price / drain` — 20 ticks for a 40-cost shop against a drain
+of 2, but only 4 at stage 6 of the opening sequence, where the drain is 9. Either way "Runway"
+would have been a wrong reading of a right number, and the size of the error is not a constant
+that could be documented away.
+
+`not stalled` gates this line for the same reason it gates `warning?/1` (§3.5): a stalled city
+runs no ticks, so a countdown in ticks describes nothing.
 
 This is a **width-neutral** addition by inspection: it is shorter than `metrics-tightest`'s
 longest rendering and far shorter than the totals footnote at 1288px that currently binds the
@@ -234,17 +335,35 @@ measurement before claiming it in a comment.
 ### 5.2 `collapse_banner/1`
 
 The guard widens from `@metrics.stalled` to `@metrics.stalled or game_over?(@metrics) or
-warning?(@metrics)`, and the copy grows from two variants to four. The two existing ones keep
-their wording; both new ones state the mechanism, in the order the module already uses —
-verdict first, mechanism under it.
+warning?(@metrics)`, and the copy grows from two variants to four.
 
-* **insolvent and bankrupt** (error styling): "City locked — nothing more can be built or
-  demolished." Then: upkeep per tick, the most the city can earn at full health
-  (`money_ceiling`), the two prices, and that the treasury can therefore never reach 10
-  again. Not "this city is dead" — a house at 100 health makes that sentence false, which is
-  the reason this state has its own copy rather than reusing the game-over paragraph.
-* **insolvent, not bankrupt, under threshold** (warning styling): "Upkeep outruns income — N
-  ticks of treasury left." Then the escape from `escape/1`, named and priced.
+**The four variants are selected by an explicit total order, not by four independent `:if`s.**
+The first draft asserted they were disjoint and they are not — a stalled city can also be
+insolvent (§3.5). Rendering the first match of an ordered list makes that impossible to get
+wrong, and makes the precedence reviewable:
+
+| # | condition | styling | copy |
+|---|---|---|---|
+| 1 | `game_over?` **and** `stalled` | error | existing "Game over — this city is dead" |
+| 2 | `game_over?` (so insolvent, not stalled) | error | new "City locked" |
+| 3 | `stalled` | warning | existing "City stalled — nothing is changing on its own" |
+| 4 | `warning?` | warning | new "Upkeep outruns income" |
+
+Row 1 before row 2 because a stalled city genuinely *is* dead — every block on the floor — and
+that copy is the more specific truth. Row 3 before row 4 for the reason in §3.5: the stalled
+banner already describes a frozen treasury correctly, and the countdown would not.
+
+The two new variants state the mechanism under the verdict, in the order the module already
+uses:
+
+* **row 2, insolvent and bankrupt:** "City locked — nothing more can be built or demolished."
+  Then: upkeep per tick, the most the city can earn at full health (`money_ceiling`), the two
+  prices, and that the treasury can therefore never reach 10 again. Not "this city is dead" — a
+  house at 100 health makes that sentence false, which is the reason this state has its own copy
+  rather than reusing the game-over paragraph.
+* **row 4, insolvent and within the window:** "Upkeep outruns income — N ticks to act." Then the
+  escape from `escape/1`, named and priced. For `{:multiple, _}` the copy must say that no
+  single block closes the gap rather than naming an action that would not work.
 
 Both predicates are called module-qualified, as `game_over?/1` already is — the template
 `alias`es `SimulationMetrics` rather than importing it, so `warning?/1` needs no new
@@ -274,20 +393,28 @@ in this repo's history.
 | live house + dead water plant, bank 0 → `game_over?` true | the 2026-08-06 non-goal returning |
 | lone house, bank 0 → `insolvent` false | comparing current flow instead of the rated ceiling |
 | house + **sick** shop + park, bank 0 → no warning, no Reset | the same, and the case the flow gate got wrong |
-| bank 34 → quiet, 33 → warn, 10 → warn, 9 → terminal | an off-by-one or a flipped comparator in the threshold |
+| `rescue_window` boundary asserted on both sides of `@reaction_ticks` | an off-by-one or a flipped comparator |
 | every generated opening stage → quiet | raising `@reaction_ticks` past 15 |
-| runway with bank 20, drain 2 → 10 | swapping the division's operands |
+| **1 house + 1 shop + 11 parks: escape still affordable for all 12 ticks after the warning fires** | **reverting `rescue_window` to `money / drain`** |
+| dead water plant, bank 50: stalled, insolvent, not bankrupt → no warning, no rescue line | dropping `not stalled` from `warning?/1` |
+| a city that stalls mid-projection → `rescue_window` nil, not a drained figure | projecting past the engine's tick-skip |
+| full grid, gap 2, a park placed → `{:demolish, :park, 10.0}`, never `{:place, …}` | dropping the free-cell filter |
 | gap 2 with a park placed → `{:demolish, :park, 10.0}`; gap 7 → `{:place, :commercial, 40.0}` | returning `cheapest_action_cost` unconditionally |
 | gap 40, only parks placed → `{:multiple, 10.0}` | naming a single action that would not close the gap |
 | `show_reset?` true for house+park at bank 0, false for a fresh city | dropping the new disjunct |
+| banner precedence: stalled+insolvent+bankrupt → the *dead* copy, not the *locked* copy | reordering the four variants |
 
-Two constraints on fixtures, both from defects this repo has shipped:
+Three constraints on fixtures, all from defects this repo has shipped:
 
 * **Asymmetric values throughout.** A park at 3 against a water plant at 5, never two of a
   kind. A city whose money-consumers are uniform cannot distinguish `escape/1` picking the
   cheapest from it picking the first, and cannot distinguish the ceiling from the flow.
-* **The 9/10 and 33/34 boundaries are asserted on both sides.** A one-sided assertion passes
-  against a comparator that admits the whole half-line.
+* **Every boundary asserted on both sides.** A one-sided assertion passes against a comparator
+  that admits the whole half-line.
+* **At least one fixture whose income is falling.** Every fully-supplied fixture agrees with the
+  superseded division, so a suite built only from those cannot fail when the projection is
+  replaced by it. This is the constraint the first draft's tripwire violated, and it is the
+  reason the eleven-park city is in the table above rather than in a comment.
 
 `money_ceiling` needs its own characterization against the capacity table, for the reason the
 comment on `bankrupt` already gives about `cheapest_action_cost/0`: no test inside the metrics
@@ -310,6 +437,18 @@ banking a large treasury and spending it down through a long insolvent build-out
 banner in the last 12 ticks of it. The threshold prices the escape, so this only happens when
 the rescue itself is nearly unaffordable, at which point the warning is correct even if it is
 unwelcome.
+
+**`rescue_window` is silent beyond `@runway_horizon`.** An insolvent city 200 ticks from trouble
+shows no figure at all rather than "200 ticks", because the projection stops at 60. That is a
+deliberate cost bound (§3.3) and it costs the player nothing: the interesting range is the one
+where acting matters. It does mean the metrics line appears part-way through a long decline
+rather than at its start, so the line is not the continuous-awareness display a division-based
+figure would have been. Accepted as the price of the figure being true.
+
+**The projection assumes the player does nothing.** That is the right semantics for a countdown
+and the wrong semantics for a plan: a player mid-build who is about to place the shop sees a
+window computed as though they will not. Unavoidable without predicting intent, and the copy
+names the escape precisely so the prediction is easy to invalidate.
 
 **`escape/1` considers single actions only.** For a gap wider than 30 no single action closes
 it and the return is `{:multiple, 10.0}`, which prices *starting* rather than finishing. The

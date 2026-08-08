@@ -265,7 +265,9 @@ commercial per 12 residential**. Commercial belongs in that ratio now, not as an
 optional add-on: a residential block's own income (money 1) can't cover what it costs
 the water plants and transit hubs it needs, so a support set without a commercial block is
 insolvent — the treasury drains over the game's lifetime even while every other resource
-reads 100% satisfied.
+reads 100% satisfied. That word has a precise meaning the game acts on, and a city that stays
+insolvent long enough ends up locked and unplayable; see "When the city stops" below for the
+warning you get first and the way back out.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
@@ -393,6 +395,14 @@ covers, so it heals back to 100 on its own. When the treasury cannot cover both 
 check what building first would earn you before spending on the demolition, because income
 collected on the way down can pay for a removal that the treasury cannot.
 
+**You do get told, but only about the permanent kind.** Spending your treasury down is normal
+and the game says nothing; what it watches for is upkeep exceeding the most your city could
+*ever* earn, which no amount of waiting fixes. Once that is true and the fix is getting close to
+unaffordable, the sidebar shows a **Rescue window** in ticks and a banner names the one cheapest
+action that would fix it, with its price. Act inside that window and the city is fine; miss it
+and you reach the locked state described in "When the city stops" below, where there is nothing
+left to press but Reset.
+
 ## How long you have to react
 
 Decay is proportional to the shortfall, which means small deficits are slow and
@@ -452,15 +462,42 @@ with an empty treasury: each draws 15 power against the free baseline of 40, so 
 40` they are fully supplied even while dead, and they regenerate. Three do not — 45 against
 40 — and that is the cliff.
 
-**Game over** is the narrower case: the city has stalled *and* holds less than 10. The
-cheapest thing you can do is demolish, at 10, and the cheapest thing you can build is a
-house, at 15, so below 10 no command is affordable — and because the clock has stopped, the
-balance will never rise again. Nothing in the city can change on its own. See "Running out
-of money" above: the escape has to be bought while there is still something to buy it with.
+**Game over** is the case where the treasury can never rise again, so no command will ever be
+affordable. The cheapest thing you can do is demolish, at 10, and the cheapest thing you can
+build is a house, at 15, so below 10 you have no move at all. Two different things can make
+that floor permanent, and a city needs only one of them.
 
-Both states put a **Reset** button in the page header, beside the theme toggle. It clears
-every block, returns the treasury to the opening grant, sets the tick back to zero and
-discards the stored city. There is no confirmation and no undo.
+**Stalled and broke** is the first. The clock has stopped, production is health-scaled and
+therefore zero, so the balance cannot move. Nothing in the city can change on its own.
+
+**Locked** is the second, and it does not look like death at all. If your upkeep is higher
+than the most your city could *ever* earn — every block at 100 health — then the treasury
+drains to zero and stays there however long you wait, because upkeep is not scaled by health
+and income is. The smallest example is one house and one park: the park costs 3 a tick, the
+house earns 1, and the house is fully supplied inside the free baseline so it holds 100 health
+forever. Measured, that city is unchanged after 2,000 ticks — a healthy-looking house, a dead
+park, an empty treasury, and nothing you can click. The banner calls this **City locked**
+rather than dead, because the house really is alive; what has died is your ability to act.
+
+The word for the underlying condition is **insolvent**, and it is the same one used above for a
+support set with no commercial block. Insolvency on its own is not a crisis — the documented
+opening sequence is insolvent for five of its seven stages, which is exactly what the grant is
+for. It becomes fatal only when the treasury can no longer buy the way out.
+
+So the game warns you first. While a city is insolvent and the fix is slipping out of reach,
+the sidebar shows a **Rescue window** — how many ticks you have left before you can no longer
+afford the cheapest single action that would fix it — and a banner names that action and its
+price. Twelve ticks before the window closes, the banner turns into a warning. The window
+counts down to losing the *fix*, not to reaching zero — you run out of options before you run
+out of money, by however many ticks the fix's own price buys you. See "Running out of money"
+above: the escape has to be bought while there is still something to buy it with.
+
+Stalled, locked and stalled-and-broke all put a **Reset** button in the page header, beside the
+theme toggle. It clears every block, returns the treasury to the opening grant, sets the tick
+back to zero and discards the stored city. There is no confirmation and no undo.
+
+The rescue-window warning does **not** put that button on screen, and that is deliberate: a
+city you can still fix should not be offering you a one-click way to destroy it.
 
 ## Reference
 

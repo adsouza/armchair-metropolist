@@ -60,16 +60,26 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         amenity: 1.75,
         amenity_marginal_labour: 5.0,
         amenity_labour: 15.0,
-        stalled: true
+        stalled: true,
+        money_ceiling: 31.0,
+        insolvent: true,
+        escape: {:demolish, :park, 10.0},
+        rescue_window: 8
       })
 
     assert metrics.amenity == 1.75
     assert metrics.amenity_marginal_labour == 5.0
     assert metrics.amenity_labour == 15.0
 
-    # `true` rather than `false`: the struct default is `false`, so a build that dropped
-    # this key on the floor would still satisfy a `refute`.
+    # Every value here is deliberately *not* the struct default — `true` rather than
+    # `false`, a non-zero ceiling, a non-`nil` escape and window — because a build that
+    # dropped any of these keys on the floor would still satisfy an assertion against the
+    # default it fell back to.
     assert metrics.stalled
+    assert metrics.money_ceiling == 31.0
+    assert metrics.insolvent
+    assert metrics.escape == {:demolish, :park, 10.0}
+    assert metrics.rescue_window == 8
   end
 
   # A partial derived map is a programming error, not a request for defaults: the default
@@ -215,18 +225,96 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
   end
 
   describe "game_over?/1" do
-    test "true only when the city is both stalled and bankrupt" do
+    test "true for a stalled, bankrupt city" do
       assert SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: true})
+    end
+
+    test "true for a bankrupt insolvent city whose clock is still running" do
+      # The insolvent route. Measured on one healthy house and one park at an empty
+      # treasury: the house holds 100 health for 2000 ticks, so `stalled` never becomes
+      # true, while the park's 3/tick upkeep outruns the house's 1/tick income forever.
+      # Under the old `stalled and bankrupt` this city had no end state and no Reset
+      # button. Kills a revert of the `or`.
+      assert SimulationMetrics.game_over?(%SimulationMetrics{
+               stalled: false,
+               insolvent: true,
+               bankrupt: true
+             })
     end
 
     test "false for a stalled city that can still afford to act" do
       # This is the state a rescue is possible from, so calling it game over would be
-      # a false claim. Also what an `or` in place of the `and` would break.
+      # a false claim. Also what an `or` in place of the outer `and` would break.
       refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: true, bankrupt: false})
     end
 
-    test "false for a broke city that is still running" do
-      refute SimulationMetrics.game_over?(%SimulationMetrics{stalled: false, bankrupt: true})
+    test "false for an insolvent city that can still afford to act" do
+      # The mirror of the case above, on the new disjunct. Insolvency only bites once the
+      # treasury cannot buy the way out; before that the player can still place a shop.
+      refute SimulationMetrics.game_over?(%SimulationMetrics{
+               stalled: false,
+               insolvent: true,
+               bankrupt: false
+             })
+    end
+
+    test "false for a broke city that is still running and solvent" do
+      # `bankrupt` alone must not be enough: a lone house at an empty treasury earns
+      # 1/tick against no upkeep and is back over the line in ten ticks. Kills replacing
+      # the whole predicate with `bankrupt`.
+      refute SimulationMetrics.game_over?(%SimulationMetrics{
+               stalled: false,
+               insolvent: false,
+               bankrupt: true
+             })
+    end
+  end
+
+  describe "warning?/1" do
+    test "true for an insolvent city whose rescue window has closed to the reaction budget" do
+      assert SimulationMetrics.warning?(%SimulationMetrics{insolvent: true, rescue_window: 12})
+    end
+
+    test "false while the rescue window is still wider than the reaction budget" do
+      # 13 and 12 rather than something large and something small: these straddle the real
+      # boundary, and a one-sided pair would pass against a comparator admitting the whole
+      # half-line.
+      refute SimulationMetrics.warning?(%SimulationMetrics{insolvent: true, rescue_window: 13})
+    end
+
+    test "false for a solvent city even if a window somehow reached it" do
+      refute SimulationMetrics.warning?(%SimulationMetrics{insolvent: false, rescue_window: 3})
+    end
+
+    test "false with no window at all" do
+      # `nil` means the projection found no deadline inside its horizon. A comparison that
+      # forgot to handle it would raise rather than return false.
+      refute SimulationMetrics.warning?(%SimulationMetrics{insolvent: true, rescue_window: nil})
+    end
+
+    test "false once the city is bankrupt, which is game over instead" do
+      # Keeps the warning and the terminal state disjoint, so the banner has exactly one
+      # thing to say. Window 0 is the state a bankrupt insolvent city is in.
+      refute SimulationMetrics.warning?(%SimulationMetrics{
+               insolvent: true,
+               bankrupt: true,
+               rescue_window: 0
+             })
+    end
+
+    test "false for a stalled city, whose treasury the engine has frozen" do
+      # `insolvent` and `stalled` are not mutually exclusive: a single dead water plant is
+      # both, and with 50 in the bank it is neither bankrupt nor beyond help. `CityEngine`
+      # runs no tick while stalled, so a countdown there describes something that will not
+      # happen — and the stalled banner already says the true thing about that city.
+      #
+      # `rescue_window` is nil for such a city in practice; this asserts the predicate
+      # refuses it even when handed a window, so the two guards are independent.
+      refute SimulationMetrics.warning?(%SimulationMetrics{
+               insolvent: true,
+               stalled: true,
+               rescue_window: 4
+             })
     end
   end
 

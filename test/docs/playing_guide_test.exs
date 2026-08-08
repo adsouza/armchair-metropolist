@@ -16,6 +16,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.PlayingGuide
 
   @guide Path.expand("../../docs/PLAYING.md", __DIR__)
@@ -126,6 +127,44 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
                  "#{demanded} demanded against #{supplied} supplied. The documented " <>
                  "opening would decay here, so the guide's advice is now false."
       end
+    end
+
+    test "no stage of the sequence shows the insolvency warning" do
+      # `@reaction_ticks` in `SimulationMetrics` is a constant, and this is what stops it
+      # drifting into the tutorial. Measured, the tightest stage is 6 — treasury 180, a
+      # 40-cost shop as the escape, draining 9 a tick — whose rescue window is 16 ticks, so
+      # anything up to 15 keeps this sequence quiet and 16 would warn during it.
+      #
+      # This test is necessary but *not sufficient*, and treating it as sufficient was a
+      # real defect in the design of this feature. Every stage here is fully supplied, which
+      # is precisely the condition under which a window extrapolated from the current drain
+      # is correct — so this fixture shares the blind spot of the bug it looks like it would
+      # catch. The fixture that does catch it lives in `simulation_calculator_test.exs`
+      # ("survives a city whose income falls while the treasury drains"), where the earners
+      # are starving and the drain grows.
+      for %{step: step, type: type, metrics: metrics} <- PlayingGuide.opening_solvency() do
+        refute SimulationMetrics.warning?(metrics),
+               "stage #{step} (place #{type}) warns about insolvency: treasury " <>
+                 "#{trunc(metrics.money)}, escape #{inspect(metrics.escape)}, rescue " <>
+                 "window #{inspect(metrics.rescue_window)}. A player following the guide " <>
+                 "would be told their city is about to lock — lower @reaction_ticks or " <>
+                 "re-measure the sequence."
+      end
+    end
+
+    test "the sequence really is insolvent part-way, so the test above is not vacuous" do
+      # Without this, a change that made `insolvent` always false — or that broke the money
+      # ceiling so nothing is ever insolvent — would leave the refutation above passing for
+      # the wrong reason. Five of the seven stages carry upkeep the shop is not yet there to
+      # cover.
+      insolvent =
+        PlayingGuide.opening_solvency()
+        |> Enum.filter(& &1.metrics.insolvent)
+        |> Enum.map(& &1.step)
+
+      assert insolvent == [2, 3, 4, 5, 6],
+             "the opening's insolvent stages moved to #{inspect(insolvent)}; the quiet-" <>
+               "tutorial test above only means something while some stage is insolvent"
     end
 
     test "the opening grant covers the whole sequence" do

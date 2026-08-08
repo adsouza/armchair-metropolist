@@ -420,25 +420,37 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # the wrap thresholds documented in `render/1`, and this block's prose is far wider than
   # anything already in there.
   #
-  # Status only. It names the header's Reset button rather than rendering a second copy of
-  # it — `show_reset?/1` is a strict superset of `stalled`, so the control is guaranteed to
-  # be on screen whenever this is.
+  # Status only. It names the header's Reset button rather than rendering a second copy of it.
+  # Whenever this banner reports a state the player cannot leave — `:dead` or `:locked`, both
+  # of which are `game_over?/1` — `show_reset?/1` has that button on screen, because it now
+  # carries `game_over?/1` as an explicit disjunct. It did not always: the guarantee used to
+  # rest on `stalled` implying no living housing, and insolvency broke that implication. The
+  # `:stalled` and `:warning` variants deliberately appear *without* a Reset button, since
+  # both describe cities the player can still rescue.
+  #
+  # **One variant at a time, chosen by an ordered list rather than by independent `:if`s.**
+  # The four states are not disjoint: a stalled city is also insolvent whenever its upkeep
+  # outruns its ceiling, so `stalled` and `game_over?` and `warning?` can all be true of the
+  # same city. Independent conditions rendered two headlines at once. `banner_variant/1`
+  # below is the precedence, in one place.
   attr :metrics, :map, required: true
   attr :width, :integer, required: true
   attr :cell_size, :integer, required: true
 
   defp collapse_banner(assigns) do
+    assigns = assign(assigns, :variant, banner_variant(assigns.metrics))
+
     ~H"""
     <%!-- The grid's own width expression, so the two cannot drift apart. `max-w-full`
           and `box-border` are both required: without the first this overflows a narrow
           viewport instead of clamping, and without the second the padding and border
           push it past the grid's right edge at every width. --%>
     <div
-      :if={@metrics.stalled}
+      :if={@variant}
       id="collapse-banner"
       class={[
         "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
-        if(SimulationMetrics.game_over?(@metrics),
+        if(@variant in [:dead, :locked],
           do: "border-error bg-error/10",
           else: "border-warning bg-warning/10"
         )
@@ -446,17 +458,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       style={"width: #{@width * @cell_size}px"}
     >
       <%!-- The headline is a verdict and the sentence under it is the mechanism, in that
-            order. The verdict is earned rather than asserted: ticks are ignored while
-            stalled, so health, tick and money are all constant, and both commands cost
-            more than the treasury holds. --%>
-      <p :if={SimulationMetrics.game_over?(@metrics)} class="font-semibold">
+            order. Each verdict is earned rather than asserted: for `:dead` and `:stalled`
+            ticks are ignored while stalled, so health, tick and money are all constant; for
+            `:locked` the treasury is provably pinned, since money demand is never
+            health-scaled and the node set cannot change while nothing is affordable. --%>
+      <p :if={@variant == :dead} class="font-semibold">
         Game over — this city is dead.
       </p>
-      <p :if={not SimulationMetrics.game_over?(@metrics)} class="font-semibold">
+      <p :if={@variant == :locked} class="font-semibold">
+        City locked — nothing more can be built or demolished.
+      </p>
+      <p :if={@variant == :stalled} class="font-semibold">
         City stalled — nothing is changing on its own.
       </p>
+      <p :if={@variant == :warning} class="font-semibold">
+        Upkeep outruns income — {@metrics.rescue_window} ticks to act.
+      </p>
 
-      <p :if={SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
+      <p :if={@variant == :dead} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. Building costs at least {trunc(
           Node.cheapest_construction_cost()
         )} and demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
@@ -465,30 +484,97 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         nothing can restart it. <strong>Reset</strong>
         in the header clears the grid and starts a new city. This cannot be undone.
       </p>
-      <p :if={not SimulationMetrics.game_over?(@metrics)} class="text-xs opacity-80">
+      <%!-- Deliberately not "dead". This city's blocks can be at full health — the point is
+            that its bills outrun the most it could ever earn, so no amount of waiting helps.
+            The ceiling is the honest figure to print beside the upkeep: it is what the city
+            would earn with every earner at 100, which is why the comparison is permanent. --%>
+      <p :if={@variant == :locked} class="text-xs opacity-80">
+        Upkeep is {round(@metrics.resources.money.demanded)} a tick and this city could earn at
+        most {round(@metrics.money_ceiling)} with every block at full health, so the treasury
+        can never rise again. Building costs at least {trunc(Node.cheapest_construction_cost())} and
+        demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
+          @metrics.money
+        )}. <strong>Reset</strong>
+        in the header clears the grid and starts a new city. This cannot be undone.
+      </p>
+      <p :if={@variant == :stalled} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. The treasury still holds {trunc(
           @metrics.money
         )} — enough to demolish, and demolishing sometimes restarts the clock; placing a
         block always would, once it is affordable. Or <strong>Reset</strong>
         in the header to start over.
       </p>
+      <p :if={@variant == :warning} class="text-xs opacity-80">
+        Upkeep is {round(@metrics.resources.money.demanded)} a tick against a ceiling of {round(
+          @metrics.money_ceiling
+        )}, so the treasury is draining for good. {escape_text(@metrics.escape)} After that
+        the city can never change again.
+      </p>
     </div>
     """
   end
 
-  # No living housing, and the reset would actually change something.
+  # The precedence between the four banners, in one place because the states overlap.
   #
-  # The second disjunct is not redundant. Demolishing costs 10 and clears a node, so a
-  # player can spend down to an empty grid holding 9: no nodes, so the city is not stalled
+  # `:dead` before `:locked`: both are `game_over?/1`, and a city with every block on the
+  # floor genuinely is dead, which is the more specific truth. `:stalled` before `:warning`:
+  # a stalled city's treasury is frozen — `CityEngine` runs no tick — so a countdown would be
+  # describing something that will not happen, while the stalled copy is accurate. That is
+  # also enforced one layer down, in `SimulationMetrics.warning?/1`, which refuses a stalled
+  # city outright; the ordering here does not depend on that and neither depends on the other.
+  defp banner_variant(metrics) do
+    cond do
+      SimulationMetrics.game_over?(metrics) and metrics.stalled -> :dead
+      SimulationMetrics.game_over?(metrics) -> :locked
+      metrics.stalled -> :stalled
+      SimulationMetrics.warning?(metrics) -> :warning
+      true -> nil
+    end
+  end
+
+  # Names the escape and prices it. The price is the load-bearing half: "demolish a park"
+  # without the 10 does not tell the player whether they can still afford it, and affording
+  # it is the entire subject of the warning.
+  #
+  # `:multiple` must not name a single action. It means no one block closes the gap, so
+  # naming one would be an instruction that does not work — and the honest thing to say is
+  # that this needs more than one, starting at the cheapest action's price.
+  defp escape_text({:place, type, cost}) do
+    "One #{type} block, at #{trunc(cost)}, would earn enough to cover it."
+  end
+
+  defp escape_text({:demolish, type, cost}) do
+    "Demolishing one #{type}, at #{trunc(cost)}, would cut enough upkeep to cover it."
+  end
+
+  defp escape_text({:multiple, cost}) do
+    "No single block closes the gap — it will take several, from #{trunc(cost)} each."
+  end
+
+  # Either the city has no living housing and the reset would change something, or the city
+  # is over — which is not the same thing, and used not to be covered.
+  #
+  # The `node_count > 0` disjunct is not redundant. Demolishing costs 10 and clears a node, so
+  # a player can spend down to an empty grid holding 9: no nodes, so the city is not stalled
   # and there is no banner; nothing costs 10 or less; and an empty grid earns nothing,
   # forever. Without it that position has no affordance at all. With it, the button still
   # stays hidden on a fresh city, where a reset is a no-op — which is the only reason the
-  # gate is not the bare `not housing_alive`.
+  # first clause is not the bare `not housing_alive`.
   #
   # `bankrupt` rather than a second comparison against `Node.cheapest_action_cost/0`, so
   # the threshold has exactly one reader.
+  #
+  # `game_over?/1` is the disjunct this function was missing, and it is *not* implied by the
+  # first clause. Until insolvency existed it was: `stalled` means every block is on the
+  # floor, hence no living housing, so every game-over city already satisfied the left-hand
+  # side. An insolvent city breaks that — measured, one house at 100 health beside one park
+  # with an empty treasury can never change again by any route, and `housing_alive` is true
+  # the whole time. Adding the disjunct here rather than widening the first clause keeps the
+  # misclick mitigation the 2026-08-06 design relied on for every city that is still
+  # playable.
   defp show_reset?(metrics) do
-    not metrics.housing_alive and (metrics.node_count > 0 or metrics.bankrupt)
+    (not metrics.housing_alive and (metrics.node_count > 0 or metrics.bankrupt)) or
+      SimulationMetrics.game_over?(metrics)
   end
 
   # The resource columns are fixed and identical on every row, including where a type
@@ -671,6 +757,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
+      <%!-- Only while the drain is permanent, which is what `insolvent` means, and only while
+            the projection actually found a deadline inside its horizon. A city merely spending
+            faster than it earns today recovers as its earners heal, so a countdown there would
+            be a prediction the city disproves — and a stalled city runs no ticks at all, which
+            `SimulationMetrics.warning?/1` and `rescue_window`'s own nil both already reflect.
+
+            "Rescue window" and not "Runway": this counts ticks until the *escape* stops being
+            affordable, not ticks until the treasury empties. The two differ by
+            `escape_price / drain`, which is 20 ticks for a 40-cost shop against a drain of 2 and
+            only 4 against a drain of 9 — so "Runway" would be a wrong reading of a right number
+            by an amount that is not even constant.
+
+            The `game_over?/1` term is not redundant, and `0` is why: a bankrupt insolvent city
+            has a window of exactly `0`, which is *truthy* in Elixir, so the bare value would
+            render "Rescue window: 0 ticks" under a banner that has just said the city is over —
+            sending the player to look for a rescue that no longer exists. --%>
+      <p
+        :if={@metrics.rescue_window && not SimulationMetrics.game_over?(@metrics)}
+        id="metrics-rescue"
+      >
+        Rescue window: {@metrics.rescue_window} ticks
+      </p>
       <%!-- `trunc/1` for the same reason as the treasury above: this is a
             quantity the player reasons about against whole-number capacities,
             and rounding 78.6 up to 79 would overstate a backlog by a unit. --%>
