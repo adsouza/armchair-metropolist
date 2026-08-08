@@ -143,9 +143,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     |> render_click()
 
     # Anchored on the streamed node's own id, not a bare "1:1" substring: the
-    # background cell at that same coordinate carries a `title="place ... at 1:1"`
-    # attribute regardless of whether the placement succeeded, which would make a
-    # substring match vacuous.
+    # background cell at that same coordinate carries no coordinate of its own since
+    # tooltips dropped them, but a plain substring match would still be vacuous
+    # against any other "1:1" the page might contain.
     assert render(view) =~ ~s{id="1:1"}
   end
 
@@ -190,10 +190,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     html = render(view)
     assert html =~ ~s{id="1:1"}
 
-    # The *type* is what this test is about, so match the parts that carry meaning and
-    # not the tooltip's punctuation: it also names the demolish action and shows a health
-    # percentage, neither of which this test has any opinion about.
-    assert html =~ ~r/title="1:1[^"]*park[^"]*online/
+    # Scoped to the placed node's own markup via `rendered_node/2` rather than a bare
+    # `title="..."` regex over the whole page: tooltips no longer carry a coordinate
+    # (see SimulatorLive's node title comment), so nothing anchors a page-wide match to
+    # this particular node. The *type* is what this test is about, so match the parts
+    # that carry meaning and not the tooltip's punctuation: it also names the demolish
+    # action and shows a health percentage, neither of which this test has any opinion
+    # about.
+    assert rendered_node(html, "1:1") =~ ~r/title="[^"]*park[^"]*online/
   end
 
   test "a removal broadcast deletes the node from the stream", %{conn: conn} do

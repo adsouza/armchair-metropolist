@@ -205,7 +205,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # than the whole page.
       defp rendered_node(html, dom_id) do
         [_, tail] = String.split(html, ~s{id="#{dom_id}"}, parts: 2)
-        String.slice(tail, 0, 160)
+        # 400, not 160: once a test needed to reach the node's `title` attribute — the
+        # last one written, after id/class/style/phx-click/phx-value-x/phx-value-y — 160
+        # chars cut off mid-`style`. 400 clears a full node tag with the longest type
+        # name and status ("residential · degraded (100%) — click to demolish") with
+        # room to spare.
+        String.slice(tail, 0, 400)
       end
 
       defp broadcast(message) do

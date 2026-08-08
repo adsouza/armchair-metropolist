@@ -324,11 +324,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             phx-click="place"
             phx-value-x={x}
             phx-value-y={y}
-            title={"place #{@selected_type} at #{x}:#{y}"}
+            title={"place #{@selected_type}"}
           >
           </div>
 
           <div id="nodes" phx-update="stream">
+            <%!-- No coordinate in this title, and not only because the tooltip never
+                  needed one to do its job — that job is disambiguating place-from-demolish,
+                  which the verb already carries. With coordinates in the *background
+                  cell's* title too, `assert render(view) =~ "2:3"` used to pass whether or
+                  not a node was actually placed there — an accidental substring match on
+                  the cell's own tooltip that shipped once and was only caught in review.
+                  Dropping the coordinate from both titles makes that class of vacuous
+                  assertion impossible rather than merely unlikely. --%>
             <div
               :for={{dom_id, node} <- @streams.nodes}
               id={dom_id}
@@ -340,7 +348,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               phx-click="demolish"
               phx-value-x={node.x}
               phx-value-y={node.y}
-              title={"#{node.id} · #{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
+              title={"#{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
             >
               {block_emoji(node.type)}
             </div>
