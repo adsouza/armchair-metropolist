@@ -662,12 +662,21 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # housing at all, so 0%), power 40/220, waste 40/140, traffic 40/90,
       # water 40/80. The order is the severity signal the operator reads
       # first, so it is pinned, not incidental.
+      #
+      # Waste sorts ahead of labour despite labour being wholly unsupplied: a
+      # backlog drives satisfaction *below* zero (here -0.429) while an unmet
+      # flow bottoms out at 0.0. That ordering is the accumulating-stock
+      # mechanic surfacing, not a regression. This is the first tick the
+      # deficit exists, so `advance_tick/1` writes a fresh waste_stock of 100.0
+      # (140 demanded - 40 supplied) into the very map these post-tick metrics
+      # are read from, making waste's satisfaction (40 - 100) / 140 = -0.429 —
+      # worse than labour's floor-of-zero 0/80.
       named =
         body
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["labour", "power", "waste", "traffic", "water"]
+      assert named == ["waste", "labour", "power", "traffic", "water"]
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do

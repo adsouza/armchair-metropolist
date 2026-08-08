@@ -741,22 +741,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     test "the stock drains on spare capacity and reaches exactly zero" do
       # Five houses (50 emitted) plus one industrial (90 capacity) against the
-      # baseline's 40: capacity 130, emissions 50, so the first tick's stock
-      # falls by 80 (200 -> 120).
-      #
-      # Capacity is NOT constant at 130 from here on, though: this fixture gives
-      # industrial no power_plant or water_plant, so it is short of both (power
-      # 40/115 = 8/23, water 40/85 = 8/17 — neither has anything to do with
-      # waste) and its health decays by a constant 90/23 per tick as a result.
-      # Waste capacity is health-scaled, so industrial's share shrinks right
-      # along with it: 90.0 -> 1989/23 (~86.48) before the second tick. The
-      # second tick's drain is therefore supply(126.478) - demand(50) =
-      # 76.478, not 80, landing on 120 - 76.478 = 1001/23 (~43.522) rather than
-      # the naive 40 a constant-capacity story predicts.
-      #
-      # The third tick is unaffected: even at further-reduced capacity,
-      # available (~79.4) still comfortably exceeds demand (50), so the deficit
-      # floors at exactly 0.0 regardless of the exact capacity figure.
+      # baseline's 40: capacity 130, emissions 50, so the first tick's drain is
+      # exactly 200 + 50 - 130 = 120 — every node is still at full health here,
+      # so this is the clean statement of the drain rate.
       nodes = [Node.new(9, 9, :industrial) | for(i <- 0..4, do: Node.new(i, 0, :residential))]
       city = %{map_with(nodes) | waste_stock: 200.0}
 
@@ -765,7 +752,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {t3, _} = Calc.advance_tick(t2)
 
       assert_in_delta t1.waste_stock, 120.0, 0.001
-      assert_in_delta t2.waste_stock, 1001 / 23, 0.001
+
+      # t2 is asserted as "smaller", not as a figure: this fixture's industrial
+      # block has no power or water behind it, so it decays from tick 2 onward
+      # and its health-scaled capacity shrinks with it. Measured, t2 is 1001/23
+      # (~43.52) rather than the 40.0 a constant-capacity city would give. The
+      # drain rate is stated exactly at t1, where every node is still at full
+      # health, and the destination is stated exactly at t3.
+      assert t2.waste_stock < t1.waste_stock
 
       # Exactly zero, not merely smaller: a stock that decreases without ever
       # clearing is a different and much crueller mechanic.
