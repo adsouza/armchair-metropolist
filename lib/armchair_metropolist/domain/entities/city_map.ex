@@ -8,7 +8,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           height: pos_integer(),
           tick: non_neg_integer(),
           nodes: %{optional(String.t()) => Node.t()},
-          money: float()
+          money: float(),
+          waste_stock: float()
         }
 
   # This struct is persisted, and snapshots are decoded with `:safe` — which will
@@ -17,10 +18,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # Infrastructure.Persistence.SnapshotVocabulary too. Miss it and saved cities are
   # discarded on load, only on cold VMs.
   #
-  # A field added here is also absent from every already-stored city: decoding an
-  # old snapshot yields a struct carrying only the keys it was written with, so
-  # the new field must be defaulted on load (see CityEngine.normalize_city_map/1)
-  # rather than assumed present.
+  # A field added here is also a hazard even when its values are plain floats, not just
+  # when they are atoms: it is absent from every already-stored city, so decoding an old
+  # snapshot yields a struct carrying only the keys it was written with, and any
+  # `city_map.new_field` raises `KeyError` on hydrate rather than reading a default. Two
+  # defaulting paths cover this independently: `SnapshotVocabulary.modernize/1` supplies
+  # the default as part of decoding, and `CityEngine.normalize_city_map/1` merges
+  # whatever comes out of that onto a fresh `%CityMap{}` on load. The committed fixtures
+  # are what prove the first of those still works — see `waste_stock`, added 2026-08-07.
   # The money a new city starts with, stated once. It used to appear twice — here and
   # again in `new/2` — and `CityEngine.normalize_city_map/1` merges a decoded snapshot
   # onto `%CityMap{}`, so this default is what an old city inherits while `new/2`'s
@@ -49,7 +54,12 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # 1000 and 2000. `:tick_interval_ms` is the knob on that axis.
   @opening_grant 400.0
 
-  defstruct width: 40, height: 30, tick: 0, nodes: %{}, money: @opening_grant
+  defstruct width: 40,
+            height: 30,
+            tick: 0,
+            nodes: %{},
+            money: @opening_grant,
+            waste_stock: 0.0
 
   @doc """
   Create a new empty city map with the given dimensions.

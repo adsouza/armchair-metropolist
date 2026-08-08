@@ -57,8 +57,41 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   # they drive the rewrite in modernize/1.
   @node_type_renames %{road_hub: :transit_hub}
 
+  # Struct field names added to a persisted entity since the first release. Unlike
+  # `@node_type_renames`, these are current vocabulary, not retired — and unlike that
+  # map, this list buys nothing on its own yet: `:waste_stock` was added to `CityMap`'s
+  # `defstruct` in the same commit that added it here, so `ensure_loaded!/0` already
+  # interns the atom by compiling `CityMap`, whether or not this list mentions it.
+  #
+  # What this is, is the machinery for the two-release rollout docs/deploying.md
+  # describes for the *next* field, so that rollout does not have to invent a mechanism
+  # under time pressure: list a new field's atom here, in the release that will read it,
+  # one release before the release that starts writing it to the struct. That earlier
+  # release then decodes a payload carrying the new atom correctly — as a field it
+  # does not recognise yet, defaulted by `modernize/1` — instead of `:safe` refusing to
+  # create an atom that neither the struct nor this list has ever mentioned. Skipping
+  # that bridge release is exactly what happened for `:waste_stock`, and rolling a
+  # binary back past the commit that added it is unrecoverable either way — see
+  # docs/deploying.md, "The third trap: rolling back past a new CityMap field".
+  @added_fields [:waste_stock]
+
   @doc "The modules whose atoms a persisted city can contain."
   def modules, do: @modules
+
+  @doc """
+  Struct field names staged for the two-release rollout, interned by appearing here.
+
+  Not modules, so `ensure_loaded!/0` has nothing to load for them — a bare atom
+  is interned the instant this module is, which is the same reason
+  `@node_type_renames`'s keys need no loader. This accessor exists so the list is
+  reachable and testable rather than dead. It is not the converse of
+  `@node_type_renames`'s guarantee, though: a field's presence here does not mean an
+  older release can decode it — `:waste_stock` is listed, and an older release still
+  cannot, because the field and this list entry shipped in the same commit. What this
+  protects is the *next* field staged here a release ahead of the one that writes it.
+  See docs/deploying.md, "The third trap: rolling back past a new CityMap field".
+  """
+  def added_fields, do: @added_fields
 
   @doc "Interns every atom a persisted city can legitimately contain."
   def ensure_loaded! do
@@ -72,10 +105,20 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   rename hydrates as though it had been written after it. A city already in the
   current vocabulary passes through unchanged. Called by both snapshot adapters
   immediately after their `:safe` decode — a city that skips this carries retired
-  atoms into the domain, where `Node.capacity/1` raises on them.
+  atoms into the domain, where `Node.capacity/1` raises on them. It also supplies
+  defaults for struct fields added since the payload was written, so an older
+  city hydrates with the same fields a fresh one gets rather than raising
+  `KeyError` the first time something reads the new field.
   """
   def modernize(%{nodes: nodes} = city_map) when is_map(nodes) do
-    %{city_map | nodes: Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end)}
+    # `Map.put_new`, not the `%{map | key: value}` update syntax: that syntax
+    # requires the key to already exist, which is exactly what an older payload
+    # does not have. And not `Map.put` either — see the test that seeds a city
+    # with a real backlog, which a `put` would silently reset to zero on every
+    # hydrate.
+    city_map
+    |> Map.put_new(:waste_stock, 0.0)
+    |> Map.put(:nodes, Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end))
   end
 
   defp rename_type(%{type: type} = node) do

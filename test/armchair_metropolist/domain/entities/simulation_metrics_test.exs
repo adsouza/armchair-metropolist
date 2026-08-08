@@ -29,6 +29,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.money == 275.0
   end
 
+  # The LiveView receives metrics and never the city map, so without this field
+  # the Landfill line cannot reach the page at all.
+  test "carries the city's waste stock" do
+    metrics = SimulationMetrics.build(%{CityMap.new(40, 30) | waste_stock: 78.0}, %{})
+
+    assert metrics.waste_stock == 78.0
+  end
+
   # An empty grid is the default startup state (spec 6.4 hydration fallback),
   # so avg_health must not divide by zero.
   test "an empty city yields zero average health rather than raising" do

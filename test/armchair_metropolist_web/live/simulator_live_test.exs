@@ -678,6 +678,46 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
                "Treasury: #{trunc(CityMap.opening_grant())}"
     end
 
+    test "the metrics panel shows the landfill, floored", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, %{empty_city_metrics() | waste_stock: 78.6}})
+      render(view)
+
+      # `trunc`, matching the treasury line: 78.6 renders 78, never 79.
+      assert view |> element("#metrics-landfill") |> render() =~ "78"
+      refute view |> element("#metrics-landfill") |> render() =~ "79"
+
+      # The label is a decision, so a rename should fail a test rather than pass.
+      assert view |> element("#metrics-landfill") |> render() =~ "Landfill"
+    end
+
+    test "a negative satisfaction renders as 0%, not as a negative percentage",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, metrics_with_waste_backlog()})
+      render(view)
+
+      # Text only, not `render/1`'s raw HTML: the element's own id,
+      # "metrics-tightest", contains a hyphen, so a `refute` against the tag's
+      # markup would fail on the id attribute regardless of the percentage
+      # inside it. `cost_text/2` below strips markup the same way, for the same
+      # reason.
+      tightest =
+        view
+        |> element("#metrics-tightest")
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.text()
+
+      # Positive case first: waste really is the tightest resource here, so this
+      # is not a vacuous check on a line that never rendered.
+      assert tightest =~ "waste"
+      assert tightest =~ "0%"
+      refute tightest =~ "-"
+    end
+
     # Per-resource satisfaction otherwise lives only in the totals row, which
     # collapsing hides. This line is the one figure that has to survive, so it must
     # name the *lowest* resource rather than whichever the map yields first.
@@ -1070,6 +1110,27 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   defp empty_city_metrics, do: SimulationMetrics.build(CityMap.new(40, 30), %{})
+
+  # Waste supplied 40 against demand 50 with a 60 backlog: available -20 and
+  # satisfaction -0.4, which renders -40% unclamped. Built by hand rather than
+  # via `stat/2`, which always sets `carried: 0.0` and so cannot produce a
+  # negative satisfaction at all.
+  defp metrics_with_waste_backlog do
+    %{
+      empty_city_metrics()
+      | waste_stock: 60.0,
+        resources: %{
+          waste: %{
+            supplied: 40.0,
+            carried: -60.0,
+            demanded: 50.0,
+            deficit: 70.0,
+            satisfaction: -0.4,
+            flow_satisfaction: 0.8
+          }
+        }
+    }
+  end
 
   # Supplied and demanded are distinct, and distinct per resource. The old fixture gave
   # 40.0/40.0 to everything, which renders as "40/40" — a cell that transposed the two

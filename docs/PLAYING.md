@@ -94,16 +94,32 @@ and takes this section with it.
 
 The city starts with free baseline capacity — 40 each of power, water, waste and
 traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
-to absorb 40 waste and 40 traffic. Labour and money have no free baseline; they arrive
-only once you build for them. A residential block draws `power 15`. Two blocks come to
-30 and hold at full health forever. The third makes 45, against a supply of 40, and
-from that moment the city is dying.
+to absorb 40 waste and 40 traffic.
+
+Waste is the one bad that keeps a score. Whatever you emit past your absorption
+capacity stays in the ground as a **Landfill**, shown in the metrics panel, and it
+is added to next tick's load — so a city that is 10 over runs 10 short, then 20,
+then 30. The backlog drains at capacity minus emissions once you are back under,
+which makes the exit from a waste spiral either an `industrial` block or fewer
+emitters. Traffic does not work this way: a jam clears at the tick boundary, and
+only waste accumulates.
+
+Labour and money have no free baseline; they arrive only once you build for them. A
+residential block draws `power 15`. Two blocks come to 30 and hold at full health
+forever. The third makes 45, against a supply of 40, and from that moment the city
+is dying.
 
 | residential, no support | worst satisfaction | after 200 ticks    |
 |-------------------------|--------------------|--------------------|
 | 1–2                     | 1.0                | 100 health, stable |
 | 3                       | 0.889              | every node dead    |
-| 19                      | 0.14               | every node dead    |
+| 19                      | −5.32              | every node dead    |
+
+The 1–2 and 3 rows never emit enough waste to cross the 40 baseline, so their worst
+satisfaction is set by power, on the very first tick, and never moves. 19 does cross it:
+power is worst for one tick (0.14), then the landfill takes over and keeps deepening
+every tick after — by the time the city freezes at tick 7, waste satisfaction has fallen
+to −5.32, which is the figure above.
 
 ## The one rule
 
@@ -273,10 +289,10 @@ down before the dead residential can recover on power and water alone. Measured:
 node's health is still 0.0 after 150 ticks.
 
 That measurement drove `SimulationCalculator` directly for the full 150 ticks, to make the
-point stick. A player never watches that happen: every block sitting at zero health with
-every one of them still short is exactly the condition the engine stops on, so the game
-freezes on the frozen board well before tick 150, not 150 more ticks of decay arriving on
-screen. See "When the city stops" below.
+point stick. A player never watches that happen: every block sitting at zero health, every
+one of them still short, and the landfill no longer able to drain is exactly the condition
+the engine stops on, so the game freezes on the frozen board well before tick 150, not 150
+more ticks of decay arriving on screen. See "When the city stops" below.
 
 The trap is the labour dependency, not the upkeep: `industrial` and `commercial`
 need living residential to staff them, and dead residential cannot staff anything, no
@@ -288,8 +304,13 @@ Two approaches work without waiting on labour to recover:
 
 1. **Bulldoze back to what the baseline supports** (two residential, no `industrial` in
    the mix) and let them heal on power, water, waste and traffic alone — none of which
-   residential needs labour or money for. Verified: both nodes return to 100 health
-   within 100 ticks.
+   residential needs labour or money for. The landfill this particular city built up
+   comes with them, though: verified against the nineteen-block board this section
+   describes, the two houses left standing draw only 20 waste against the 40 baseline, so
+   the inherited backlog of 1050 takes 53 ticks to drain before they are fully supplied
+   again, then 99 more to heal from zero — **152 ticks** in total, not 100. A pair that
+   never carried a landfill reaches 100 health in 100 ticks flat; see "Running out of
+   money" below for that measurement, on a clean grid rather than a bulldozed one.
 
    That has a price now. Cutting a nineteen-block city back to the two houses the baseline
    supports means seventeen demolitions, which is 170 — and a city whose money producers
@@ -326,8 +347,11 @@ A block regains health only when every resource *it* draws is fully supplied,
 so each stays dead while anything on its own list is short. Housing's list is power, water,
 waste and traffic — every one of which has a free baseline — so cut back until what the
 houses still standing draw fits inside it, and dead housing heals itself with an empty
-treasury and no further help: measured, two dead houses and 0 in the bank are at full
-health in 100 ticks, having earned 99 on the way. That is approach 1 above, finished.
+treasury and no further help: measured on a clean grid with no landfill behind it, two
+dead houses and 0 in the bank are at full health in 100 ticks, having earned 99 on the
+way. Approach 1 above starts from a bigger city and inherits its landfill, so this is not
+approach 1 finished — see "Rescuing a city that is already dying" above, where the same
+two houses take 152 ticks, not 100, because the backlog has to drain first.
 
 The cliff is arithmetic, and it is the one that killed your first city: a house draws 15
 power against a baseline of 40, and dead blocks draw in full, so two dead houses heal and
@@ -382,25 +406,40 @@ survivable while large ones are not.
 
 ## When the city stops
 
-A city **stalls** when every block sits at zero health with at least one of its inputs
-short. At that point nothing changes on its own: production scales with health and so is
-zero, consumption does not scale and so is unchanged, and each tick recomputes the same
-result. The simulation stops advancing, and the tick counter stops with it.
+A city **stalls** when every block sits at zero health, at least one of its inputs is
+short, and the landfill is not draining. Health and status are a genuine fixpoint at that
+point: production scales with health and so is zero, consumption does not scale and so is
+unchanged, and every tick would recompute the same health and status for every block. The
+landfill does not always share that sameness — a *drowning* city, one whose backlog is
+still growing rather than merely holding steady, would keep adding to it tick after tick
+even while health never moves, which is exactly why the landfill needs its own condition
+rather than being read off health alone. Either way the engine stops ticking once it
+detects the fixpoint, and the tick counter stops with it.
 
 Stalling is not the same as being beyond help, and the difference is the treasury. A
 frozen city's balance is frozen too — it no longer drains to the upkeep of water plants,
 transit hubs and parks — so whatever was in the bank when the city stalled is still there.
 
 **Building anything restarts the clock; demolishing restarts it if it leaves at least one
-surviving node fully supplied, or if it leaves nothing at all.** A new block goes up at
-full health, and "every block at zero" is what the stall is, so one placement of any type
-is enough to start the ticks again — though the new block is then subject to the same
-shortage that killed the rest, and a city that is still short will stall again once it
-dies. The empty-grid case is the edge of the same rule: an empty grid has no block at
-zero health, so it is never stalled — demolishing the very last dead block always
-restarts the clock, with nothing left in the city to run. Short of that, the rest of the
-city is free to stay dead forever. Houses crowding each other out under the free baseline
-are the common case:
+surviving node fully supplied, if it leaves nothing at all, or if it leaves the landfill
+draining** — cutting waste demand back under what the city's capacity can absorb. A new
+block goes up at full health, and "every block at zero" is what the stall is, so one
+placement of any type is enough to start the ticks again — though the new block is then
+subject to the same shortage that killed the rest, and a city that is still short will
+stall again once it dies. The empty-grid case is the edge of the same rule: an empty grid
+has no block at zero health, so it is never stalled — demolishing the very last dead block
+always restarts the clock, with nothing left in the city to run.
+
+The landfill route is the odd one out: it restarts the clock without healing anything.
+Five houses with no other support stall at tick 13 with a landfill of 130; demolish two of
+them and the remaining three are not stalled — nobody is fully supplied (power sits at
+0.889, waste at −3.0) and the grid is not empty — but ticking resumes anyway, because
+cutting to three drops waste demand under what the baseline absorbs and the backlog starts
+draining. Health does not move: all three are still short of power and sit at zero the
+whole time. Thirteen ticks later the landfill reaches zero, the deficit stops shrinking,
+and the city re-stalls exactly as before, just poorer by two demolition fees. Short of one
+of those three routes, the rest of the city is free to stay dead forever. Houses crowding
+each other out under the free baseline are the common case:
 tear one house out of three and the remaining two are supplied and heal, tear one out of
 five and the remaining four are still over the line and nothing moves. It is not the only
 case: three dead houses beside one dead transit hub are stalled the same way, and

@@ -658,16 +658,26 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert is_binary(title)
       assert body =~ "power at 18% of demand"
 
-      # Ten commercial nodes against baseline capacity alone: labour 0/80 (no
-      # housing at all, so 0%), power 40/220, waste 40/140, traffic 40/90,
-      # water 40/80. The order is the severity signal the operator reads
-      # first, so it is pinned, not incidental.
+      # Ten commercial nodes against baseline capacity alone, as plain ratios:
+      # labour 0/80 (no housing at all, so 0%), power 40/220, waste 40/140,
+      # traffic 40/90, water 40/80. The order below is the severity signal the
+      # operator reads first, so it is pinned, not incidental — but it is not
+      # simply those ratios sorted, because waste is not a plain ratio here.
+      #
+      # Waste sorts ahead of labour despite labour being wholly unsupplied: a
+      # backlog drives satisfaction *below* zero (here -0.429) while an unmet
+      # flow bottoms out at 0.0. That ordering is the accumulating-stock
+      # mechanic surfacing, not a regression. This is the first tick the
+      # deficit exists, so `advance_tick/1` writes a fresh waste_stock of 100.0
+      # (140 demanded - 40 supplied) into the very map these post-tick metrics
+      # are read from, making waste's satisfaction (40 - 100) / 140 = -0.429 —
+      # worse than labour's floor-of-zero 0/80.
       named =
         body
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["labour", "power", "waste", "traffic", "water"]
+      assert named == ["waste", "labour", "power", "traffic", "water"]
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
@@ -746,6 +756,38 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       broadcast_tick(1)
 
       assert_receive {:notified, _, _}, 1_000
+    end
+
+    # Ten houses emit 100 waste against the free baseline's 40. `AdvanceCityTick`
+    # computes metrics from the *post*-tick map (see its own moduledoc), and
+    # `SimulationCalculator.advance_tick/1` writes this same tick's waste deficit
+    # (100 demanded - 40 supplied = 60) into that post-tick map before metrics are
+    # built from it — so the very first notified tick already reads the backlog:
+    # available (40 - 60 = -20) over demand (100) is -0.2, not merely short of 1.0.
+    #
+    # This is why the fixture is ten houses and not fewer: at six (the free
+    # baseline covers most of a 60-demand load) the first tick's deficit is only
+    # 20, available stays positive at 20, and satisfaction lands at +0.33 — a
+    # deficit, but not the negative one this test exists to clamp. Measured by
+    # running `SimulationCalculator.advance_tick/1` by hand for six through
+    # twelve houses: nine is the first count whose first-tick satisfaction goes
+    # negative, and ten was chosen over nine only to match this file's own
+    # `starve/1` idiom of ten placements.
+    test "a waste backlog is reported at 0% rather than a negative percentage",
+         %{city_id: city_id} do
+      seed_funded_city()
+      start_supervised!({CityEngine, city_id: city_id})
+      Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :residential) end)
+
+      broadcast_tick(1)
+      assert_receive {:notified, _title, body}, 1_000
+
+      assert body =~ "waste at 0% of demand"
+
+      # The clamp is the point: unclamped this reads "waste at -20% of demand".
+      # Asserted on the whole body rather than on the substring above, because a
+      # negative figure for any other resource would be the same defect.
+      refute body =~ "-"
     end
   end
 
@@ -1113,6 +1155,44 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert {:ok, _id} = CityEngine.demolish(city_id, 2, 0)
 
       assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+    end
+
+    test "demolishing into a draining landfill unfreezes a city with nobody fully supplied",
+         %{city_id: city_id} do
+      # The third unfreeze route, and the one neither test above exercises: no survivor
+      # is fully supplied (three dead houses draw 45 power against the baseline's 40,
+      # same shortfall as before the cut) and the grid is not empty, but cutting five
+      # houses to three drops waste demand from 50 to 30 — under the baseline's 40 — so
+      # a landfill that was growing starts draining instead. `stalled?/3` reads that
+      # off `deficit < stock`, not off anyone's satisfaction.
+      #
+      # This is the path `handle_call({:demolish, ...})` has to get right: it must
+      # recompute `metrics` from the *post*-demolition city, not carry the stale
+      # `stalled: true` forward, or the very next `{:tick, ...}` still matches
+      # `handle_info({:tick, _}, %{metrics: %{stalled: true}})` and the city never
+      # ticks again — the landfill would sit at 130 forever instead of draining.
+      seeded = %{dead_city(5, 0.0) | waste_stock: 130.0, money: 1000.0}
+      StubSnapshotRepository.set_initial({:ok, {3, seeded}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _id} = CityEngine.demolish(city_id, 0, 0)
+      assert {:ok, _id} = CityEngine.demolish(city_id, 1, 0)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+
+      assert city_map.tick == 4,
+             "the engine must actually have ticked, not just recomputed metrics"
+
+      # 3 houses emit 30 against the baseline's 40, so 130 - (40 - 30) = 120: the
+      # backlog drains by 10, it does not merely fail to grow.
+      assert city_map.waste_stock == 120.0, "the landfill must be draining, not held"
+      refute metrics.stalled, "still thirteen ticks from empty, not stalled again yet"
     end
   end
 

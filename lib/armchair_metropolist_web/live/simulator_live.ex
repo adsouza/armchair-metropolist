@@ -671,6 +671,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
+      <%!-- `trunc/1` for the same reason as the treasury above: this is a
+            quantity the player reasons about against whole-number capacities,
+            and rounding 78.6 up to 79 would overstate a backlog by a unit. --%>
+      <p id="metrics-landfill">Landfill: {trunc(@metrics.waste_stock)}</p>
       <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
@@ -684,7 +688,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp tightest_resource(resources) do
     {resource, stats} = Enum.min_by(resources, fn {_resource, stats} -> stats.satisfaction end)
-    percent = round(stats.satisfaction * 100)
+
+    # Clamped at the display layer only. A backlog drives `satisfaction` below
+    # zero — see `carried/2` — and "waste -280%" is noise where "waste 0%" beside
+    # the Landfill line is legible. The domain keeps the signed value because
+    # `CityEngine`'s `sort_by` needs it to rank waste against other shortfalls.
+    percent = max(0, round(stats.satisfaction * 100))
 
     # Naming a resource only means something when one is actually behind. With every
     # resource fully supplied the minimum is a six-way tie and `min_by` breaks it

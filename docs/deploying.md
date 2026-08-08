@@ -130,6 +130,18 @@ macOS, `~/.local/share/armchair_metropolist/` on Linux. It is *not* the
 `io.github.adsouza.armchair-metropolist` directory beside it, which holds Tauri's
 window state.
 
+## The third trap: rolling back past a new CityMap field
+
+`waste_stock` was added to `CityMap` on 2026-08-07. Snapshots written from that
+commit onward contain the `:waste_stock` atom, and a binary built before it
+cannot decode them — `:safe` will not create an atom the release does not
+already have. Rolling back past that commit strands every city written since:
+the server crash-loops on hydrate, the desktop app starts an empty grid.
+
+`dcd1ee4` is the minimum rollback target. Any future field added to a
+persisted struct has the same one-way property, and the safe pattern is two
+releases — one that interns the atom without writing it, then the writer.
+
 ## Deploying the server
 
 ```bash
