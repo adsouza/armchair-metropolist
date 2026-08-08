@@ -89,7 +89,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                water: 20.0,
                waste: 12.0,
                traffic: 3.0,
-               labour: 1.0
+               labour: 1.0,
+               money: 5.0
              }
 
       assert Node.capacity(:water_plant) == %{water: 100.0}

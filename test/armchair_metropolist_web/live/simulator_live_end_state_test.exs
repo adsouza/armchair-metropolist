@@ -165,7 +165,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     test "the reset control appears on a locked city that still has living housing",
          %{conn: conn} do
       # The defect this whole feature exists to fix. `show_reset?/1` was
-      # `not housing_alive and (...)`, and this city's house sits at 100 health forever, so
+      # `not housing_alive and (...)`, and this city's supported house sits at 100 health forever, so
       # the button was unreachable from a city the player can never act in again.
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -198,14 +198,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
 
     @tag :warned_city
     test "warns before bankruptcy and names the escape with its price", %{conn: conn} do
-      # 30 in the bank, an 11-tick window, and the park demolition at 10 as the way out.
+      # 30 in the bank, a 2-tick window, and the park demolition at 10 as the way out.
       # The price matters as much as the verdict: "demolish something" without the 10 does
       # not tell the player whether they can still afford it.
       {:ok, view, _html} = live(conn, ~p"/")
 
       html = render(view)
       assert html =~ "Upkeep outruns income"
-      assert html =~ "11 ticks"
+      assert html =~ "2 ticks"
       assert html =~ "park"
       assert html =~ "10"
     end
@@ -226,14 +226,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     test "the rescue window appears in the metrics panel", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#metrics-rescue", "Rescue window: 11 ticks")
+      assert has_element?(view, "#metrics-rescue", "Rescue window: 2 ticks")
     end
 
     @tag :early_insolvent_city
     test "an insolvent city far from trouble gets neither banner nor rescue line",
          %{conn: conn} do
-      # Insolvent but 195 ticks out, past the projection horizon. This is the state the
-      # guide's own opening sequence spends five of its seven stages in, so a warning here
+      # Insolvent but past the projection horizon. This is the state the
+      # guide's own opening sequence enters at its third stage, so a warning here
       # would fire right through the tutorial.
       {:ok, view, _html} = live(conn, ~p"/")
 

@@ -96,7 +96,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
 
   describe "the documented opening sequence" do
     # These pin the *advice*, not just its rendering. The guide tells a player to place
-    # seven specific blocks in one specific order and promises nothing goes short on the
+    # eight specific blocks in one specific order and promises nothing goes short on the
     # way; each test below is the arithmetic behind one clause of that promise, so a
     # balance patch that falsifies the advice fails the build instead of publishing a
     # sequence that kills the city.
@@ -106,15 +106,14 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
       # the same trap the capacities test guards against with its "none" refutation.
       stages = PlayingGuide.opening_stages()
 
-      assert length(stages) == 7
+      assert length(stages) == 8
       assert Enum.map(stages, & &1.type) |> Enum.uniq() |> length() > 3
     end
 
     test "every stage is fully supplied on all five physical resources" do
       # The promise the whole section rests on: a player who keeps up never sees decay.
-      # Fails if `water_plant`'s power draw rises above the 25 that fits under the free
-      # baseline of 40 alongside one house and one park, or if `park`'s waste processing
-      # capacity drops below the 8 the last two stages need.
+      # The first house is supplied by a market purchase; the power plant placed next
+      # takes the rest of the sequence onto local generation.
       # `tightness` is demand ÷ supply, unclamped, and the stage reports whichever of the
       # five is highest — so `<= 1.0` on that one resource says all five are covered.
       # Asserted on the ratio rather than on `satisfaction`, which clamps at 1.0 and so
@@ -131,9 +130,8 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
 
     test "no stage of the sequence shows the insolvency warning" do
       # `@reaction_ticks` in `SimulationMetrics` is a constant, and this is what stops it
-      # drifting into the tutorial. Measured, the tightest stage is 6 — treasury 180, a
-      # 40-cost shop as the escape, draining 9 a tick — whose rescue window is 16 ticks, so
-      # anything up to 15 keeps this sequence quiet and 16 would warn during it.
+      # drifting into the tutorial. Measured, the tightest stage has a 23-tick rescue
+      # window, so the 12-tick warning threshold keeps the tutorial quiet.
       #
       # This test is necessary but *not sufficient*, and treating it as sufficient was a
       # real defect in the design of this feature. Every stage here is fully supplied, which
@@ -155,14 +153,14 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
     test "the sequence really is insolvent part-way, so the test above is not vacuous" do
       # Without this, a change that made `insolvent` always false — or that broke the money
       # ceiling so nothing is ever insolvent — would leave the refutation above passing for
-      # the wrong reason. Five of the seven stages carry upkeep the shop is not yet there to
-      # cover.
+      # the wrong reason. The plant and then transit carry upkeep before the shop is
+      # there to cover it. Commerce arrives at step 4 and makes every later stage solvent.
       insolvent =
         PlayingGuide.opening_solvency()
         |> Enum.filter(& &1.metrics.insolvent)
         |> Enum.map(& &1.step)
 
-      assert insolvent == [2, 3, 4, 5, 6],
+      assert insolvent == [2, 3],
              "the opening's insolvent stages moved to #{inspect(insolvent)}; the quiet-" <>
                "tutorial test above only means something while some stage is insolvent"
     end
@@ -186,11 +184,9 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
                "treasury drains and the guide is recommending a slow death"
     end
 
-    test "no single block extends the three-block earner" do
-      # The premise of the whole section: if any one addition worked, the guide should be
-      # recommending that instead of a seven-block run. Fails the moment a balance patch
-      # opens a gentler route — for instance a higher power baseline — at which point the
-      # advice needs rewriting rather than regenerating.
+    test "every single-block extension of the earner needs another local resource" do
+      # Purchases may make an extension sustainable. This pins the narrower guide claim:
+      # none is locally self-sufficient, so each adds a recurring market bill.
       rows = PlayingGuide.opening_wall_rows()
 
       assert length(rows) == length(Node.types())
@@ -198,21 +194,15 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
       for %{type: type, tightest: {resource, demanded, supplied, tightness}} <- rows do
         assert tightness > 1.0,
                "adding #{type} to the earner leaves #{resource} at #{demanded}/#{supplied}, " <>
-                 "which is sustainable — so the earner is no longer a dead end and the " <>
-                 "opening sequence is no longer the only way forward"
+                 "which is locally supplied — update the guide's expansion advice"
       end
     end
 
-    test "the savings ladder for slower play rises with the time taken" do
-      rows = PlayingGuide.slow_opening_rows()
+    test "the slower route needs no savings ladder after commerce arrives" do
+      pace = PlayingGuide.blocks()["opening_pace"]
 
-      assert length(rows) >= 3
-
-      banks = Enum.map(rows, & &1.bank)
-
-      assert banks == Enum.sort(banks) and length(Enum.uniq(banks)) == length(banks),
-             "the ladder is #{inspect(banks)} — taking longer cannot need less money, " <>
-               "so the search that produced this is wrong"
+      assert pace =~ "earns +6 per tick"
+      assert pace =~ "no extra savings target"
     end
   end
 

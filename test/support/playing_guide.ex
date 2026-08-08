@@ -44,12 +44,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   # --- the opening sequence -----------------------------------------------
 
-  # The order that keeps every stage fully supplied, and it is not the order a player
-  # reaches for. `commercial` is the only real earner and it goes **last**, because its
-  # 22 power is exactly what would crowd the water plant's 25 out from under the free
-  # baseline of 40: one house and one park draw 15, which leaves 25 and not a unit more.
-  # That knife-edge is why the order is forced rather than chosen, and why the sequence
-  # has to be walked with nothing earning.
+  # With no free power, the city imports the first house's 15 power for one interval and
+  # then builds the power plant immediately. The lower traffic baseline puts transit next;
+  # commerce can then arrive early and finance the remaining support chain.
   #
   # Written down rather than searched for. A search over orderings belongs in a scratch
   # script, not in a test-suite helper — but `opening_stages/0` measures the consequences
@@ -57,12 +54,13 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # so a balance patch cannot leave the sequence quietly wrong.
   @opening_order [
     :residential,
-    :park,
-    :water_plant,
     :power_plant,
+    :transit_hub,
+    :commercial,
+    :water_plant,
     :residential,
     :park,
-    :commercial
+    :park
   ]
 
   # Money is deliberately not one of these. The sequence runs a money deficit through its
@@ -71,16 +69,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # them is decay on the very same tick.
   @physical [:power, :water, :waste, :traffic, :labour]
 
-  # The detour a slower player takes: build the three-block earner first, bank the income,
-  # then sell the shop to get back to stage 2 of the sequence above with money in hand.
-  # Derived from `@opening_order` rather than written out, so the two cannot drift — the
-  # earner really is the first two stages plus the commercial block.
-  @earner_detour Enum.take(@opening_order, 2) ++ [:commercial]
+  # The first four blocks form the earner. Derived from `@opening_order` so the expansion
+  # wall and the documented route cannot drift apart.
+  @earner_detour Enum.take(@opening_order, 4)
 
   # Descending, so `Enum.find/3` returns the largest interval that survives.
   @gap_ladder [30, 25, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1]
-  @slow_gaps [10, 20, 30, 60]
-  @bank_ladder [300, 400, 500, 600, 800, 1000, 1200, 1600, 2000, 2400, 3000, 4000]
 
   # Long enough for a working sequence to climb back to 100 from the couple of points it
   # can lose, and far longer than a failing one needs to be unmistakably dead.
@@ -100,7 +94,15 @@ defmodule ArmchairMetropolist.PlayingGuide do
     |> Enum.with_index(1)
     |> Enum.map_reduce(0.0, fn {type, step}, spent ->
       spent = spent + Node.construction_cost(type)
-      stats = @opening_order |> Enum.take(step) |> city_from() |> Calc.resource_stats()
+
+      city =
+        @opening_order
+        |> Enum.take(step)
+        |> city_from()
+        |> Map.put(:money, CityMap.opening_grant() - spent)
+
+      metrics = Calc.metrics(city)
+      stats = metrics.resources
 
       stage = %{
         step: step,
@@ -108,7 +110,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
         cost: Node.construction_cost(type),
         spent: spent,
         tightest: tightest_physical(stats),
-        money_flow: money_flow(stats)
+        money_flow: money_flow(stats) - metrics.market_spend
       }
 
       {stage, spent}
@@ -122,10 +124,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   Separate from `opening_stages/0` because it needs a *treasury*, and that function's cities
   are built by `city_from/1`, which deliberately starts broke to make its own decay window
-  tight. Here the balance is the whole subject: the opening sequence is insolvent for five of
-  its seven stages — money has no free baseline, and the shop that pays for the plants and
-  parks goes up last — so a warning keyed off insolvency alone would fire right through the
-  tutorial. What keeps it quiet is that the grant leaves a wide rescue window at every stage.
+  tight. Here the balance is the whole subject: the opening sequence is briefly insolvent
+  before commerce arrives at step 4, so a warning keyed off insolvency alone can still fire
+  through the tutorial. What keeps it quiet is that the grant leaves a wide rescue window.
   """
   @spec opening_solvency() :: [
           %{step: pos_integer(), type: Node.node_type(), metrics: SimulationMetrics.t()}
@@ -178,33 +179,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   @doc """
-  How much a slower player must bank before selling the shop, per interval between clicks.
+  Which local resource runs short when each type is added to the four-block earner.
 
-  The straight-through sequence has a deadline only because the grant is finite. Bank more
-  first and the deadline goes away — this is the ladder of "more".
-  """
-  @spec slow_opening_rows() :: [%{gap_ticks: pos_integer(), bank: pos_integer()}]
-  def slow_opening_rows do
-    Enum.map(@slow_gaps, fn gap ->
-      bank = Enum.find(@bank_ladder, &slow_route_survives?(&1, gap))
-
-      unless bank do
-        raise "slow_opening_rows: no bank up to #{List.last(@bank_ladder)} sustains " <>
-                "#{gap} ticks between placements — the sell-the-shop route the guide " <>
-                "recommends for slow play no longer works at that pace"
-      end
-
-      %{gap_ticks: gap, bank: bank}
-    end)
-  end
-
-  @doc """
-  What breaks when each type in turn is added to the three-block earner.
-
-  The reason the opening above has to be a *sequence* rather than a next step: the
-  cheapest earning city is a dead end for single additions, and this is the enumeration
-  that says so. Every type overruns something, which is why the way forward is to take
-  the whole run of seven at once.
+  Market purchases can sustain several of these expansions. This enumeration instead
+  shows why no fourth block remains import-free and what recurring bill it introduces.
   """
   @spec opening_wall_rows() :: [%{type: atom(), tightest: tuple()}]
   def opening_wall_rows do
@@ -224,15 +202,6 @@ defmodule ArmchairMetropolist.PlayingGuide do
       ["| add this to the earner | what overruns |", "|---|---|"] ++ rows,
       "\n"
     )
-  end
-
-  defp slow_route_survives?(bank, gap) do
-    CityMap.new(40, 30)
-    |> run_sequence(@earner_detour, 1)
-    |> save_until(bank * 1.0)
-    |> sell(:commercial)
-    |> run_sequence(Enum.drop(@opening_order, 2), gap)
-    |> finished_healthy?()
   end
 
   defp opening_block do
@@ -258,7 +227,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
             "#{num(CityMap.opening_grant())}. The finished city nets " <>
             "#{signed(opening_income())} per tick. Every stage is fully supplied on all " <>
             "five physical resources — the `tightest resource` column is demand against " <>
-            "supply, so `40/40` is at capacity and not over it.",
+            "available supply, including purchases, so step 1's `15/15` is imported power.",
           "",
           "Measured: starting cold from the grant, this holds at full health with up to " <>
             "**#{gap} ticks (#{num(gap * tick_ms() / 1000)} s) between placements**. " <>
@@ -269,15 +238,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   defp opening_pace_block do
-    rows =
-      for %{gap_ticks: gap, bank: bank} <- slow_opening_rows() do
-        "| #{gap} ticks (#{num(gap * tick_ms() / 1000)} s) | #{bank} |"
-      end
-
-    Enum.join(
-      ["| time between placements | bank this much first |", "|---|---|"] ++ rows,
-      "\n"
-    )
+    "After step 4, the transit-backed commercial core earns +6 per tick. " <>
+      "There is no extra savings target for slower play: waiting funds the remaining blocks."
   end
 
   # --- sequence mechanics -------------------------------------------------
@@ -314,18 +276,6 @@ defmodule ArmchairMetropolist.PlayingGuide do
     end)
   end
 
-  defp sell(city, type) do
-    node = city |> CityMap.nodes() |> Enum.find(&(&1.type == type))
-    {:ok, {city, _id}} = ManageInfrastructure.demolish(city, node.x, node.y)
-    city
-  end
-
-  defp save_until(city, bank) do
-    Enum.reduce_while(1..1000, city, fn _, city ->
-      if city.money >= bank, do: {:halt, city}, else: {:cont, advance(city, 1)}
-    end)
-  end
-
   # Both halves matter. A sequence that lost a block to a refusal is a failure even if
   # what remains is healthy, and a full set of blocks sitting at 40 health is a failure
   # too. Checked per node rather than against `avg_health`, so one dead block cannot hide
@@ -341,10 +291,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
     Enum.reduce(1..ticks//1, city, fn _, city -> elem(Calc.advance_tick(city), 0) end)
   end
 
-  # Ranked by demand as a fraction of supply, deliberately *not* by `satisfaction`.
+  # Ranked by demand as a fraction of available supply, deliberately *not* by
+  # `satisfaction`. Available supply includes automatic market purchases: the first
+  # house is fully served even though all 15 power comes from the market.
   # Satisfaction is `min(1.0, supplied / demanded)`, so on a healthy city every resource
   # reads exactly 1.0 and the clamp throws away the margin — ranking by it made this
-  # column say `power` at all seven stages, which is the first entry in `@physical` and
+  # column say `power` at all eight stages, which is the first entry in `@physical` and
   # nothing more. The unclamped ratio is what moves, and what it shows is the binding
   # constraint walking from power to water to waste as the sequence goes up.
   #
@@ -356,18 +308,23 @@ defmodule ArmchairMetropolist.PlayingGuide do
       |> Enum.map(&{&1, Map.fetch!(stats, &1)})
       |> Enum.max_by(fn {_resource, stat} -> tightness(stat) end)
 
-    {resource, stat.demanded, stat.supplied, tightness(stat)}
+    {resource, stat.demanded, available_supply(stat), tightness(stat)}
   end
 
-  # Nothing in the documented sequence reaches here with no supply — every physical
-  # resource but labour has the free baseline, and the sequence opens with the house that
-  # supplies labour. The clause is here so a future stage that does cannot divide by zero
-  # and silently rank itself last.
+  # The clause is here so a future unfunded stage with no local or purchased supply cannot
+  # divide by zero and silently rank itself last.
   # Guards rather than `%{demanded: 0.0}` patterns, matching `SimulationCalculator`'s own
   # `satisfaction/2`: a literal 0.0 pattern matches only +0.0 and warns about it.
   defp tightness(%{demanded: demanded}) when demanded == 0.0, do: 0.0
-  defp tightness(%{supplied: supplied}) when supplied == 0.0, do: :infinity
-  defp tightness(%{demanded: demanded, supplied: supplied}), do: demanded / supplied
+
+  defp tightness(stat) do
+    case available_supply(stat) do
+      supplied when supplied == 0.0 -> :infinity
+      supplied -> stat.demanded / supplied
+    end
+  end
+
+  defp available_supply(stat), do: stat.supplied + stat.purchased
 
   defp money_flow(stats) do
     money = Map.fetch!(stats, :money)
@@ -589,14 +546,14 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # starts at full health reports a gain of zero — which is what the first version of
   # this did, putting "+0" in the published guide.
   defp regen_rate do
-    city = city_with(residential: 1) |> set_health(50.0)
+    city = city_with(residential: 1) |> Map.put(:money, 100.0) |> set_health(50.0)
     before = health_of(city)
     {advanced, _} = Calc.advance_tick(city)
     Float.round(health_of(advanced) - before, 4)
   end
 
-  # Three residential blocks on the baseline alone are short of power, by a ratio the
-  # calculator will report. Solve the decay rate out of the health it actually lost.
+  # Three unfunded residential blocks have no power. Solve the decay rate out of the
+  # health they actually lose.
   defp decay_rate do
     city = city_with(residential: 3)
     satisfaction = city |> Calc.metrics() |> worst_satisfaction()
