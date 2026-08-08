@@ -33,11 +33,53 @@ command: armchair_metropolist
 # talking to it, rather than assuming it. If that ever fails, the fix is a line here
 # *and* the reason why — never a pre-emptive permission, because an unnecessary
 # permission is precisely what a sandbox exists to refuse.
+#
+# That decision point was reached on 2026-08-05, and the rule above held: the webview
+# did need something, and it was not a permission. The GIO_USE_PROXY_RESOLVER line
+# below is what it needed, and this is the reason why.
+#
+# Reported from AerynOS — the window rendered nothing but
+#
+#   GDBus.Error:org.freedesktop.portal.Error.NotAllowed:
+#   This call is not available inside the sandbox
+#
+# The paragraph above is not wrong about packets, and that is the trap. Omitting
+# `--share=network` also withholds a *permission*, and xdg-desktop-portal gates two
+# interfaces on it — `NetworkMonitor` and `ProxyResolver`, both with the guard
+# `if (!xdp_app_info_has_network (app_info))`. libsoup, inside WebKitNetworkProcess,
+# asks GProxyResolver what proxy to use for *every* URI, loopback included; in a
+# Flatpak, GLib routes that to `org.freedesktop.portal.ProxyResolver.Lookup`
+# (GProxyResolverPortal, extension priority 90, chosen whenever /.flatpak-info
+# exists and the portal owns the name). The portal refuses, the load fails before a
+# packet is sent, and WebKit renders the GError as the page body — which is why the
+# message appeared in the window rather than in a log.
+#
+# GLib means to handle this: `g_proxy_resolver_portal_lookup` carries
+# `if (!resolver->network_available) proxy = "direct://"`. But that sits *after* the
+# early return from `call_lookup_sync`, so with no network the call always errors and
+# the fallback is dead code. `gnetworkmonitorportal.c` gets the same case right by
+# never asking (`if (nm->priv->has_network) update_properties (...)`), which is why
+# only the proxy resolver bites — and why one override is the whole fix.
+#
+# So the answer is NOT `--share=network`. Nothing here wants the network; what we
+# want is the `direct://` GLib already intended, obtained by declining the portal
+# resolver rather than by opening the sandbox. `GIO_USE_PROXY_RESOLVER` is GIO's own
+# override for that extension point (giomodule.c, `_g_io_module_get_default`), and
+# `dummy` is GDummyProxyResolver, whose `is_supported` is unconditionally true and
+# whose lookup returns `direct://` for everything. Correct here precisely *because*
+# the app has no network: there is no proxy it could ever legitimately need.
+#
+# Why it reproduces on AerynOS and almost nowhere else: it needs xdg-desktop-portal
+# actually owning the name on the session bus. With no portal running,
+# `g_proxy_resolver_portal_is_supported` is false and GLib falls back to a real
+# resolver — so CI, which has no session portal, cannot reproduce it at all. See
+# assertion 9 of scripts/verify-flatpak.sh for what can be checked instead.
 finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  - --env=GIO_USE_PROXY_RESOLVER=dummy
 
 modules:
   - name: armchair-metropolist

@@ -26,6 +26,12 @@ EXPECTED_RUNTIME="${EXPECT_RUNTIME:-org.gnome.Platform/x86_64/50}"
 # wired to anything at all.
 SIDECAR="${EXPECT_SIDECAR:-/app/bin/desktop}"
 PORT="${EXPECT_PORT:-41000}"
+# Assertion 9's two halves. `dummy` is the value the manifest's --env sets; the GType
+# name is what GIO must actually resolve it to. Overridable for the same reason as the
+# rest: the sweep in ci.yml mutates the expectation, since it cannot mutate a portal
+# that is not running.
+PROXY_ENV="${EXPECT_PROXY_RESOLVER_ENV:-dummy}"
+PROXY_IMPL="${EXPECT_PROXY_RESOLVER_IMPL:-GDummyProxyResolver}"
 
 fail() {
   printf '::error::%s\n' "$1" >&2
@@ -201,5 +207,77 @@ case "$OUT" in
     printf '%s\n' "$OUT" >&2
     fail "the sidecar ran but never printed Phoenix's boot banner — see its output above" ;;
 esac
+
+# 9. The webview's proxy resolution does not go through a portal that will refuse it.
+#
+# The regression this stands against, reported 2026-08-05 on AerynOS: the app installed,
+# the sidecar booted, and the window contained nothing but
+#
+#   GDBus.Error:org.freedesktop.portal.Error.NotAllowed:
+#   This call is not available inside the sandbox
+#
+# Cause, and the reason nothing above could see it: libsoup inside WebKitNetworkProcess
+# asks GProxyResolver about every URI, loopback included. In a Flatpak, GLib routes that
+# to org.freedesktop.portal.ProxyResolver.Lookup, which xdg-desktop-portal guards with
+# `if (!xdp_app_info_has_network (app_info))` — and this manifest deliberately withholds
+# `--share=network`. The page load therefore failed before a packet was sent, and WebKit
+# rendered the GError as the page. The manifest now sets GIO_USE_PROXY_RESOLVER=dummy;
+# see its header for why that, and not `--share=network`.
+#
+# WHAT THIS CANNOT DO, stated plainly because a check that looks stronger than it is
+# would be worse than none: it cannot reproduce the failure. The portal only refuses if
+# xdg-desktop-portal owns the name on the session bus, and on a runner nothing does — so
+# without the fix GLib would silently pick a working resolver here and any end-to-end
+# assertion would pass on the very bundle that motivated it. That is the same shape as
+# assertion 8 being blind to glibc.
+#
+# So this asserts the *configuration that avoids the call*, in the sandbox, in two
+# halves that fail for different reasons:
+#
+#   env  — GIO_USE_PROXY_RESOLVER is `dummy`. Red the moment the finish-arg is dropped,
+#          with no dependence on what the runtime happens to contain.
+#   impl — the resolver GIO actually returns is GDummyProxyResolver. This is the half
+#          that proves the override *took effect* rather than merely being set; an env
+#          var GIO ignored would pass the first half and fail this one.
+printf 'proxy:   reading GProxyResolver inside the sandbox...\n'
+
+# shellcheck disable=SC2016
+# Single quotes deliberate, as in assertion 8: GIO_USE_PROXY_RESOLVER and IMPL must
+# expand in the sandbox's shell, not in this one — expanding here is the whole failure
+# this assertion is looking for.
+PROXY_OUT=$("$TIMEOUT_BIN" --kill-after=5 60 flatpak run --user \
+        --command=sh "$APP_ID" -c '
+          printf "resolver-env:%s\n" "${GIO_USE_PROXY_RESOLVER-<unset>}"
+          # The GType name, not type(r).__name__: PyGObject has no wrapper class for
+          # GIO-internal resolvers, so only the GType carries the real identity. Kept
+          # free of quotes so it survives three levels of shell without escaping.
+          if IMPL=$(python3 -c \
+               "from gi.repository import Gio; print(Gio.ProxyResolver.get_default().__gtype__.name)" \
+               2>/dev/null); then
+            printf "resolver-impl:%s\n" "$IMPL"
+          else
+            printf "resolver-impl:UNREADABLE\n"
+          fi
+          exit 0
+        ' 2>&1) || fail "could not read the proxy resolver inside the sandbox"
+
+GOT_ENV=$(printf '%s\n' "$PROXY_OUT" | sed -n 's/^resolver-env://p')
+GOT_IMPL=$(printf '%s\n' "$PROXY_OUT" | sed -n 's/^resolver-impl://p')
+
+[ "$GOT_ENV" = "$PROXY_ENV" ] \
+  || fail "GIO_USE_PROXY_RESOLVER is '$GOT_ENV' in the sandbox, expected '$PROXY_ENV' — the manifest's --env did not ship"
+
+# UNREADABLE is not a pass and not a failure: it means the runtime has no PyGObject to
+# ask with, which is a fact about org.gnome.Platform rather than about this bundle. Say
+# so on stdout — the env half above still holds the floor — rather than skipping in
+# silence, which would read as a green second half.
+if [ "$GOT_IMPL" = "UNREADABLE" ]; then
+  printf 'proxy:   WARNING: no PyGObject in the runtime; could not confirm GIO honoured it\n'
+  printf 'proxy:   GIO_USE_PROXY_RESOLVER=%s (env half only)\n' "$GOT_ENV"
+else
+  [ "$GOT_IMPL" = "$PROXY_IMPL" ] \
+    || fail "GIO resolved to $GOT_IMPL, expected $PROXY_IMPL — the override was set but ignored"
+  printf 'proxy:   GIO_USE_PROXY_RESOLVER=%s -> %s (no portal call)\n' "$GOT_ENV" "$GOT_IMPL"
+fi
 
 printf '\n\033[32m✓ .flatpak verified\033[0m\n'

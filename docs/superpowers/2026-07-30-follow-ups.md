@@ -318,6 +318,30 @@ The coverage figure in this document's header is also stale: the suite is now 23
   exiting 0. Not on Flathub, so side-loaded and no auto-updates. Spec:
   `specs/2026-08-04-flatpak-bundle-design.md`.
 
+  **Broken on any machine running xdg-desktop-portal, and fixed 2026-08-05.** Reported from AerynOS:
+  the app installed, the sidecar booted, and the window contained only
+
+  ```
+  GDBus.Error:org.freedesktop.portal.Error.NotAllowed: This call is not available inside the sandbox
+  ```
+
+  The manifest's "no `--share=network`, deliberately" argument is correct about *packets* — loopback
+  lives inside the private namespace, so nothing needs to leave — and that is exactly what made it
+  wrong. Withholding the permission also makes xdg-desktop-portal refuse `ProxyResolver.Lookup`
+  (guarded by `if (!xdp_app_info_has_network (app_info))`), and libsoup inside `WebKitNetworkProcess`
+  asks GProxyResolver about **every** URI, loopback included. The load failed before a packet was sent
+  and WebKit rendered the `GError` as the page, which is why it appeared in the window and in no log.
+
+  Fixed with `--env=GIO_USE_PROXY_RESOLVER=dummy`, **not** `--share=network`: GLib already intends
+  `direct://` for a network-less sandbox, it just puts that fallback after the call that errors, so the
+  fix is to stop asking rather than to open the sandbox. Full derivation, including why the network
+  monitor is unaffected and why CI structurally cannot reproduce it, in
+  `specs/2026-08-04-flatpak-bundle-design.md` §6.
+
+  **The generalisable lesson: a permission you do not need can still be load-bearing, because the check
+  sits in front of a *question* your libraries ask rather than an action you take.** When justifying a
+  sandbox decision with "the app does not need X", check what its dependencies *query* about X.
+
   Two traps found on the way, both worth knowing before touching this. `flatpak-builder` strips
   binaries with `eu-strip`, from `elfutils`, which it only *recommends* — so
   `--no-install-recommends` breaks the build after the module is already assembled. And do not
