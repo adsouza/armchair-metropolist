@@ -133,23 +133,31 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
       log =
         capture_log(fn ->
           pid = start_supervised!(SnapshotReaper)
-          Process.put(:reaper_pid_under_test, pid)
-          Process.put(:reaper_ref_under_test, Process.monitor(pid))
+          ref = Process.monitor(pid)
 
           # Blocks until the boot sweep - which raises ArithmeticError computing
           # `-days * 24 * 60 * 60` for an atom `days` - has been through
           # safe_sweep/0's rescue.
           :sys.get_state(pid)
+
+          # Inside the capture rather than after it, and that is not tidiness. The
+          # interval above is 20ms, so this 100ms window is another four failing
+          # sweeps; left outside, their warnings printed to the console on every
+          # `mix test` run. Four lines of "[reaper] sweep failed" from a *passing*
+          # suite read exactly like a real fault, and on 2026-08-08 they were filed
+          # as one - the investigation ended here, at a test doing precisely what it
+          # says it does. Expected noise that looks like a failure has a cost, and
+          # that is the cost.
+          #
+          # Keeping the monitor inside the block is what lets this move: `pid` and
+          # `ref` used to be smuggled out through the process dictionary purely
+          # because the assertion below needed them.
+          refute_receive {:DOWN, ^ref, :process, ^pid, _reason},
+                         100,
+                         "a raise inside sweep/0 must not crash the reaper"
         end)
 
       assert log =~ "sweep failed", "the failure must be logged, not merely swallowed"
-
-      pid = Process.get(:reaper_pid_under_test)
-      ref = Process.get(:reaper_ref_under_test)
-
-      refute_receive {:DOWN, ^ref, :process, ^pid, _reason},
-                     100,
-                     "a raise inside sweep/0 must not crash the reaper"
 
       # Heal the config and prove recovery comes from the *next scheduled*
       # sweep, not a restart: if schedule/1 were skipped after a failure (e.g.
