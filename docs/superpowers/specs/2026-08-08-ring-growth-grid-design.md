@@ -444,8 +444,10 @@ against a future shrink path, and do not count it as coverage.
 
 ### LiveView
 
-* **After 6×6 → 8×8, an already-placed node's rendered style contains `width: 96px` and
-  its `left` is a multiple of 96.** This is the stale-geometry test and it must be observed
+* **After 6×6 → 8×8, a node streamed *before* the growth renders `width: 96px`.** The node
+  must reach the stream by `{:city_node_placed, …}` and also appear in the growth payload. Set
+  up through the growth payload alone and the broken handler makes the node *absent* rather
+  than *stale* — two different reds, and only staleness is the bug.** This is the stale-geometry test and it must be observed
   **failing before the fix**, because it is what establishes empirically that stream
   entries do not re-render on an assign change. Written at 2×2 → 4×4 it cannot fail at all:
   cell size is 128 on both sides, so correct and buggy code emit identical geometry.

@@ -821,11 +821,14 @@ Add to `test/armchair_metropolist_web/live/simulator_live_test.exs`. These drive
       # explicit re-stream this node keeps `width: 128px` on a 96px grid.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      six = CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park))
-      broadcast({:city_grew, six})
+      # Streamed by {:city_node_placed, ...} BEFORE the growth, deliberately. Introduced
+      # through the growth payload instead, a handler that does not re-stream makes the node
+      # *absent* rather than *stale*, and the test cannot tell those two failure modes apart.
+      broadcast({:city_grew, CityMap.new(6, 6)})
+      broadcast({:city_node_placed, Node.new(1, 1, :park)})
       assert rendered_node(render(view), "1:1") =~ "width: 128px"
 
-      eight = %{six | width: 8, height: 8}
+      eight = %{CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park)) | width: 8, height: 8}
       broadcast({:city_grew, eight})
 
       html = rendered_node(render(view), "1:1")
