@@ -138,7 +138,7 @@ cannot decode them — `:safe` will not create an atom the release does not
 already have. Rolling back past that commit strands every city written since:
 the server crash-loops on hydrate, the desktop app starts an empty grid.
 
-That commit is the minimum rollback target. Any future field added to a
+`dcd1ee4` is the minimum rollback target. Any future field added to a
 persisted struct has the same one-way property, and the safe pattern is two
 releases — one that interns the atom without writing it, then the writer.
 

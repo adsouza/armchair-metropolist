@@ -97,13 +97,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "resource_stats/1" do
-    test "every flow resource carries nothing" do
+    test "power, water, traffic and labour carry nothing" do
       stats = Calc.resource_stats(sustainable_city())
       # Asserted explicitly so that folding the balance back into `supplied` later
-      # cannot pass silently.
-      for resource <- [:power, :water, :waste, :traffic, :labour] do
+      # cannot pass silently. Waste is excluded from this list — it is in
+      # `@carryover` now, alongside money, and gets its own assertion below,
+      # because `sustainable_city/0` has `waste_stock == 0.0` and `-0.0 == 0.0`,
+      # which would let this loop pass for waste whether or not it still carries.
+      for resource <- [:power, :water, :traffic, :labour] do
         assert Map.fetch!(stats, resource).carried == 0.0
       end
+    end
+
+    test "waste carries its stock forward, negated" do
+      # The companion to the assertion above: a nonzero stock is what makes this
+      # able to fail. `carried_balance/2` returns `-city_map.waste_stock`, so a
+      # mutation that dropped waste back out of `@carryover`, or one that carried
+      # it unnegated, would both show up here.
+      stats = Calc.resource_stats(%{sustainable_city() | waste_stock: 42.0})
+      assert stats.waste.carried == -42.0
     end
 
     test "satisfaction is capped at 1.0 on surplus" do

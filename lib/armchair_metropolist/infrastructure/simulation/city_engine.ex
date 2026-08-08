@@ -342,12 +342,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
      %{state | viewers: Map.put(state.viewers, ref, pid), linger: cancel_linger(state.linger)}}
   end
 
-  # A stalled city has reached a fixpoint in health, so advancing it would recompute an
-  # identical result — but this is not only an optimisation. Money demand is not
-  # health-scaled either, so a stalled city with a water plant, transit hub or park goes
-  # on draining its treasury, and that treasury is exactly what a rescue is paid for.
-  # Freezing preserves it, which makes "stalled but solvent" a stable state a player can
-  # act on rather than a countdown.
+  # A stalled city has reached a fixpoint in health, so advancing it would recompute
+  # identical health and status for every node — but this is not only an optimisation.
+  # Money demand is not health-scaled either, so a stalled city with a water plant,
+  # transit hub or park goes on draining its treasury, and that treasury is exactly what
+  # a rescue is paid for. Waste demand is not health-scaled either, so a *drowning*
+  # city — one `stalled?/3` still calls stalled because its landfill is growing rather
+  # than draining — would go on piling up waste the same way. Freezing preserves the
+  # treasury and bounds the landfill, which makes "stalled but solvent" a stable state a
+  # player can act on rather than a countdown.
   #
   # Not a lockout: `handle_call({:place, …})` does not tick, so a player with money left
   # can still build, the recomputed metrics clear this flag, and the clock resumes on the

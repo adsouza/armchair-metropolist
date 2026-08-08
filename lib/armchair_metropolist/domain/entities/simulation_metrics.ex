@@ -13,11 +13,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   legend's totals cell renders, answering "is my per-tick economy balanced".
   Most resources carry nothing (`carried: 0.0`), so the two agree. Money and
   waste are the two that do, and they diverge in opposite directions: money's
-  carried balance is a treasury, so `satisfaction` can only sit *above*
-  `flow_satisfaction` — savings covering a flow deficit. Waste's carried
-  balance is a backlog, entered negated (see `carried/2`), so `satisfaction`
-  can only sit *below* `flow_satisfaction` — a landfill making this tick worse
-  than its own flow would otherwise read.
+  carried balance is a treasury, so `satisfaction` never sits *below*
+  `flow_satisfaction` — savings can only cover a flow deficit, never worsen one.
+  Waste's carried balance is a backlog, entered negated (see `carried/2`), so
+  `satisfaction` never sits *above* `flow_satisfaction` — a landfill can only
+  make this tick read worse than its own flow, never better. Neither is a
+  strict inequality: an empty balance, or both simply clamped at 1.0, leaves
+  the two equal.
   """
   @type resource_stats :: %{
           supplied: float(),

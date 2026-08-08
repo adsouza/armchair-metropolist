@@ -66,10 +66,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @resources Map.keys(@baseline_capacity)
   @no_resources Map.new(@resources, fn resource -> {resource, 0.0} end)
 
-  # The resources whose unspent supply survives the tick boundary. Money is a
-  # treasury: its surplus carries forward as an asset. Waste is the mirror — its
-  # *deficit* carries forward as a liability, which is why `carried/2` negates it.
-  # Traffic does not accumulate: a landfill persists, a jam clears.
+  # The resources with a balance that survives the tick boundary — not always the same
+  # side of it. Money is a treasury: its *unspent supply* carries forward as an asset.
+  # Waste is the mirror: its *unmet demand* carries forward as a liability, which is why
+  # `carried/2` negates it. Traffic does not accumulate: a landfill persists, a jam clears.
   @carryover [:money, :waste]
 
   # The park amenity: parks per housing block multiply labour supply. Both values are

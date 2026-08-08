@@ -58,12 +58,20 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   @node_type_renames %{road_hub: :transit_hub}
 
   # Struct field names added to a persisted entity since the first release. Unlike
-  # `@node_type_renames`, these are current vocabulary, not retired — but they are
-  # just as load-bearing: rolling an older binary back past the commit that added
-  # one means it decodes a snapshot containing the atom without ever having loaded
-  # the module version that defines it, and `:safe` refuses to create it from
-  # scratch. Listing it here interns it explicitly, rather than relying on
-  # `CityMap` happening to already be compiled with the field. See
+  # `@node_type_renames`, these are current vocabulary, not retired — and unlike that
+  # map, this list buys nothing on its own yet: `:waste_stock` was added to `CityMap`'s
+  # `defstruct` in the same commit that added it here, so `ensure_loaded!/0` already
+  # interns the atom by compiling `CityMap`, whether or not this list mentions it.
+  #
+  # What this is, is the machinery for the two-release rollout docs/deploying.md
+  # describes for the *next* field, so that rollout does not have to invent a mechanism
+  # under time pressure: list a new field's atom here, in the release that will read it,
+  # one release before the release that starts writing it to the struct. That earlier
+  # release then decodes a payload carrying the new atom correctly — as a field it
+  # does not recognise yet, defaulted by `modernize/1` — instead of `:safe` refusing to
+  # create an atom that neither the struct nor this list has ever mentioned. Skipping
+  # that bridge release is exactly what happened for `:waste_stock`, and rolling a
+  # binary back past the commit that added it is unrecoverable either way — see
   # docs/deploying.md, "The third trap: rolling back past a new CityMap field".
   @added_fields [:waste_stock]
 
@@ -71,14 +79,17 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   def modules, do: @modules
 
   @doc """
-  Struct field names added since the first release, interned by appearing here.
+  Struct field names staged for the two-release rollout, interned by appearing here.
 
   Not modules, so `ensure_loaded!/0` has nothing to load for them — a bare atom
   is interned the instant this module is, which is the same reason
   `@node_type_renames`'s keys need no loader. This accessor exists so the list is
-  reachable and testable rather than dead: a field missing from it is a field an
-  older release cannot decode. See docs/deploying.md, "The third trap: rolling
-  back past a new CityMap field".
+  reachable and testable rather than dead. It is not the converse of
+  `@node_type_renames`'s guarantee, though: a field's presence here does not mean an
+  older release can decode it — `:waste_stock` is listed, and an older release still
+  cannot, because the field and this list entry shipped in the same commit. What this
+  protects is the *next* field staged here a release ahead of the one that writes it.
+  See docs/deploying.md, "The third trap: rolling back past a new CityMap field".
   """
   def added_fields, do: @added_fields
 

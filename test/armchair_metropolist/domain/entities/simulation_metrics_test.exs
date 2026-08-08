@@ -29,6 +29,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.money == 275.0
   end
 
+  # The LiveView receives metrics and never the city map, so without this field
+  # the Landfill line cannot reach the page at all.
   test "carries the city's waste stock" do
     metrics = SimulationMetrics.build(%{CityMap.new(40, 30) | waste_stock: 78.0}, %{})
 

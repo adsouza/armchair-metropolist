@@ -1156,6 +1156,44 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
     end
+
+    test "demolishing into a draining landfill unfreezes a city with nobody fully supplied",
+         %{city_id: city_id} do
+      # The third unfreeze route, and the one neither test above exercises: no survivor
+      # is fully supplied (three dead houses draw 45 power against the baseline's 40,
+      # same shortfall as before the cut) and the grid is not empty, but cutting five
+      # houses to three drops waste demand from 50 to 30 — under the baseline's 40 — so
+      # a landfill that was growing starts draining instead. `stalled?/3` reads that
+      # off `deficit < stock`, not off anyone's satisfaction.
+      #
+      # This is the path `handle_call({:demolish, ...})` has to get right: it must
+      # recompute `metrics` from the *post*-demolition city, not carry the stale
+      # `stalled: true` forward, or the very next `{:tick, ...}` still matches
+      # `handle_info({:tick, _}, %{metrics: %{stalled: true}})` and the city never
+      # ticks again — the landfill would sit at 130 forever instead of draining.
+      seeded = %{dead_city(5, 0.0) | waste_stock: 130.0, money: 1000.0}
+      StubSnapshotRepository.set_initial({:ok, {3, seeded}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
+
+      assert {:ok, _id} = CityEngine.demolish(city_id, 0, 0)
+      assert {:ok, _id} = CityEngine.demolish(city_id, 1, 0)
+
+      assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
+
+      broadcast_tick(1)
+
+      {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
+
+      assert city_map.tick == 4,
+             "the engine must actually have ticked, not just recomputed metrics"
+
+      # 3 houses emit 30 against the baseline's 40, so 130 - (40 - 30) = 120: the
+      # backlog drains by 10, it does not merely fail to grow.
+      assert city_map.waste_stock == 120.0, "the landfill must be draining, not held"
+      refute metrics.stalled, "still thirteen ticks from empty, not stalled again yet"
+    end
   end
 
   describe "reset/1" do
