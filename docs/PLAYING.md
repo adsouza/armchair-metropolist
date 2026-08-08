@@ -51,12 +51,13 @@ supplied at current health. For a bad, that same arrow can rise while the situat
 worsens: a decaying `industrial` reads `-90 → -45`, which is less waste removed, not
 more of the problem. A dash means the type does not touch that resource at all,
 which is different from netting to zero. The totals row gives city-wide demand, supply
-and satisfaction, per tick. Four of the six resources have a free baseline of 40 built
-in — supply for power and water, absorption for waste and traffic; labour and money
-have none, deliberately — see below. When the city is short of power, water, waste
+and satisfaction, per tick. Water supply has a free baseline of 30, waste absorption has 40;
+traffic absorption starts at 20. Power, labour and money have no free baseline,
+deliberately — see below. When the city is short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
 Purchased capacity appears in the supplied total, and the Metrics panel shows the cost
-as *Automatic purchases*. Traffic cannot be bought.
+as *Automatic purchases*. Each imported worker also adds **1 traffic demand** for that
+tick, shown separately as *Imported-labour traffic*. Traffic cannot be bought.
 
 **Show detail / Hide detail** collapses the legend to its type, count and cost columns,
 which is how you make the window narrower — the six resource columns are most of its
@@ -69,19 +70,20 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 **Every block needs staff except the homes the staff live in.** Power plants, water
 plants, transit hubs, parks, industry and commerce all draw labour; `residential` is the
 only thing that produces it locally. Imported labour can bridge the gap while the treasury
-lasts, but housing is the cheaper durable source.
+lasts, but housing is the cheaper durable source and imported workers add commuter traffic.
 
-Place one residential block before anything else. It needs no support on an empty grid,
-earns 1 per tick, and never needs imports there.
+Place one residential block before anything else. It supplies the workers the next block
+will need, but with no free power it immediately imports 15 units. Its 1 income offsets
+only one unit of that repeating bill, so build a power plant next rather than waiting.
 
 This qualifies the "build producers first" rule below rather than replacing it: demand
 still arrives instantly and in full, so a consumer placed before its support still does
 damage. The order is **one house, then producers, then the rest.**
 
 Money gives the same advice for a different reason. `residential` is the cheapest block at
-15, it earns without consuming any money, and — alone on the empty grid — it is the only
-block that stays healthy indefinitely, because it supplies its own workers. `commercial`
-earns thirty times as much per tick, but placed by itself it has no workforce and decays
+15 and earns without consuming any money. It does not support itself indefinitely anymore:
+the opening grant is buying its power until generation arrives. `commercial` earns thirty
+times as much per tick, but placed by itself it has neither power nor workforce and decays
 while it earns, so its income stops. Spend the whole grant on things that cannot earn and
 the city has no way back — see "Running out of money" below.
 
@@ -107,11 +109,11 @@ and takes this section with it.
 
 ## Why your first city runs out of runway
 
-**The third residential block starts importing power.**
+**The first residential block starts importing power.**
 
-The city starts with free baseline capacity — 40 each of power, water, waste and
-traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
-to absorb 40 waste and 40 traffic.
+The city starts with free baseline capacity of 30 water, 40 waste disposal and 20 traffic,
+but **zero power**. The market keeps an unsupported house at 100% satisfaction by buying
+all 15 power it needs.
 
 Waste is the one bad that keeps a score. Whatever you emit past your absorption
 capacity stays in the ground as a **Landfill**, shown in the metrics panel, and it
@@ -121,13 +123,12 @@ which makes the exit from a waste spiral either an `industrial` block or fewer
 emitters. Traffic does not work this way: a jam clears at the tick boundary, and
 only waste accumulates.
 
-Labour and money have no free baseline; they arrive only once you build for them. A
-residential block draws `power 15`. Two blocks come to 30 and hold at full health forever.
-The third makes 45, so the city buys 5 power per tick. Three houses earn only 3: the
-treasury falls by 2 per tick even though every resource reads 100% supplied. Starting from
-the grant, that buffer lasts about 200 ticks; once it is gone, health begins to fall.
+Power, labour and money have no free baseline; they arrive only once you build for them or
+pay the market. One residential block draws `power 15` and earns 1, for a net treasury
+drain of 14 per tick. Two draw 30 and earn 2, draining 28. Satisfaction still reads 100%
+while those imports are affordable; once the treasury is gone, health begins to fall.
 
-Larger unsupported neighbourhoods exhaust the treasury faster, and seven houses already
+Larger unsupported neighbourhoods exhaust the treasury faster, and four houses already
 exceed the unpurchasable traffic baseline. Imports buy time and can make a deliberately
 import-dependent city viable, but they do not make capacity planning optional.
 
@@ -148,101 +149,79 @@ number that matters, because each node takes the worst of the resources it consu
 That lowest figure is exactly what the metrics' *Tightest* line reports, so it stays on
 screen with the legend collapsed.
 
-## Your second city
+## Your first durable city
 
-The cheapest city that earns anything is three blocks — one house, one park, one
-commercial, 75 in all, holding at full health and **+28 per tick** (see `park` in the
-reference below). Build that first. It is a useful staging point: its income can pay for
-some imports while you expand, but local infrastructure leaves a much larger margin.
+The useful four-block earner is one house, one power plant, one transit hub and one
+commercial block, 175 in all. The plant supplies power, while the market supplies ten water
+and six missing workers. Those commuters raise traffic demand from 18 to 24, but transit
+raises capacity from 20 to 80. Income 31 minus 5 plant upkeep, 4 transit upkeep, 10 water
+imports and 6 labour imports leaves **+6 per tick**. It is a good place to pause and save.
 
-Without imports, every possible fourth block overruns something:
+Without imports, every possible fourth block needs some additional local capacity:
 
 <!-- generated:opening_wall -->
 | add this to the earner | what overruns |
 |---|---|
-| `commercial` | labour 17/10 |
-| `industrial` | labour 21/10 |
-| `park` | water 56/40 |
-| `power_plant` | water 58/40 |
-| `residential` | power 52/40 |
-| `transit_hub` | power 45/40 |
-| `water_plant` | power 62/40 |
+| `commercial` | labour 19/5 |
+| `industrial` | labour 23/5 |
+| `park` | water 58/30 |
+| `power_plant` | labour 12/5 |
+| `residential` | water 52/30 |
+| `transit_hub` | labour 13/5 |
+| `water_plant` | labour 12/5 |
 <!-- /generated:opening_wall -->
 
-Three different walls, and none of them is money. The free baseline is already carrying 37
-of its 40 power and 38 of its 40 water, so five of the seven overrun one of those on the
-tick they go up. `commercial` and `industrial` overrun those too, but they run out of
-something scarcer first: one house and one park staff ten workers, of which the shop you
-already have takes eight, and a second shop wants another eight. The market now fills those
-gaps if the treasury can pay; the table tells you what that convenience will cost each tick.
-
-So the way forward is a power plant and a water plant. Those need *each other*: the power
-plant drinks 20 water, the water plant draws 25 power, and neither fits beside the earner.
-What is in the way is the shop. Its 22 power is exactly what leaves only 3 free — take it
-out and the house and park draw 15, leaving 25, which is the water plant's draw to the
-unit. Selling it is the import-free route; keeping it is faster, but makes the treasury pay
-for the temporary shortfall.
-
-That is why the second city is a *sequence* and not a next step, and why it goes up with
-nothing earning:
+The table is local demand against local plus baseline capacity; the market can cover power,
+water, disposal and labour shortages if the treasury can pay. Traffic remains a hard wall.
+The direct opening therefore builds transit before commerce, then lets that profitable core
+fund the remaining support chain:
 
 <!-- generated:opening -->
 | # | place | cost | spent so far | tightest resource | money |
 |---|---|---|---|---|---|
-| 1 | `residential` | 15 | 15 | power 15/40 | +1 |
-| 2 | `park` | 20 | 35 | water 30/40 | −2 |
-| 3 | `water_plant` | 70 | 105 | power 40/40 | −7 |
-| 4 | `power_plant` | 80 | 185 | waste 28/48 | −7 |
-| 5 | `residential` | 15 | 200 | waste 38/48 | −6 |
-| 6 | `park` | 20 | 220 | waste 38/56 | −9 |
-| 7 | `commercial` | 40 | 260 | waste 52/56 | +21 |
+| 1 | `residential` | 15 | 15 | power 15/15 | −14 |
+| 2 | `power_plant` | 80 | 95 | water 32/32 | −6 |
+| 3 | `transit_hub` | 40 | 135 | water 32/32 | −10 |
+| 4 | `commercial` | 40 | 175 | water 40/40 | +6 |
+| 5 | `water_plant` | 70 | 245 | waste 44/44 | +6 |
+| 6 | `residential` | 15 | 260 | waste 54/54 | +2 |
+| 7 | `park` | 20 | 280 | waste 54/54 | +9 |
+| 8 | `park` | 20 | 300 | waste 54/56 | +12 |
 
-Total 260, against an opening grant of 400. The finished city nets +21 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against supply, so `40/40` is at capacity and not over it.
+Total 300, against an opening grant of 400. The finished city nets +12 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
 
-Measured: starting cold from the grant, this holds at full health with up to **4 ticks (4 s) between placements**. Slower than that and the treasury empties mid-sequence.
+Measured: starting cold from the grant, this holds at full health with up to **6 ticks (6 s) between placements**. Slower than that and the treasury empties mid-sequence.
 <!-- /generated:opening -->
 
 Read the `tightest resource` column downwards and you can watch the binding constraint
-walk: power while the baseline is carrying everything, water once the park is in, power
-again at the knife-edge, then waste for the rest of the run. This is the same "the binding
-constraint moves rather than disappearing" from the section below, seen one block at a
-time.
+move: imported power for the first house, water through the commercial core, then waste
+disposal while the second house and parks arrive.
 
 Two things about that table are worth saying out loud.
 
-**The money column is negative for five stages, and that is fine.** Money is the one
-resource whose surplus survives a tick, and a shortfall it covers costs nothing — the
-treasury is what pays the plants' and parks' upkeep until the shop arrives to take over.
-What the grant buys you here is not blocks, it is the right to take your time.
+**The money column is negative for three stages, and that is fine.** It includes both upkeep
+and automatic purchases: step 1 is 1 income minus 15 imported power, step 2 adds the plant's
+5 upkeep and two imported water, and step 3 adds transit's 4. Commerce arrives next and
+reverses the flow to +6.
 
-**The shop goes last in the import-free sequence.** Putting it up earlier is now a valid
-shortcut when you have priced the automatic purchases and kept enough cash for the next
-construction.
+**Transit goes before the shop.** Without it, the house, plant and shop generate 18 ordinary
+traffic plus 4 commuter traffic against a baseline of 20. Transit turns that immediate
+shortfall into enough headroom for the commercial core and later growth.
 
 ### If you need longer between clicks
 
-The sequence above has a deadline only because the grant is finite — every stage is fully
-supplied, so nothing is decaying; the treasury is simply draining. Bank more first and the
-deadline goes away.
-
-You cannot bank it with the shop unbuilt, because nothing else earns. So do it the other
-way round: **build the three-block earner, let it run, then sell the shop.** Selling puts
-you back at step 2 of the table above — one house and one park — with a full treasury and
-the same five placements ahead of you. Demolition costs 10, which is the whole price of
-the detour.
+The only deadline is reaching commerce at step 4. Before then the first house imports power,
+then the power plant and transit hub run upkeep and water-import deficits. The measured
+6-tick spacing above is the safe limit from a cold start. Once the four-block core is
+running, waiting increases the treasury instead of consuming it.
 
 <!-- generated:opening_pace -->
-| time between placements | bank this much first |
-|---|---|
-| 10 ticks (10 s) | 600 |
-| 20 ticks (20 s) | 1000 |
-| 30 ticks (30 s) | 1200 |
-| 60 ticks (60 s) | 2000 |
+After step 4, the transit-backed commercial core earns +6 per tick. There is no extra savings target for slower play: waiting funds the remaining blocks.
 <!-- /generated:opening_pace -->
 
-Extra money can fund the other route, with the shop before the plants. Watch *Automatic
-purchases* as well as the block prices: the market charge repeats every tick, so a large
-treasury is runway rather than proof that the layout is sustainable.
+Until step 4, watch *Automatic purchases* as well as block prices: the market charge repeats
+every tick. After step 4, the core's +6 flow is what makes a large treasury sustainable
+rather than temporary runway.
 
 ## What a support set can carry
 
@@ -252,9 +231,9 @@ health:
 <!-- generated:capacities -->
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
-| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 1 | **7** | 13 | 0.54 |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 2 | **10** | 17 | 0.59 |
-| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 3 | **14** | 26 | 0.54 |
+| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 3 | **6** | 12 | 0.5 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 4 | **8** | 15 | 0.53 |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 5 | **11** | 23 | 0.48 |
 <!-- /generated:capacities -->
 
 These measured ceilings include sustainable market purchases where the support set's
@@ -263,14 +242,15 @@ income can pay for them. Two practical consequences:
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
 before its support starts an import bill on the very next tick. This is subordinate to
 housing, though: a producer placed on an empty grid must buy its staff until housing
-exists. See "Build a house first" above.
+exists, and those imported workers consume traffic capacity. See "Build a house first"
+above.
 
 **Place one node at a time and watch the panel.** Because the six resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
 fix one shortfall creates demand elsewhere. The binding constraint moves rather than
 disappearing.
 
-Those capacity figures include the one-off baseline 40, so a district that works is not
+Those capacity figures include the one-off baselines, so a district that works is not
 automatically tileable: the second copy has no baseline of its own. As the city grows
 the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 transit hubs : 2
 commercial per 12 residential**. Commercial belongs in that ratio now, not as an
@@ -292,7 +272,8 @@ minimum is where the whole economy, including that market bill, remains sustaina
 The treasury is now a direct rescue resource. Before placing anything, read *Automatic
 purchases*: if the city can afford every power, water, disposal and labour shortfall, those
 imports immediately count toward satisfaction and can let dead blocks regenerate. Traffic
-is the exception; reduce traffic demand or add transit capacity.
+is the exception; imported labour makes it worse, so reduce traffic demand, replace the
+commuters with local workers, or add transit capacity.
 
 Three rescue routes remain useful:
 
@@ -396,19 +377,15 @@ The landfill route is the odd one out: it can restart the clock without healing 
 If a demolition cuts emissions below disposal capacity, the backlog begins draining and
 the city is no longer at a fixpoint even while every block remains at zero. Buying enough
 disposal has the same effect and may clear the landfill immediately; buying only part can
-turn growth into drainage. Short of one of those routes, the rest of the city is free to
-stay dead forever. Houses crowding
-tear one house out of three and the remaining two are supplied and heal, tear one out of
-five and the remaining four are still over the line and nothing moves. It is not the only
-case: three dead houses beside one dead transit hub are stalled the same way, and
-demolishing a house is still the fix, even though the transit hub is untouched — measured,
-the two houses left recover to 100 health within 100 ticks while the transit hub, short of
-labour and money, neither of which has a free baseline, sits at zero forever.
+turn growth into drainage.
 
-Not every dead-looking city is stalled. One or two houses alone recover from zero health
-with an empty treasury: each draws 15 power against the free baseline of 40, so at `15n ≤
-40` they are fully supplied even while dead, and they regenerate. Three do not — 45 against
-40 — and that is the cliff.
+With no free power, an unfunded dead house has no self-healing exception: even one is
+stalled at zero. Money in the bank can change that calculation because market purchases
+count as supply. For example, cutting four dead houses to three costs 10 and leaves demand
+for 45 imported power; if that money remains, traffic is also back under its 20 baseline
+and the clock restarts. That may buy only one
+tick rather than a recovery — if the treasury empties while the city still has no local
+power, it can stall again.
 
 **Game over** is the case where the treasury can never rise again, so no command will ever be
 affordable. The cheapest thing you can do is demolish, at 10, and the cheapest thing you can
@@ -421,15 +398,15 @@ therefore zero, so the balance cannot move. Nothing in the city can change on it
 **Locked** is the second, and it does not look like death at all. If your upkeep is higher
 than the most your city could *ever* earn — every block at 100 health — then the treasury
 drains to zero and stays there however long you wait, because upkeep is not scaled by health
-and income is. The smallest example is one house and one park: the park costs 3 a tick, the
-house earns 1, and the house is fully supplied inside the free baseline so it holds 100 health
-forever. Measured, that city is unchanged after 2,000 ticks — a healthy-looking house, a dead
-park, an empty treasury, and nothing you can click. The banner calls this **City locked**
-rather than dead, because the house really is alive; what has died is your ability to act.
+and income is. The smallest stable example is one house, one power plant and one water
+plant: local infrastructure covers every physical resource, but the two plants cost 10 a
+tick against a maximum income of 1. At an empty treasury all three remain healthy forever
+and nothing can be clicked. The banner calls this **City locked** rather than dead, because
+the house really is alive; what has died is your ability to act.
 
 The word for the underlying condition is **insolvent**, and it is the same one used above for a
 support set with no commercial block. Insolvency on its own is not a crisis — the documented
-opening sequence is insolvent for five of its seven stages, which is exactly what the grant is
+opening sequence is insolvent at its second and third stages, which is exactly what the grant is
 for. It becomes fatal only when the treasury can no longer buy the way out.
 
 So the game warns you first. While a city is insolvent and the fix is slipping out of reach,
@@ -456,7 +433,7 @@ Available with no infrastructure placed at all.
 <!-- generated:baseline -->
 | power | water | waste | traffic | labour | money |
 |---|---|---|---|---|---|
-| 40 | 40 | 40 | 40 | 0 | 0 |
+| 0 | 30 | 40 | 20 | 0 | 0 |
 <!-- /generated:baseline -->
 
 ### Per-block effect, scaled by health
@@ -490,7 +467,7 @@ behind every death spiral: a dying block draws its full power and emits its full
 | `commercial` | -22 | -8 | +14 | +9 | -8 | — |
 | `industrial` | -40 | -25 | — | +8 | -12 | — |
 | `park` | — | -18 | — | +2 | -1 | -3 |
-| `power_plant` | — | -20 | +12 | +3 | -1 | — |
+| `power_plant` | — | -20 | +12 | +3 | -1 | -5 |
 | `residential` | -15 | -12 | +10 | +6 | — | — |
 | `transit_hub` | -8 | — | +2 | — | -2 | -4 |
 | `water_plant` | -25 | — | +6 | +2 | -1 | -5 |
@@ -508,26 +485,28 @@ buys 4 — while a house adds 5 and consumes none for 15. Parks win on the resou
 also fix, not on labour per coin. And past the cap the price is worse than wasted: 20 to
 *lose* you a worker.
 
-Parks are thirsty, and that is what bounds them. On the free baseline's 40 water exactly
-one park fits — and it needs a house to staff it and a commercial block to cover its
-upkeep, so the smallest city with a park in it is three blocks. Measured: water 38/40,
-income +28 per tick, stable indefinitely. A second park needs a water plant, which needs
-power. A neglected park is worse than none: amenity is scaled by health, its staffing and
-water draw are not, so a dead park amplifies nothing while still costing everything.
+Parks are thirsty, and that is what bounds them. On the free baseline's 30 water, one park
+and one house land exactly at 30 — but without generation their imported power and the
+park's upkeep still drain the treasury. Adding commerce raises water demand to 38, so the
+market buys eight water until a water plant arrives. A second park raises that trio to 56
+water and makes local treatment urgent. A neglected park is worse than none: amenity is
+scaled by health, its staffing and water draw are not, so a dead park amplifies nothing
+while still costing everything.
 
 ### Automatic market purchases
 
-| resource | price per unit | purchasable |
-|---|---:|---|
-| power | 1 money | yes |
-| water | 1 money | yes |
-| waste disposal | 1 money | yes |
-| labour | 1 money | yes |
-| traffic | — | no |
+| resource | price per unit | purchasable | side effect |
+|---|---:|---|---|
+| power | 1 money | yes | — |
+| water | 1 money | yes | — |
+| waste disposal | 1 money | yes | — |
+| labour | 1 money | yes | +1 traffic per unit |
+| traffic | — | no | — |
 
 Net upkeep is reserved before imports. If the remaining treasury cannot cover every
 eligible shortage, the same percentage of each is purchased. Money earned during a tick
-becomes available for imports on the following tick.
+becomes available for imports on the following tick. Commuter traffic is based on labour
+actually purchased, not the unfunded portion of a labour shortage, and clears each tick.
 
 ### What each type costs
 

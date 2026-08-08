@@ -175,12 +175,14 @@ release rather than merely labelling it.
 
 ## Actually playing it
 
-Your first city will almost certainly find the quiet way to lose: baseline capacity
-supports exactly **two** residential blocks, and the third starts buying 5 power per tick.
-The city stays healthy while the treasury slowly drains.
+Your first city will almost certainly find the quiet way to lose: there is no free power,
+so even the first residential block buys 15 power per tick. It earns only 1, and therefore
+stays healthy by quietly draining the opening treasury until you build generation. A power
+plant stops those imports but has its own recurring operating cost of 5 per tick.
 
-The slow one is insolvency. Four resources have a free baseline of 40; labour and
-money have none, and a city opens with a one-off 400 in the treasury. A support set
+The slow one is insolvency. Water has a free baseline of 30, waste disposal has 40, while
+traffic starts at 20; power, labour and money have none, and a city opens with a one-off
+400 in the treasury. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
 the whole game while every other resource reads 100% satisfied — commercial is part
 of the ratio, not an optional extra.
@@ -188,7 +190,8 @@ of the ratio, not an optional extra.
 Upkeep is not the only call on the treasury: placing a block charges its price (15 for
 a house, up to 80 for a power plant) and demolishing charges a flat 10, and either
 gesture is refused outright when the balance will not cover it. Below 10, neither is
-possible at all.
+possible at all. Imported labour also adds one unit of unpurchasable traffic demand per
+worker, so market staffing can turn a labour solution into a congestion problem.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and

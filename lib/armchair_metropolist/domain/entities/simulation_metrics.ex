@@ -54,6 +54,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           money: float(),
           waste_stock: float(),
           market_spend: float(),
+          imported_labour_traffic: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
           amenity_labour: float(),
@@ -105,6 +106,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     amenity_marginal_labour: 0.0,
     amenity_labour: 0.0,
     market_spend: 0.0,
+    imported_labour_traffic: 0.0,
     stalled: false,
     money_ceiling: 0.0,
     insolvent: false,
@@ -121,6 +123,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             money: 0.0,
             waste_stock: 0.0,
             market_spend: 0.0,
+            imported_labour_traffic: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
             amenity_labour: 0.0,
@@ -149,9 +152,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   travel this way rather than being derived here even though the first two look local: it is
   computed by projecting the city forward with `advance_tick/2`.
 
-  `:market_spend` is the money those automatic purchases consume this tick.
+  `:market_spend` is the money those automatic purchases consume this tick, and
+  `:imported_labour_traffic` is the commuter demand created by the labour portion.
 
-  All nine are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  All ten are computed by `Domain.Services.SimulationCalculator`, which this module cannot
   call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
   here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
@@ -172,6 +176,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       money: city_map.money,
       waste_stock: city_map.waste_stock,
       market_spend: Map.fetch!(derived, :market_spend),
+      imported_labour_traffic: Map.fetch!(derived, :imported_labour_traffic),
       amenity: Map.fetch!(derived, :amenity),
       amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
       amenity_labour: Map.fetch!(derived, :amenity_labour),

@@ -615,7 +615,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   defp critical_resources(metrics) do
     metrics.resources
     |> Enum.filter(fn {_resource, stats} -> stats.satisfaction < @critical_satisfaction end)
-    |> Enum.sort_by(fn {_resource, stats} -> stats.satisfaction end)
+    # Power and labour can now land on the same satisfaction. Include the resource name
+    # so notification order does not depend on the map's enumeration order.
+    |> Enum.sort_by(fn {resource, stats} -> {stats.satisfaction, resource} end)
   end
 
   defp notify(resources) do

@@ -23,19 +23,19 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   defp dead_houses(count), do: %{houses(count, 0.0) | money: 0.0}
 
-  # Two residential blocks are sustainable on baseline capacity alone
-  # (spec 4.2): power 30 <= 40, water 24 <= 40, waste 20 <= 40, traffic 12 <= 40.
-  defp sustainable_city do
+  # Two residential blocks fit inside the remaining water, waste and traffic baselines.
+  # Their 30 power is imported while the treasury can pay.
+  defp two_houses do
     map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
   end
 
   # A city where water is only *slightly* short, so the resulting decay is
   # fractional and stays inside a single rounded health value.
   #
-  #   power    supply 40 + 120*0.900 = 148.0   demand 25 + 15 = 40.0        -> 1.0
-  #   water    supply 40 + 100*0.417 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
+  #   power    supply 120*0.900 = 108.0        demand 25 + 15 = 40.0        -> 1.0
+  #   water    supply 30 + 100*0.517 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
   #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6 + 10 = 28.0    -> 1.0
-  #   traffic  supply 40             =  40.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
+  #   traffic  supply 20             =  20.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
   #   labour   supply 1*5.0 * 2.0    =  10.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
   #
   # The ×2.0 on labour is the park amenity at its cap: 3 parks to 1 residential is a ratio
@@ -48,12 +48,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # (2026-08-05) this city draws 5 labour, and without a house to supply it labour
   # satisfaction is 0.0 and *both* plants take the full 6.0 decay — which destroys the
   # sub-rounding movement this fixture exists to produce. Its water draw of 12 is why the
-  # water plant sits at 41.7 rather than 30.3: water demand is 86.0 now, and 0.95 of that
-  # is 81.7 = 40 baseline + 41.7 health-scaled.
+  # water plant sits at 51.7 rather than 40.3: water demand is 86.0 now, and 0.95 of that
+  # is 81.7 = 30 baseline + 51.7 health-scaled.
   #
   # Money is absent from the table because it is not meant to bind: demand is the water
-  # plant's 5 plus 3 per park = 14, against a supply of 1 from the residential block.
-  # The fixture carries exactly 13, covering upkeep while leaving no budget to buy away
+  # plants' 5 each plus 3 per park = 19, against a supply of 1 from the residential block.
+  # The fixture carries exactly 18, covering upkeep while leaving no budget to buy away
   # the water shortfall this test needs.
   #
   # The power plant consumes water/waste/traffic/labour, so its worst ratio is exactly
@@ -62,31 +62,31 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # display signature does not move.
   #
   # The water plant sits at "0:0" and the power plant at "1:0" deliberately. Maps iterate
-  # in key order, so the water plant -- which regenerates from 41.7 to 42.7 this tick --
+  # in key order, so the water plant -- which regenerates from 51.7 to 52.7 this tick --
   # is processed first. An implementation that recomputed resource stats per node would
   # then hand the power plant a water supply of 82.7 (satisfaction 0.9616, health 89.77)
   # instead of 81.7.
   defp sub_rounding_city do
     %{
       map_with([
-        %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
+        %Node{Node.new(0, 0, :water_plant) | health: 51.7, status: :degraded},
         %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
         Node.new(0, 3, :park),
         Node.new(1, 3, :park),
         Node.new(2, 3, :park),
         Node.new(5, 5, :residential)
       ])
-      | money: 13.0
+      | money: 18.0
     }
   end
 
   describe "baseline_capacity/0" do
-    test "supplies 40 of every resource except labour and money, which have no free supply" do
+    test "supplies 30 water, 40 waste and 20 traffic, with no free power, labour or money" do
       assert Calc.baseline_capacity() == %{
-               power: 40.0,
-               water: 40.0,
+               power: 0.0,
+               water: 30.0,
                waste: 40.0,
-               traffic: 40.0,
+               traffic: 20.0,
                labour: 0.0,
                money: 0.0
              }
@@ -102,11 +102,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   describe "resource_stats/1" do
     test "power, water, traffic and labour carry nothing" do
-      stats = Calc.resource_stats(sustainable_city())
+      stats = Calc.resource_stats(two_houses())
       # Asserted explicitly so that folding the balance back into `supplied` later
       # cannot pass silently. Waste is excluded from this list — it is in
       # `@carryover` now, alongside money, and gets its own assertion below,
-      # because `sustainable_city/0` has `waste_stock == 0.0` and `-0.0 == 0.0`,
+      # because `two_houses/0` has `waste_stock == 0.0` and `-0.0 == 0.0`,
       # which would let this loop pass for waste whether or not it still carries.
       for resource <- [:power, :water, :traffic, :labour] do
         assert Map.fetch!(stats, resource).carried == 0.0
@@ -118,24 +118,24 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # able to fail. `carried_balance/2` returns `-city_map.waste_stock`, so a
       # mutation that dropped waste back out of `@carryover`, or one that carried
       # it unnegated, would both show up here.
-      stats = Calc.resource_stats(%{sustainable_city() | waste_stock: 42.0})
+      stats = Calc.resource_stats(%{two_houses() | waste_stock: 42.0})
       assert stats.waste.carried == -42.0
     end
 
     test "satisfaction is capped at 1.0 on surplus" do
-      stats = Calc.resource_stats(sustainable_city())
-      assert stats.power.satisfaction == 1.0
-      assert stats.power.deficit == 0.0
+      stats = Calc.resource_stats(two_houses())
+      assert stats.water.satisfaction == 1.0
+      assert stats.water.deficit == 0.0
     end
 
     test "satisfaction is the ratio on shortfall, and deficit is the gap" do
-      # Four residential: power demand 60 vs baseline supply 40.
+      # Four residential: power demand 60 with no free supply or treasury.
       map = %{map_with(for x <- 0..3, do: Node.new(x, 0, :residential)) | money: 0.0}
       stats = Calc.resource_stats(map)
-      assert_in_delta stats.power.supplied, 40.0, 0.001
+      assert stats.power.supplied == 0.0
       assert_in_delta stats.power.demanded, 60.0, 0.001
-      assert_in_delta stats.power.deficit, 20.0, 0.001
-      assert_in_delta stats.power.satisfaction, 40.0 / 60.0, 0.001
+      assert_in_delta stats.power.deficit, 60.0, 0.001
+      assert stats.power.satisfaction == 0.0
     end
 
     test "satisfaction is 1.0 when nothing demands the resource" do
@@ -146,7 +146,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     test "includes baseline capacity in supply" do
       stats = Calc.resource_stats(CityMap.new(40, 30))
-      assert_in_delta stats.power.supplied, 40.0, 0.001
+      assert_in_delta stats.water.supplied, 30.0, 0.001
     end
 
     test "a node's capacity scales with health but load does not" do
@@ -156,8 +156,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       healthy = map_with([%Node{Node.new(0, 0, :power_plant) | health: 100.0}])
       broken = map_with([%Node{Node.new(0, 0, :power_plant) | health: 50.0}])
 
-      assert_in_delta Calc.resource_stats(healthy).power.supplied, 160.0, 0.001
-      assert_in_delta Calc.resource_stats(broken).power.supplied, 100.0, 0.001
+      assert_in_delta Calc.resource_stats(healthy).power.supplied, 120.0, 0.001
+      assert_in_delta Calc.resource_stats(broken).power.supplied, 60.0, 0.001
 
       # A power plant consumes water 20 regardless of its own condition.
       assert_in_delta Calc.resource_stats(healthy).water.demanded, 20.0, 0.001
@@ -182,24 +182,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "enough housing staffs the industry and stops the decay" do
-      # 3 residential supply 15 labour against a demand of 14: the industrial block's
-      # 12, plus 1 each for the power and water plants below. The margin is deliberate
-      # slack — there is no residential count that makes this exact, because housing
-      # comes in units of 5.
+      # 4 residential supply 20 labour against a demand of 17: the industrial block's
+      # 12, plus 1 for the water plant, 2 for the power plants and 2 for transit. The
+      # margin is deliberate slack — there is no residential count that makes this exact,
+      # because housing comes in units of 5.
       #
-      # A bare industrial block plus 3 residential also draws more power and
-      # water than baseline alone covers (industrial 40 + 3*15 = 85 power vs.
-      # 40 baseline; industrial 25 + 3*12 = 61 water vs. 40 baseline) --
+      # A bare industrial block plus 4 residential also draws more power and
+      # water than baseline alone covers (industrial 40 + 4*15 = 100 power vs.
+      # no free power; industrial 25 + 4*12 = 73 water vs. 40 baseline) --
       # unrelated to labour, but enough to starve and decay the block anyway.
-      # A power plant and water plant close those gaps so labour is the only
-      # thing this fixture is testing; traffic and waste already clear
-      # baseline without help.
+      # Two power plants and a water plant close those gaps; transit closes the lower
+      # traffic baseline, so labour is the only thing this fixture is testing.
       map =
         map_with([
           Node.new(0, 0, :industrial),
           Node.new(0, 2, :power_plant),
-          Node.new(1, 2, :water_plant)
-          | for(x <- 1..3, do: Node.new(x, 0, :residential))
+          Node.new(1, 2, :water_plant),
+          Node.new(2, 2, :power_plant),
+          Node.new(3, 2, :transit_hub)
+          | for(x <- 1..4, do: Node.new(x, 0, :residential))
         ])
 
       stats = Calc.resource_stats(map)
@@ -208,8 +209,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # zero demand as automatically satisfied, so a mutated industrial labour
       # demand of 0.0 would still report satisfaction 1.0 here unless demanded
       # is checked directly.
-      assert stats.labour.demanded == 14.0
-      assert stats.labour.supplied == 15.0
+      assert stats.labour.demanded == 17.0
+      assert stats.labour.supplied == 20.0
       assert stats.labour.satisfaction == 1.0
 
       {advanced, _delta} = Calc.advance_tick(map)
@@ -234,8 +235,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "flow_satisfaction equals satisfaction for every flow resource" do
-      # Four residential: power demand 60 vs baseline supply 40, so power is
-      # genuinely short. Every flow resource carries 0.0, so the two figures have
+      # Four residential: power demand 60 with no free supply, so power is genuinely
+      # short. Every flow resource carries 0.0, so the two figures have
       # no basis on which to differ.
       map = %{map_with(for x <- 0..3, do: Node.new(x, 0, :residential)) | money: 0.0}
       stats = Calc.resource_stats(map)
@@ -275,6 +276,19 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.resource_stats(after_place).money.demanded == 6.0
     end
 
+    test "a power plant charges recurring money upkeep" do
+      city = %{
+        map_with([Node.new(0, 0, :power_plant), Node.new(1, 0, :residential)])
+        | money: 10.0
+      }
+
+      assert Calc.resource_stats(city).money.demanded == 5.0
+
+      {next, _delta} = Calc.advance_tick(city)
+      # The two-block city also buys the two water above the new baseline.
+      assert next.money == 4.0
+    end
+
     test "the market covers power, water, waste disposal and labour, but not traffic" do
       city = %{
         map_with(for(x <- 0..9, do: Node.new(x, 0, :commercial)))
@@ -284,8 +298,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       stats = Calc.resource_stats(city)
 
       assert Calc.market_prices() == %{power: 1.0, water: 1.0, waste: 1.0, labour: 1.0}
-      assert stats.power.purchased == 180.0
-      assert stats.water.purchased == 40.0
+      assert Calc.imported_labour_traffic_per_unit() == 1.0
+      assert stats.power.purchased == 220.0
+      assert stats.water.purchased == 50.0
       assert stats.waste.purchased == 100.0
       assert stats.labour.purchased == 80.0
       assert stats.traffic.purchased == 0.0
@@ -295,11 +310,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
         assert Map.fetch!(stats, resource).satisfaction == 1.0
       end
 
-      assert_in_delta stats.traffic.satisfaction, 40.0 / 90.0, 0.001
-      assert Calc.metrics(city).market_spend == 400.0
+      # The 80 imported workers add 80 commuter trips to the blocks' own 90 traffic.
+      assert stats.traffic.demanded == 170.0
+      assert stats.traffic.deficit == 150.0
+      assert_in_delta stats.traffic.satisfaction, 20.0 / 170.0, 0.001
+      assert Calc.metrics(city).market_spend == 450.0
 
       {next, _delta} = Calc.advance_tick(city)
-      assert next.money == 900.0
+      assert next.money == 850.0
       assert next.waste_stock == 0.0
     end
 
@@ -311,15 +329,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       stats = Calc.resource_stats(city)
 
-      # The four shortages cost 400 in total, so a treasury of 200 buys half of each.
-      assert stats.power.purchased == 90.0
-      assert stats.water.purchased == 20.0
-      assert stats.waste.purchased == 50.0
-      assert stats.labour.purchased == 40.0
-      assert stats.power.deficit == 90.0
-      assert stats.water.deficit == 20.0
-      assert stats.waste.deficit == 50.0
-      assert stats.labour.deficit == 40.0
+      # The four shortages cost 450 in total, so a treasury of 200 buys 4/9 of each.
+      assert_in_delta stats.power.purchased, 880.0 / 9.0, 0.001
+      assert_in_delta stats.water.purchased, 200.0 / 9.0, 0.001
+      assert_in_delta stats.waste.purchased, 400.0 / 9.0, 0.001
+      assert_in_delta stats.labour.purchased, 320.0 / 9.0, 0.001
+      assert_in_delta stats.power.deficit, 1_100.0 / 9.0, 0.001
+      assert_in_delta stats.water.deficit, 250.0 / 9.0, 0.001
+      assert_in_delta stats.waste.deficit, 500.0 / 9.0, 0.001
+      assert_in_delta stats.labour.deficit, 400.0 / 9.0, 0.001
+      assert_in_delta stats.traffic.demanded, 90.0 + 320.0 / 9.0, 0.001
+    end
+
+    test "only labour actually purchased adds commuter traffic" do
+      plant = map_with([Node.new(0, 0, :power_plant)])
+
+      funded = Calc.resource_stats(%{plant | money: 10.0})
+      assert funded.labour.purchased == 1.0
+      assert funded.traffic.demanded == 4.0
+
+      unfunded = Calc.resource_stats(%{plant | money: 0.0})
+      assert unfunded.labour.purchased == 0.0
+      assert unfunded.traffic.demanded == 3.0
     end
 
     test "net upkeep is reserved before the treasury buys a shortage" do
@@ -337,7 +368,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       city = %{map_with(for(x <- 0..3, do: Node.new(x, 0, :residential))) | money: 0.0}
 
       stats = Calc.resource_stats(city)
-      assert stats.power.deficit == 20.0
+      assert stats.power.deficit == 60.0
       assert stats.power.purchased == 0.0
 
       {next, _delta} = Calc.advance_tick(city)
@@ -488,16 +519,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert map.tick == 1
     end
 
-    test "an untouched city keeps its balance across a tick" do
-      {advanced, _delta} = Calc.advance_tick(sustainable_city())
-      # Two residential produce money now (1.0 each) and consume none, so the
-      # grant grows rather than staying put.
-      #
-      # Written as grant + 2.0 rather than as the sum. The literal was 152.0, which is
-      # the grant *derived* — a search for the grant's own value does not find it, and
-      # it is what broke when the grant moved from 150 to 400. The income is the claim
-      # here; the starting balance is incidental.
-      assert advanced.money == CityMap.opening_grant() + 2.0
+    test "a small city buys the power no baseline supplies" do
+      city = two_houses()
+      assert Calc.resource_stats(city).power.purchased == 30.0
+
+      {advanced, _delta} = Calc.advance_tick(city)
+      assert advanced.money == CityMap.opening_grant() + 2.0 - 30.0
     end
 
     test "an unpayable upkeep starves the consumer once the treasury is empty" do
@@ -517,10 +544,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
     test "surplus income accumulates in the treasury" do
       # One commercial (+30) and one park (-3), starting from a known balance. With no
-      # housing, the market also buys the 9 missing labour this tick.
+      # housing, the market buys 22 power and 9 labour this tick.
       map = %{map_with([Node.new(0, 0, :commercial), Node.new(1, 0, :park)]) | money: 100.0}
       {advanced, _delta} = Calc.advance_tick(map)
-      assert_in_delta advanced.money, 118.0, 0.001
+      assert_in_delta advanced.money, 96.0, 0.001
     end
 
     test "regenerates by 1.0 when fully supplied" do
@@ -529,16 +556,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta CityMap.get_node(map, 0, 0).health, 51.0, 0.001
     end
 
-    test "decays proportionally to the unmet fraction" do
-      # 4 residential: power satisfaction 40/60 = 0.6667, worst across
-      # resources. delta = -(1 - 0.6667) * 6.0 = -2.0
+    test "decays at the full rate when unfunded power has no baseline" do
       map = %{map_with(for x <- 0..3, do: Node.new(x, 0, :residential)) | money: 0.0}
       {map, _} = Calc.advance_tick(map)
-      assert_in_delta CityMap.get_node(map, 0, 0).health, 98.0, 0.01
+      assert_in_delta CityMap.get_node(map, 0, 0).health, 94.0, 0.01
     end
 
     test "clamps at 100.0 and never exceeds it" do
-      map = sustainable_city()
+      map = two_houses()
       {map, _} = Calc.advance_tick(map)
       assert CityMap.get_node(map, 0, 0).health == 100.0
     end
@@ -563,9 +588,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # the labour instead.
       park = %Node{Node.new(0, 0, :park) | health: 80.0, status: :online}
       power_hogs = for x <- 1..10, do: Node.new(x, 1, :residential)
-      # Add water and traffic capacity so only power is short.
-      supply = [Node.new(0, 5, :water_plant), Node.new(1, 5, :transit_hub)]
-      map = %{map_with([park | power_hogs] ++ supply) | money: 2.0}
+      # Add water and traffic capacity so only power is short. The second water plant is
+      # needed now that the baseline is 30; the treasury covers its additional upkeep.
+      supply = [
+        Node.new(0, 5, :water_plant),
+        Node.new(1, 5, :water_plant),
+        Node.new(2, 5, :transit_hub)
+      ]
+
+      map = %{map_with([park | power_hogs] ++ supply) | money: 7.0}
 
       stats = Calc.resource_stats(map)
       assert stats.power.satisfaction < 1.0, "test setup should starve power"
@@ -588,7 +619,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # Insertion order must not matter: every node within a tick has to see
       # the same city-wide conditions.
       nodes = [
-        %Node{Node.new(0, 0, :water_plant) | health: 41.7, status: :degraded},
+        %Node{Node.new(0, 0, :water_plant) | health: 51.7, status: :degraded},
         %Node{Node.new(1, 0, :power_plant) | health: 90.0, status: :online},
         Node.new(0, 3, :park),
         Node.new(1, 3, :park),
@@ -596,21 +627,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
         Node.new(5, 5, :residential)
       ]
 
-      {forward, _} = Calc.advance_tick(%{map_with(nodes) | money: 13.0})
-      {reverse, _} = Calc.advance_tick(%{map_with(Enum.reverse(nodes)) | money: 13.0})
+      {forward, _} = Calc.advance_tick(%{map_with(nodes) | money: 18.0})
+      {reverse, _} = Calc.advance_tick(%{map_with(Enum.reverse(nodes)) | money: 18.0})
       assert forward.nodes == reverse.nodes
 
       # And the figures must come from the *pre-tick* map. The water plant is
-      # iterated before the power plant and regenerates 41.7 -> 42.7 on this
+      # iterated before the power plant and regenerates 51.7 -> 52.7 on this
       # tick. Recomputing stats per node would give the power plant water
       # supply 82.7 (satisfaction 0.9616, delta -0.230, health 89.77) rather
       # than the pre-tick 81.7 (satisfaction 0.95, delta -0.30, health 89.7).
-      assert_in_delta CityMap.get_node(forward, 0, 0).health, 42.7, 0.001
+      assert_in_delta CityMap.get_node(forward, 0, 0).health, 52.7, 0.001
       assert_in_delta CityMap.get_node(forward, 1, 0).health, 89.7, 0.001
     end
 
     test "cascading failure: a failing plant drags the city down with it" do
-      # One power plant supporting more load than baseline can carry.
+      # One damaged power plant supporting a large consumer load.
       plant = %Node{Node.new(0, 0, :power_plant) | health: 30.0, status: :degraded}
       consumers = for x <- 1..8, do: Node.new(x, 0, :residential)
 
@@ -646,16 +677,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # Both nodes sit at 100.0 with full satisfaction, so health is clamped
       # and no display signature changes. This is the payoff of comparing
       # display state rather than raw structs.
-      {_map, delta} = Calc.advance_tick(sustainable_city())
+      {_map, delta} = Calc.advance_tick(two_houses())
       assert delta == %{}
     end
 
     test "a starved city emits only the starved nodes" do
       starving = for x <- 0..3, do: Node.new(x, 0, :residential)
-      # A park is insulated from the power shortage and should stay out.
+      # A park is insulated from the power shortage and should stay out. Transit keeps
+      # traffic supplied under the lower baseline; the treasury exactly covers upkeep.
       map = %{
-        map_with([Node.new(0, 9, :park), Node.new(1, 9, :water_plant) | starving])
-        | money: 4.0
+        map_with([
+          Node.new(0, 9, :park),
+          Node.new(1, 9, :water_plant),
+          Node.new(2, 9, :transit_hub)
+          | starving
+        ])
+        | money: 8.0
       }
 
       {_map, delta} = Calc.advance_tick(map)
@@ -669,20 +706,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # display value must not enter the delta. A naive struct comparison
       # would include it and emit a full-grid delta every tick.
       #
-      # Constructed via partial starvation so the decay is fractional.
-      # 5 residential: power demand 75 vs baseline supply 40,
-      # satisfaction 0.5333, delta = -(1 - 0.5333) * 6.0 = -2.8
-      # A node at 90.4 goes to 87.6: round 90 -> 88, which DOES change.
-      # So instead pick a starting health where the post-tick value rounds
-      # identically. With decay -2.8, no single tick can round-trip; the
-      # sub-rounding case therefore needs a gentler deficit.
-      #
-      # 5 residential + 1 power plant: power supply 40 + 120 = 160,
-      # demand 75 + 0 = 75 -> power satisfied. Waste: supply 40,
-      # demand 5*10 + 12 = 62, satisfaction 0.6452,
-      # delta = -(1 - 0.6452) * 6.0 = -2.13. Still integral-crossing.
-      #
-      # Rather than contort the fixture, assert the property directly on
+      # Assert the display-signature property directly, then exercise it through a
+      # genuine sub-rounding tick below.
       # display_signature/1, which is what the delta membership rule uses.
       a = %Node{Node.new(0, 0, :residential) | health: 87.6, status: :online}
       b = %Node{a | health: 87.9}
@@ -692,7 +717,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       # And prove the rule is actually what advance_tick/1 applies: a city
       # already clamped at 100.0 with full supply changes no signature.
-      {_map, delta} = Calc.advance_tick(sustainable_city())
+      {_map, delta} = Calc.advance_tick(two_houses())
       assert delta == %{}
 
       # A genuine sub-rounding tick, which the note above thought too awkward
@@ -716,7 +741,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       refute Map.has_key?(delta, "1:0"),
              "sub-rounding health movement must be excluded from the delta"
 
-      # The water plant crosses a rounding boundary (41.7 -> 42.7) in the same
+      # The water plant crosses a rounding boundary (51.7 -> 52.7) in the same
       # tick, so the delta is not trivially empty and the exclusion above is
       # a real filter rather than a no-op.
       assert Map.has_key?(delta, "0:0")
@@ -729,8 +754,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # signature moves — and that alone must put it in the delta.
       #
       # Fixture arithmetic. Water demand is the plant's 20, 3 parks at 18, and the
-      # residential block's 12 = 86; supply is the 40 baseline plus the water plant's
-      # health-scaled output. A water plant at 34.5333 gives 74.5333/86 = 0.86667
+      # residential block's 12 = 86; supply is the 30 baseline plus the water plant's
+      # health-scaled output. A water plant at 44.5333 gives 74.5333/86 = 0.86667
       # satisfaction, so the power plant's delta is -(1 - 0.86667) * 6.0 = -0.8, taking
       # 60.4 to 59.6. Waste, traffic and labour stay fully satisfied, so water is
       # genuinely its worst — the residential block is what keeps labour at 1.0, since
@@ -738,13 +763,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       map = %{
         map_with([
           %Node{Node.new(1, 0, :power_plant) | health: 60.4, status: :online},
-          %Node{Node.new(0, 0, :water_plant) | health: 34.5333, status: :degraded},
+          %Node{Node.new(0, 0, :water_plant) | health: 44.5333, status: :degraded},
           Node.new(0, 3, :park),
           Node.new(1, 3, :park),
           Node.new(2, 3, :park),
           Node.new(5, 5, :residential)
         ])
-        | money: 13.0
+        | money: 18.0
       }
 
       before = CityMap.get_node(map, 1, 0)
@@ -770,7 +795,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   describe "metrics/1" do
     test "reports tick, counts and resource stats together" do
-      city = sustainable_city()
+      city = two_houses()
       metrics = Calc.metrics(%{city | tick: 4})
       assert metrics.tick == 4
       assert metrics.node_count == 2
@@ -786,20 +811,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       refute Calc.metrics(CityMap.new(40, 30)).stalled
     end
 
-    test "two dead houses are not stalled — they heal from an empty treasury" do
-      # 15 x 2 = 30 power against the free baseline of 40, so they are fully supplied
-      # and regenerate. Load is not health-scaled, which is what makes the
-      # count the deciding factor.
-      refute Calc.metrics(dead_houses(2)).stalled
+    test "funded dead houses are not stalled because they can import power" do
+      city = %{dead_houses(2) | money: 30.0}
+      refute Calc.metrics(city).stalled
+
+      {next, _delta} = Calc.advance_tick(city)
+      assert next.nodes["0:0"].health == 1.0
     end
 
-    test "three dead houses are stalled" do
-      # 15 x 3 = 45 against 40. The cliff is 15n <= 40.
+    test "an unfunded dead city is stalled with no free power" do
       assert Calc.metrics(dead_houses(3)).stalled
     end
 
     test "three starving houses above zero health are not stalled" do
-      # Starving (45 power demanded against 40) but not yet at the floor, so they are
+      # Starving on power but not yet at the floor, so they are
       # still losing health rather than stuck. This is what separates `health == 0.0`
       # from a status- or threshold-based reading; without it, relaxing the clause to
       # `health < 20.0` would go unnoticed.
@@ -950,20 +975,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "counts the ticks until the escape stops being affordable" do
-      # One house, one park: ceiling 1 against upkeep 3, so the treasury loses 2 a tick and
-      # the escape is the park demolition at 10. From 30 the projection reaches 10 after 10
-      # ticks and drops under it on the 11th.
+      # One house, one park: the treasury also imports 17 power a tick, so the escape is
+      # still the park demolition at 10 but the affordable window is now only two ticks.
       #
-      # The two figures differ (30, 2, 10 -> 11) so no transposition of them lands on the
-      # same answer, and the count is of the *escape* threshold rather than of zero — from
-      # 30 the treasury does not empty for 15 ticks.
-      assert house_and_park(30.0).rescue_window == 11
+      assert house_and_park(30.0).rescue_window == 2
     end
 
     test "nil beyond the horizon rather than a large number" do
-      # 400 in the bank against a 2-a-tick drain is roughly 195 ticks to the escape price,
-      # well past the 60-tick horizon. The projection stops rather than running it out.
-      refute house_and_park(400.0).rescue_window
+      # A large enough bank keeps the 19-a-tick combined upkeep and power-import drain
+      # affordable beyond the 60-tick horizon. The projection stops rather than running
+      # it out.
+      refute house_and_park(2_000.0).rescue_window
     end
 
     test "is zero once the escape is already unaffordable" do
@@ -978,9 +1000,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # `money / (demanded - supplied)` from the *current* drain.
       #
       # One house, one shop and eleven parks. Ceiling 31 against 33 of upkeep, so today's
-      # drain is 2 — but the parks draw 198 water against a baseline of 40, so the shop
+      # drain is 2 — but the parks alone draw 198 water against a baseline of 30, so the shop
       # starves and its health-scaled income falls every tick. Measured, income goes
-      # 31 -> 24.9 and the drain grows 2 -> 8.07 over five ticks.
+      # 31 -> 21.96 and the operating gap grows 2 -> 11.04 over five ticks.
       #
       # A division by today's drain reports (35 - 10) / 2 = 12 ticks. Automatic water
       # purchases consume the affordable escape after one tick, which the projection sees
@@ -1008,12 +1030,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
 
     test "stops projecting at the tick the city stalls" do
-      # Three dead houses stall (45 power against a baseline of 40) and hold whatever they
-      # had. A projection that ignored the engine's tick-skip would keep draining them
+      # Three dead houses have no free power and hold at zero. A projection that ignored
+      # the engine's tick-skip would keep draining them
       # past the freeze and report a window; the freeze is what makes the honest answer
       # nil. Their upkeep is nothing though, so to be insolvent at all this city needs a
-      # park — which the two-house cliff keeps out, so the fixture uses the park's own
-      # upkeep and lets the houses do the stalling.
+      # park, so the fixture uses the park's own upkeep and lets the houses do the stalling.
       city = %{
         map_with([
           %Node{Node.new(0, 0, :residential) | health: 0.0, status: :offline},
@@ -1126,9 +1147,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta next.nodes["0:0"].health, 74.8, 0.001
 
       # And the contrast, so the figure above cannot be satisfied by a coincidence:
-      # the same city with no backlog loses only (1 - 0.533) * 6.0 = 2.8.
+      # the same unfunded city with no backlog loses 6.0 on its zero power satisfaction.
       {clean_next, _} = Calc.advance_tick(five_houses())
-      assert_in_delta clean_next.nodes["0:0"].health, 97.2, 0.001
+      assert_in_delta clean_next.nodes["0:0"].health, 94.0, 0.001
     end
 
     test "a city whose landfill is still draining is not stalled" do
@@ -1150,7 +1171,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     test "a settled dead city is still stalled" do
       # The regression guard for the clause above: three dead houses emit 30
       # against the baseline's 40, so the deficit is 0, equal to the stock, and
-      # nothing is moving. Power is what keeps them dead (45 drawn against 40).
+      # nothing is moving. Unfunded power is what keeps them dead.
       dead = for i <- 0..2, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
 
       assert Calc.metrics(%{map_with(dead) | money: 0.0}).stalled
@@ -1202,11 +1223,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   defp five_houses,
     do: %{map_with(for(i <- 0..4, do: Node.new(i, 0, :residential))) | money: 0.0}
 
-  # One house and one park: a rated ceiling of 1 against 3 of upkeep, so insolvent by 2,
-  # with the park demolition at 10 as the escape. Nothing here starves — the house's draws
-  # and the park's 18 water all sit inside the free baseline — so income holds at 1 and the
-  # drain holds at 2. That makes it the fixture where the projection and a naive division
-  # agree, which is exactly why it is not the only fixture in the block.
+  # One house and one park: a rated ceiling of 1 against 3 of upkeep, with the park
+  # demolition at 10 as the escape. Its 17 power is imported while funds last, so the
+  # combined upkeep and market drain is 19 per tick.
   defp house_and_park(money) do
     Calc.metrics(%{
       map_with([Node.new(0, 0, :residential), Node.new(1, 0, :park)])
@@ -1216,7 +1235,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   # One house, one shop and eleven parks. The money side is nearly balanced — a rated
   # ceiling of 31 against 33 of upkeep — while the water side is not remotely: eleven parks
-  # draw 198 against a baseline of 40. So the shop starves, its health-scaled income falls
+  # draw 198 against a baseline of 30. So the shop starves, its health-scaled income falls
   # every tick, and the drain grows. The count is eleven because that is what puts the gap
   # at 2, small enough that a division by today's drain reports a comfortable window.
   defp collapsing_income_city(money) do
@@ -1230,10 +1249,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # Every one of the 1,200 cells filled, with a money gap of exactly 7: one house supplying
   # a rated ceiling of 1 against a water plant's 5 and a park's 3 of upkeep.
   #
-  # The 1,197 fillers alternate `power_plant` and `industrial` because those are the only
-  # two types that touch money in neither table — net 0 each — so the gap is set by the
-  # three named blocks alone and stays 7 however many fillers there are. That is also what
-  # makes deleting the last cell a money-neutral edit, which the paired test relies on.
+  # The 1,197 fillers are industrial because that type touches money in neither table —
+  # net 0 each — so the gap is set by the three named blocks alone and stays 7 however many
+  # fillers there are. That is also what makes deleting the last cell a money-neutral edit,
+  # which the paired test relies on.
   #
   # 7 and not some smaller gap: it has to exceed every single type's money load (the water
   # plant's 5 is the largest) so that no lone demolition qualifies, while staying under the
@@ -1247,7 +1266,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
             0 -> :residential
             1 -> :water_plant
             2 -> :park
-            index -> if rem(index, 2) == 0, do: :power_plant, else: :industrial
+            _index -> :industrial
           end
 
         CityMap.put_node(map, Node.new(x, y, type))

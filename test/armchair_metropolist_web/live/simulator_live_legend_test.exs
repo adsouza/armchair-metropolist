@@ -34,10 +34,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert table =~ "[&amp;_td]:px-1"
     end
 
-    test "wraps the totals footnote instead of letting it widen the legend", %{conn: conn} do
+    test "wraps the totals footnote and reports the free baselines", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#legend-footnote.max-w-xl")
+
+      footnote = view |> element("#legend-footnote") |> render()
+      assert footnote =~ "30 water supplied, 40 waste"
+      assert footnote =~ "20 traffic absorbed"
     end
 
     # Two power plants at 80 each is 160, comfortably inside the 400 opening grant —
@@ -224,6 +228,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
         |> String.replace(~r/\s+/, " ")
 
       assert footnote =~ "1 money per unit"
+    end
+
+    test "imported labour reports its commuter traffic penalty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      labour =
+        stat(0.0, 3.0)
+        |> Map.merge(%{purchased: 3.0, deficit: 0.0, satisfaction: 1.0, flow_satisfaction: 1.0})
+
+      metrics = %{
+        empty_city_metrics()
+        | resources: %{labour: labour},
+          market_spend: 3.0,
+          imported_labour_traffic: 3.0
+      }
+
+      send(view.pid, {:city_metrics, metrics})
+      render(view)
+
+      assert view
+             |> element("#metrics-imported-labour-traffic")
+             |> render() =~ "Imported-labour traffic: +3.0/tick"
     end
 
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
@@ -578,6 +604,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       assert view |> element(~s{[data-cell="transit_hub-labour"]}) |> render() =~ "-2"
       assert view |> element(~s{[data-cell="power_plant-labour"]}) |> render() =~ "-1"
+      assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "-5"
     end
 
     test "a type that does not touch a resource still renders an em dash", %{conn: conn} do
@@ -587,9 +614,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       # everywhere: power plants do draw water, and that cell is a real number.
       assert view |> element(~s{[data-cell="power_plant-water"]}) |> render() =~ "-20"
 
-      # The park special case must not leak into the general path. `power_plant` draws
-      # labour now, so pick a genuinely untouched pair: it produces no money.
-      assert view |> element(~s{[data-cell="power_plant-money"]}) |> render() =~ "—"
+      # The park special case must not leak into the general path. Power plants now touch
+      # every resource, so use transit, which neither consumes nor supplies water.
+      assert view |> element(~s{[data-cell="transit_hub-water"]}) |> render() =~ "—"
     end
 
     test "every legend row shows its construction cost", %{conn: conn} do
@@ -762,7 +789,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       count: 1,
       rated_capacity: %{power: rated},
       actual_capacity: %{power: actual},
-      load: %{water: 20.0, waste: 12.0, traffic: 3.0}
+      load: %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0, money: 5.0}
     })
   end
 

@@ -660,19 +660,20 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert_receive {:notified, title, body}, 1_000
       assert is_binary(title)
-      assert body =~ "power at 67% of demand"
+      assert body =~ "power at 55% of demand"
 
       # The first tick earns 300, which reaches the post-tick treasury and is then
       # available to the metrics' next-tick market plan. That budget is split across
-      # power, water, waste and labour; traffic remains wholly unpurchasable. Waste also
-      # carries the first tick's backlog, so it still ranks first. The order below is the
-      # severity signal the operator reads first and is pinned rather than incidental.
+      # power, water, waste and labour; traffic remains wholly unpurchasable. Imported
+      # workers add enough commuter traffic to make congestion the worst shortage. The
+      # order below is the severity signal the operator reads first and is pinned rather
+      # than incidental.
       named =
         body
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["waste", "traffic", "labour", "power", "water"]
+      assert named == ["traffic", "waste", "labour", "power", "water"]
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
@@ -1113,7 +1114,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "a running city still advances", %{city_id: city_id} do
       # The other direction. A freeze that always fires and a freeze that never fires
       # are different bugs, and only one of them is caught by the test above.
-      StubSnapshotRepository.set_initial({:ok, {3, dead_city(2, 0.0)}})
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(2, 0.0) | money: 30.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
       {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
@@ -1126,18 +1127,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "a placement unfreezes a stalled city that can still afford one", %{city_id: city_id} do
-      # The freeze is not a lockout. Three dead houses have no money demand at all —
+      # The freeze is not a lockout. Seven dead houses have no money demand at all —
       # residential consumes none — so their treasury never drained, and 105 covers the
       # 80 a power plant costs.
       #
       # What unfreezes the city is the *new block's own health*, not a rescue of the
       # houses: `stalled?` is `Enum.all?`, and a node placed at 100.0 fails the
       # `health == @min_health` half immediately. Measured, the placement does not in
-      # fact rescue the houses — the plant's own draw takes water from 36/40 to 56/40
-      # and labour supply is 0.0 with no living housing, so ten ticks later the three
-      # houses are still at 0.0 and the plant itself has decayed to 40.0. That is a
-      # worse deficit than the 45/40 power shortfall it replaced. The clock restarting
-      # is the whole claim here; do not restate it as a recovery.
+      # fact rescue the houses. The clock restarting is the whole claim here; do not
+      # restate it as a recovery.
       StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(7, 0.0) | money: 105.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
@@ -1148,21 +1146,21 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
     end
 
-    test "demolishing back inside the free baseline unfreezes without building", %{
+    test "demolishing back inside traffic and the import budget unfreezes without building", %{
       city_id: city_id
     } do
-      # The other unfreeze, and the one the game-over copy leans on: three dead houses
-      # draw 45 power against the free baseline of 40, two draw 30, so tearing one down
-      # for 10 makes the survivors fully supplied at zero health and they regenerate.
+      # The other unfreeze, and the one the game-over copy leans on: four dead houses
+      # overrun traffic and need purchasable resources. Tearing one down removes the
+      # traffic deficit and leaves 45 power plus 6 water imports, exactly covered by the
+      # remaining treasury, so the survivors can regenerate.
       #
-      # Seeded at exactly 10.0 — the demolition fee, and the `bankrupt` boundary. At 9
-      # the command is refused and this test would assert nothing about the freeze.
-      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(7, 0.0) | money: 112.0}}})
+      # Seeded at 61: the demolition fee plus the surviving city's 51-unit import bill.
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(4, 0.0) | money: 61.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
 
-      assert {:ok, _id} = CityEngine.demolish(city_id, 6, 0)
+      assert {:ok, _id} = CityEngine.demolish(city_id, 3, 0)
 
       assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
     end
@@ -1170,8 +1168,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "demolishing into a draining landfill unfreezes a city with nobody fully supplied",
          %{city_id: city_id} do
       # The third unfreeze route, and the one neither test above exercises: no survivor
-      # is fully supplied (three dead houses draw 45 power against the baseline's 40,
-      # same shortfall as before the cut) and the grid is not empty, but cutting five
+      # is fully supplied (three dead houses still have no power) and the grid is not
+      # empty, but cutting five
       # houses to three drops waste demand from 50 to 30 — under the baseline's 40 — so
       # a landfill that was growing starts draining instead. `stalled?/3` reads that
       # off `deficit < stock`, not off anyone's satisfaction.
@@ -1348,7 +1346,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "notifies a fresh deficit in the new city rather than inheriting the old one's flag",
          %{city_id: city_id} do
       # dead_city(3, 0.0) is already in critical deficit at hydration - three dead houses
-      # draw 45 power against the free baseline of 40 (satisfaction 0.888) - so `critical?`
+      # have zero power satisfaction - so `critical?`
       # comes out of handle_continue/2 as `true` before reset ever runs. If
       # handle_call(:reset, ...) left that flag alone instead of re-deriving it from the
       # brand-new (empty, therefore fully satisfied) city, the stale `true` would still be
@@ -1359,7 +1357,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # of the moduledoc's "three byte-identical notifications" story: there the flag was
       # too eager, here a leftover flag would be too quiet.
       #
-      # Five commercial blocks draw 45 traffic against the baseline's 40. Traffic is the
+      # Five commercial blocks draw 45 traffic against the baseline's 20. Traffic is the
       # one shortfall the external market cannot buy away, so this remains a real deficit
       # despite the reset city's opening grant.
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})

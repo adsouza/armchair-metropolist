@@ -19,7 +19,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        external market for one money per unit. Only treasury carried into the
        tick is spendable, after reserving any net upkeep. If it cannot cover
        every shortfall, the same fraction of each is bought; traffic is never
-       purchasable.
+       purchasable. Each unit of imported labour adds one unit of commuter
+       traffic demand for that tick.
     4. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
        nothing demands the resource, where `available` is supply plus the
        carried balance and purchases. **Not** floored at zero: a large enough
@@ -51,7 +52,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
 
-  # No free workers: local labour comes only from housing; imports cost treasury money.
+  # No free power or workers: both come from local buildings or treasury-funded imports.
   # No free income either: money has no baseline, which is what forces commercial to be
   # built once the capacity and load tables arrive.
   #
@@ -59,10 +60,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # health-scaled side of a node's ledger, while this belongs to no node and is never
   # scaled by anything.
   @baseline_capacity %{
-    power: 40.0,
-    water: 40.0,
+    power: 0.0,
+    water: 30.0,
     waste: 40.0,
-    traffic: 40.0,
+    traffic: 20.0,
     labour: 0.0,
     money: 0.0
   }
@@ -79,6 +80,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # absent deliberately: congestion cannot be imported away. Prices also define the
   # eligible set, so eligibility and cost cannot drift apart.
   @market_prices %{power: 1.0, water: 1.0, waste: 1.0, labour: 1.0}
+
+  # Imported workers commute from outside the city. The traffic is a current-tick load,
+  # not a stock: like every other jam it clears at the tick boundary. One-to-one keeps
+  # the unit legible and roughly matches housing's 6 traffic for 5 local workers.
+  @imported_labour_traffic_per_unit 1.0
 
   # The park amenity: parks per housing block multiply labour supply. Both values are
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
@@ -126,6 +132,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec market_prices() :: %{Node.resource() => float()}
   def market_prices, do: @market_prices
 
+  @doc "Traffic demand added by one externally purchased unit of labour."
+  @spec imported_labour_traffic_per_unit() :: float()
+  def imported_labour_traffic_per_unit, do: @imported_labour_traffic_per_unit
+
   @doc """
   Supply, purchases, demand, deficit and satisfaction for every resource in the city.
 
@@ -167,6 +177,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     # city miss an otherwise-affordable bill.
     purchase_budget = min(city_map.money, raw_stats |> Map.fetch!(:money) |> new_balance())
     purchases = market_purchases(raw_stats, purchase_budget)
+    raw_stats = add_imported_labour_traffic(raw_stats, purchases)
 
     Map.new(raw_stats, fn {resource, stats} ->
       purchased = Map.get(purchases, resource, 0.0)
@@ -236,6 +247,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         amenity_marginal_labour: marginal_amenity_labour(nodes),
         amenity_labour: placed_amenity_labour(nodes),
         market_spend: market_spend(stats),
+        imported_labour_traffic:
+          Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
         stalled: stalled
       }
       |> Map.merge(solvency(city_map, nodes, stats, stalled))
@@ -284,10 +297,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # The division is what this replaced, and it was wrong by a factor of two on a real city:
   # income is health-scaled, so a city whose earners are starving loses income while it
   # loses money, and the drain is the one term in that formula guaranteed to move. Measured
-  # on one house, one shop and eleven parks at a treasury of 35 — the parks draw 198 water
-  # against a baseline of 40, so the shop starves — income fell 31 -> 24.9 while the drain
-  # grew 2 -> 8.07, and the escape became unaffordable on tick 5 where the division promised
-  # 12.
+  # on one house, one shop and eleven parks at a treasury of 35 — the parks alone draw 198
+  # water against a baseline of 30, so the shop starves — income fell 31 -> 21.96 while the
+  # operating gap grew 2 -> 11.04 over five ticks. Market purchases made the escape
+  # unaffordable after one tick where the division promised 12.
   #
   # Projecting is exact rather than merely tighter: `advance_tick/2` is pure and
   # deterministic, and the projection's premise — that the player does nothing — is
@@ -492,6 +505,24 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end)
   end
 
+  defp add_imported_labour_traffic(stats, purchases) do
+    commuter_traffic =
+      Map.fetch!(purchases, :labour) * @imported_labour_traffic_per_unit
+
+    Map.update!(stats, :traffic, fn traffic ->
+      demanded = traffic.demanded + commuter_traffic
+      available = traffic.supplied + traffic.carried
+
+      %{
+        traffic
+        | demanded: demanded,
+          deficit: max(0.0, demanded - available),
+          satisfaction: satisfaction(available, demanded),
+          flow_satisfaction: satisfaction(traffic.supplied, demanded)
+      }
+    end)
+  end
+
   defp add_resource({resource, amount}, acc) do
     Map.update(acc, resource, amount, &(&1 + amount))
   end
@@ -554,9 +585,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   #
   # Both node clauses are load-bearing. Without the empty-list clause an untouched grid
   # is "stalled", because `Enum.all?/2` over nothing is true. Without the satisfaction
-  # test, one or two dead houses are called stalled the tick before they heal: they
-  # draw 30 power against the free baseline of 40, so they are fully supplied at zero
-  # health and regenerate. The cliff is `15n <= 40`.
+  # test, fully funded dead houses are called stalled the tick before market purchases
+  # let them heal. With no free power, an unfunded dead power consumer really is stalled.
   #
   # Written per-node rather than against `avg_health`: health is clamped non-negative,
   # so "every node at 0.0" and "the average is 0.0 over a non-empty set" say the same

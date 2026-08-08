@@ -74,11 +74,11 @@ defmodule ArmchairMetropolist.UseCases.SummarizeCityTest do
   end
 
   test "reports a deficit when demand exceeds supply" do
-    # Six residential draw 90 power against the 40 baseline.
+    # Six unfunded residential draw 90 power with no local or baseline supply.
     city = %{city_with(for(x <- 0..5, do: Node.new(x, 0, :residential))) | money: 0.0}
 
     assert {:ok, metrics} = SummarizeCity.execute(city)
-    assert_in_delta metrics.resources.power.satisfaction, 40.0 / 90.0, 0.001
-    assert_in_delta metrics.resources.power.deficit, 50.0, 0.001
+    assert metrics.resources.power.satisfaction == 0.0
+    assert_in_delta metrics.resources.power.deficit, 90.0, 0.001
   end
 end

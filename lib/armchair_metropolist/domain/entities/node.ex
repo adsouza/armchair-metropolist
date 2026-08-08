@@ -69,7 +69,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
 
   # Load tables — the side that is never scaled by health.
   @load_table %{
-    power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0},
+    power_plant: %{water: 20.0, waste: 12.0, traffic: 3.0, labour: 1.0, money: 5.0},
     water_plant: %{power: 25.0, waste: 6.0, traffic: 2.0, money: 5.0, labour: 1.0},
     industrial: %{power: 40.0, water: 25.0, traffic: 8.0, labour: 12.0},
     transit_hub: %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0},

@@ -816,11 +816,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             measured 582px width instead of letting a 1054px max-content line stretch the
             sidebar well past the matrix. --%>
       <p :if={@detail} id="legend-footnote" class="mt-1 max-w-xl text-xs opacity-60">
-        Totals include the free baseline of 40, belonging to no type: power and water
-        supplied, waste and traffic absorbed. Labour and money have no free baseline.
+        Totals include free capacity belonging to no type: 30 water supplied, 40 waste
+        absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
         Labour's total also includes the park amenity; park's own row carries it. Shortfalls
         in power, water, waste disposal and labour are bought automatically for 1 money per
-        unit while the treasury can pay; purchased units count toward supplied totals.
+        unit while the treasury can pay; purchased units count toward supplied totals. Each
+        imported labour unit adds one traffic demand, and traffic itself cannot be bought.
       </p>
     </div>
     """
@@ -869,6 +870,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
       <p :if={@metrics.market_spend > 0.0} id="metrics-market">
         Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick
+      </p>
+      <p :if={@metrics.imported_labour_traffic > 0.0} id="metrics-imported-labour-traffic">
+        Imported-labour traffic: +{Float.round(@metrics.imported_labour_traffic, 1)}/tick
       </p>
       <%!-- Only while the drain is permanent, which is what `insolvent` means, and only while
             the projection actually found a deadline inside its horizon. A city merely spending

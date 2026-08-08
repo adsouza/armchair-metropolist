@@ -106,8 +106,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       defp initial_snapshot(%{roomy_city: true}), do: {:ok, {0, CityMap.new(40, 30)}}
 
       # `@tag :stalled_city` seeds a city that is stalled *and* bankrupt: three dead
-      # residential blocks (15 x 3 = 45 power against the free baseline of 40, so they
-      # starve at zero health and stay there) and an empty treasury.
+      # residential blocks have no free power and no treasury for imports, so they stay
+      # at zero health.
       defp initial_snapshot(%{stalled_city: true}), do: {:ok, {0, stalled_city(0.0)}}
 
       # The same city with money in the bank — stalled, but a rescue is still affordable.
@@ -116,8 +116,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
 
       # `@tag :stalled_tiny_city` seeds the stalled city on the starting 2x2 grid, so the
       # banner's width can be pinned at the smallest grid the game ever renders. Three dead
-      # residential blocks draw 45 power against the free baseline of 40, so they starve at zero
-      # health and stay there.
+      # residential blocks have no free power or import budget, so they stay at zero health.
       #
       # Seeded through `put_node/2` rather than placed, deliberately: three nodes on a 2x2 is
       # over the growth threshold, so a city built by placing them would arrive as a 4x4 and
@@ -135,20 +134,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         {:ok, {0, %{city | money: 0.0}}}
       end
 
-      # `@tag :locked_city` seeds the insolvency softlock: one house at full health beside one
-      # park, treasury empty. Ceiling 1 against 3 of upkeep, so the treasury can never rise; the
-      # house draws only power/water/waste/traffic, every one inside the free baseline, so it
-      # holds 100 health forever and `housing_alive` never goes false. Measured, this city is
-      # unchanged after 2000 ticks — and under the old `stalled and bankrupt` it had no end state.
-      defp initial_snapshot(%{locked_city: true}), do: {:ok, {0, house_and_park(0.0)}}
+      # `@tag :locked_city` seeds a physically self-sufficient insolvency softlock: one
+      # house, one power plant and one water plant remain healthy, but ceiling 1 is below
+      # upkeep 5 and the empty treasury cannot buy an escape action.
+      defp initial_snapshot(%{locked_city: true}), do: {:ok, {0, locked_city()}}
 
-      # The same city inside the warning band: 30 in the bank, a rescue window of 11 ticks
+      # The same city inside the warning band: 30 in the bank, a rescue window of 2 ticks
       # against a reaction budget of 12. Not bankrupt, so the player can still demolish the park.
       defp initial_snapshot(%{warned_city: true}), do: {:ok, {0, house_and_park(30.0)}}
 
-      # And the same city too far out to warn: 400 buys some 195 ticks, past the 60-tick
+      # And the same city too far out to warn: 2,000 lasts past the 60-tick
       # projection horizon, so there is no window to show.
-      defp initial_snapshot(%{early_insolvent_city: true}), do: {:ok, {0, house_and_park(400.0)}}
+      defp initial_snapshot(%{early_insolvent_city: true}),
+        do: {:ok, {0, house_and_park(2_000.0)}}
 
       # `@tag :crowded_six_by_six` seeds a 6x6 city holding 25 nodes -- one below the 26 that
       # opens it: `crowded?/1` is `nodes * 10 > 7 * width * height`, so 25 nodes gives
@@ -187,6 +185,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
           |> CityMap.put_node(Node.new(1, 0, :park))
 
         %{city | money: money}
+      end
+
+      defp locked_city do
+        CityMap.new(40, 30)
+        |> CityMap.put_node(Node.new(0, 0, :residential))
+        |> CityMap.put_node(Node.new(1, 0, :power_plant))
+        |> CityMap.put_node(Node.new(2, 0, :water_plant))
+        |> Map.put(:money, 0.0)
       end
 
       defp stalled_city(money, count \\ 3) do

@@ -61,6 +61,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         amenity_marginal_labour: 5.0,
         amenity_labour: 15.0,
         market_spend: 12.0,
+        imported_labour_traffic: 7.0,
         stalled: true,
         money_ceiling: 31.0,
         insolvent: true,
@@ -72,6 +73,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity_marginal_labour == 5.0
     assert metrics.amenity_labour == 15.0
     assert metrics.market_spend == 12.0
+    assert metrics.imported_labour_traffic == 7.0
 
     # Every value here is deliberately *not* the struct default — `true` rather than
     # `false`, a non-zero ceiling, a non-`nil` escape and window — because a build that
@@ -107,6 +109,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
           amenity: 1.75,
           amenity_marginal_labour: 5.0,
           market_spend: 0.0,
+          imported_labour_traffic: 0.0,
           stalled: false
         )
       )
