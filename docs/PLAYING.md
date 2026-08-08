@@ -56,8 +56,10 @@ traffic absorption starts at 20. Power, labour and money have no free baseline,
 deliberately — see below. When the city is short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
 Purchased capacity appears in the supplied total, and the Metrics panel shows the cost
-as *Automatic purchases*. Each imported worker also adds **1 traffic demand** for that
-tick, shown separately as *Imported-labour traffic*. Traffic cannot be bought.
+as *Automatic purchases*, broken down into one amber badge per resource. The same resource's
+totals cell shows `+N bought`, so imported capacity is visibly distinct from local supply.
+Each imported worker also adds **1 traffic demand** for that tick, shown separately as
+*Imported-labour traffic*. Traffic cannot be bought.
 
 **Show detail / Hide detail** collapses the legend to its type, count and cost columns,
 which is how you make the window narrower — the six resource columns are most of its

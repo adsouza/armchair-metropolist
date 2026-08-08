@@ -798,10 +798,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 data-total={resource}
                 class="text-right tabular-nums leading-tight"
               >
-                <% {demanded_supplied, met_this_tick} =
+                <% {demanded_supplied, met_this_tick, purchased} =
                   totals_cell(@metrics.resources, resource) %>
                 <div>{demanded_supplied}</div>
                 <div :if={not is_nil(met_this_tick)}>{met_this_tick}</div>
+                <div
+                  :if={purchased > 0.0}
+                  data-purchased-resource={resource}
+                  class="mt-0.5 whitespace-nowrap text-[0.65rem] font-semibold text-amber-700 dark:text-amber-300"
+                  title={"Automatically purchased #{Float.round(purchased, 1)} #{resource} this tick"}
+                >
+                  +{Float.round(purchased, 1)} bought
+                </div>
               </th>
             </tr>
           </tfoot>
@@ -853,7 +861,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :metrics, :map, required: true
 
   defp metrics(assigns) do
-    assigns = assign(assigns, :tightest, tightest_resource(assigns.metrics.resources))
+    assigns =
+      assigns
+      |> assign(:tightest, tightest_resource(assigns.metrics.resources))
+      |> assign(:automatic_purchases, automatic_purchases(assigns.metrics.resources))
 
     ~H"""
     <div>
@@ -868,8 +879,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
-      <p :if={@metrics.market_spend > 0.0} id="metrics-market">
-        Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick
+      <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
+        <span>Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick</span>
+        <span class="ml-1 inline-flex flex-wrap gap-1 align-middle">
+          <span
+            :for={{resource, purchased} <- @automatic_purchases}
+            data-market-resource={resource}
+            class="inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            {resource} +{Float.round(purchased, 1)}
+          </span>
+        </span>
       </p>
       <p :if={@metrics.imported_labour_traffic > 0.0} id="metrics-imported-labour-traffic">
         Imported-labour traffic: +{Float.round(@metrics.imported_labour_traffic, 1)}/tick
@@ -1073,7 +1093,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp totals_cell(resources, resource) do
     case Map.get(resources, resource) do
       nil ->
-        {"—", nil}
+        {"—", nil, 0.0}
 
       stats ->
         # `flow_satisfaction`, not `satisfaction`: the two numbers shown are demanded
@@ -1083,9 +1103,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         # this cell contradict its own two halves (23/13 while reading 100%).
         {
           "#{round(stats.demanded)}/#{round(stats.supplied + Map.get(stats, :purchased, 0.0))}",
-          "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
+          "#{Float.round(stats.flow_satisfaction * 100, 1)}%",
+          Map.get(stats, :purchased, 0.0)
         }
     end
+  end
+
+  defp automatic_purchases(resources) do
+    for resource <- Node.resources(),
+        stats = Map.get(resources, resource, %{}),
+        purchased = Map.get(stats, :purchased, 0.0),
+        purchased > 0.0,
+        do: {resource, purchased}
   end
 
   # The sign convention, in one place. For a negative resource a positive figure means

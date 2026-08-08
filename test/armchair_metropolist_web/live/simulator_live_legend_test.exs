@@ -203,7 +203,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       refute view |> element(~s{[data-total="power"]}) |> render() =~ "·"
     end
 
-    test "purchased capacity appears in totals and market spending appears in metrics",
+    test "purchased capacity is identified by resource in totals and metrics",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -211,13 +211,40 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
         stat(40.0, 60.0)
         |> Map.merge(%{purchased: 20.0, deficit: 0.0, satisfaction: 1.0, flow_satisfaction: 1.0})
 
-      metrics = %{empty_city_metrics() | resources: %{power: power}, market_spend: 20.0}
+      water =
+        stat(30.0, 35.0)
+        |> Map.merge(%{purchased: 5.0, deficit: 0.0, satisfaction: 1.0, flow_satisfaction: 1.0})
+
+      metrics = %{
+        empty_city_metrics()
+        | resources: %{power: power, water: water},
+          market_spend: 25.0
+      }
+
       send(view.pid, {:city_metrics, metrics})
       render(view)
 
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "60/60"
       assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
-      assert view |> element("#metrics-market") |> render() =~ "Automatic purchases: 20.0/tick"
+
+      assert view
+             |> element(~s{[data-total="power"] [data-purchased-resource="power"]})
+             |> render() =~ "+20.0 bought"
+
+      assert view
+             |> element(~s{[data-total="water"] [data-purchased-resource="water"]})
+             |> render() =~ "+5.0 bought"
+
+      refute has_element?(view, ~s{[data-purchased-resource="traffic"]})
+
+      assert view |> element("#metrics-market") |> render() =~
+               "Automatic purchases: 25.0/tick"
+
+      assert view |> element(~s{#metrics-market [data-market-resource="power"]}) |> render() =~
+               "power +20.0"
+
+      assert view |> element(~s{#metrics-market [data-market-resource="water"]}) |> render() =~
+               "water +5.0"
 
       footnote =
         view
