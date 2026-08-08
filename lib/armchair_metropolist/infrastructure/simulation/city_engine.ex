@@ -102,8 +102,6 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   @tick_topic "city_tick"
 
-  @default_grid_width 40
-  @default_grid_height 30
   @default_checkpoint_every_ticks 50
   @default_city_id "default"
   @default_linger_ms 30_000
@@ -480,12 +478,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
   end
 
-  defp new_city_map do
-    CityMap.new(
-      config(:grid_width, @default_grid_width),
-      config(:grid_height, @default_grid_height)
-    )
-  end
+  # `CityMap.new/0` rather than config values. The starting grid is a domain decision --
+  # growth, the cap and the starting size are one rule, stated once in `CityMap` -- and a
+  # config key here would be a second place to state it. That is the drift the
+  # `@opening_grant` comment in `city_map.ex` was written about.
+  defp new_city_map, do: CityMap.new()
 
   defp maybe_checkpoint(city_id, city_map) do
     every = config(:checkpoint_every_ticks, @default_checkpoint_every_ticks)

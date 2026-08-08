@@ -143,13 +143,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.resources.power.satisfaction == 1.0
     end
 
-    test "falls back to an empty configured grid when nothing is stored", %{city_id: city_id} do
+    test "falls back to an empty starting grid when nothing is stored", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :not_found})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 40
-      assert city_map.height == 30
+      assert city_map.width == 2
+      assert city_map.height == 2
       assert city_map.tick == 0
       assert CityMap.nodes(city_map) == []
       assert metrics.node_count == 0
@@ -204,8 +204,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       # ...and the hydration it deferred still completes.
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 40
-      assert city_map.height == 30
+      assert city_map.width == 2
+      assert city_map.height == 2
     end
   end
 
@@ -248,7 +248,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   describe "infrastructure commands" do
     setup %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
+      # out of bounds. Above the growth cap, so it also never grows under a test that is not
+      # about growth.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
@@ -792,6 +795,16 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   describe "isolation between cities" do
+    setup do
+      # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
+      # out of bounds. Above the growth cap, so it also never grows under a test that is not
+      # about growth. No `set_initial` here at all previously rode the stub's own
+      # `{:error, :not_found}` default, which was harmless while a fresh city was 40x30 and
+      # is not anymore.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      :ok
+    end
+
     test "one city's snapshot does not see another's nodes" do
       a = "iso-a-#{System.unique_integer([:positive])}"
       b = "iso-b-#{System.unique_integer([:positive])}"
@@ -970,6 +983,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "a frozen city reloads its state when next addressed", %{city_id: city_id} do
+      # An explicit 40x30 rather than a fresh city: this test places at (3, 4), out of
+      # bounds on the 2x2 a fresh city starts as now, and it is about reload-on-reattach,
+      # not grid size.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
       StubSnapshotRepository.echo_saves()
       {:ok, _pid} = CityRegistry.ensure_started(city_id)
       viewer = spawn(fn -> Process.sleep(:infinity) end)

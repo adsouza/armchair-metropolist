@@ -135,6 +135,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
   end
 
+  # `@tag :roomy_city` seeds an explicit 40x30 carrying the ordinary opening grant, for tests
+  # whose subject has nothing to do with grid size and which place more blocks than a 2x2
+  # holds. 40x30 is above the growth cap, so the grid cannot grow underneath them either --
+  # which matters, because a growing grid changes the legal coordinate set between clicks.
+  defp initial_snapshot(%{roomy_city: true}), do: {:ok, {0, CityMap.new(40, 30)}}
+
   # `@tag :stalled_city` seeds a city that is stalled *and* bankrupt: three dead
   # residential blocks (15 x 3 = 45 power against the free baseline of 40, so they
   # starve at zero health and stay there) and an empty treasury.
@@ -217,11 +223,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     {:ok, view_a, _html} = live(a, ~p"/")
     {:ok, view_b, _html} = live(b, ~p"/")
 
-    render_click(view_a, "place", %{"x" => "3", "y" => "4"})
+    render_click(view_a, "place", %{"x" => "1", "y" => "1"})
 
     # The positive case first, so the refute below cannot be vacuous.
-    assert render(view_a) =~ ~s{id="3:4"}
-    refute render(view_b) =~ ~s{id="3:4"}
+    assert render(view_a) =~ ~s{id="1:1"}
+    refute render(view_b) =~ ~s{id="1:1"}
   end
 
   test "a browser session is shown the whole address that re-enters its city",
@@ -260,17 +266,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/")
 
-    render_click(view, "place", %{"x" => "3", "y" => "4"})
+    render_click(view, "place", %{"x" => "1", "y" => "1"})
 
     # The city actually mounted is the desktop one, not the session's - checked via
     # CityEngine directly rather than the rendered HTML, because @city_id is not
     # itself shown anywhere once the re-entry block (asserted absent below) is
     # hidden.
     assert {:ok, %{city_map: desktop_map}} = CityEngine.snapshot(desktop_city_id)
-    assert CityMap.occupied?(desktop_map, 3, 4)
+    assert CityMap.occupied?(desktop_map, 1, 1)
 
     assert {:ok, %{city_map: session_map}} = CityEngine.snapshot(session_city_id)
-    refute CityMap.occupied?(session_map, 3, 4)
+    refute CityMap.occupied?(session_map, 1, 1)
 
     # The desktop UI has no "elsewhere" to return to a code from, and the id is a
     # fixed constant rather than something worth revealing - so this block must not
@@ -289,10 +295,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     {:ok, view, _html} = live(conn, ~p"/")
 
     view
-    |> element(~s{[phx-click="place"][phx-value-x="2"][phx-value-y="3"]})
+    |> element(~s{[phx-click="place"][phx-value-x="1"][phx-value-y="1"]})
     |> render_click()
 
-    assert render(view) =~ "2:3"
+    # Anchored on the streamed node's own id, not a bare "1:1" substring: the
+    # background cell at that same coordinate carries a `title="place ... at 1:1"`
+    # attribute regardless of whether the placement succeeded, which would make a
+    # substring match vacuous.
+    assert render(view) =~ ~s{id="1:1"}
   end
 
   test "selecting a type changes what placing a cell creates", %{conn: conn} do
@@ -307,16 +317,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     |> render_click()
 
     view
-    |> element(~s{[phx-click="place"][phx-value-x="9"][phx-value-y="9"]})
+    |> element(~s{[phx-click="place"][phx-value-x="1"][phx-value-y="1"]})
     |> render_click()
 
     html = render(view)
-    assert html =~ ~s{id="9:9"}
+    assert html =~ ~s{id="1:1"}
 
     # The *type* is what this test is about, so match the parts that carry meaning and
     # not the tooltip's punctuation: it also names the demolish action and shows a health
     # percentage, neither of which this test has any opinion about.
-    assert html =~ ~r/title="9:9[^"]*park[^"]*online/
+    assert html =~ ~r/title="1:1[^"]*park[^"]*online/
   end
 
   test "a removal broadcast deletes the node from the stream", %{conn: conn} do
@@ -348,18 +358,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     {:ok, view, _html} = live(conn, ~p"/")
 
     view
-    |> element(~s{[phx-click="place"][phx-value-x="7"][phx-value-y="8"]})
+    |> element(~s{[phx-click="place"][phx-value-x="1"][phx-value-y="1"]})
     |> render_click()
 
     # Same vacuity concern as the PubSub removal test: prove the node
     # actually rendered before asserting it is gone after the demolish click.
-    assert render(view) =~ ~s{id="7:8"}
+    assert render(view) =~ ~s{id="1:1"}
 
     view
-    |> element(~s{[phx-click="demolish"][phx-value-x="7"][phx-value-y="8"]})
+    |> element(~s{[phx-click="demolish"][phx-value-x="1"][phx-value-y="1"]})
     |> render_click()
 
-    refute render(view) =~ ~s{id="7:8"}
+    refute render(view) =~ ~s{id="1:1"}
   end
 
   @tag treasury: 79.6
@@ -486,7 +496,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       |> element(~s{button[phx-click="select_type"][phx-value-type="power_plant"]})
       |> render_click()
 
-      view |> element(~s{[phx-click="place"][phx-value-x="3"][phx-value-y="3"]}) |> render_click()
+      view |> element(~s{[phx-click="place"][phx-value-x="1"][phx-value-y="1"]}) |> render_click()
 
       # One power plant: power +120, water -20.
       assert view |> element(~s{[data-cell="power_plant-power"]}) |> render() =~ "+120"
@@ -867,6 +877,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
 
+    # A 2x2 holds two nodes; this places three, so a fresh city would grow underneath it.
+    @tag :roomy_city
     test "park's labour cell shows the amenity net of the park's own staffing", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -884,6 +896,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # render "1.5", so the assertion above passes at either. A ratio that is not a tenth
     # discriminates them — 1 park to 3 housing is 1 + 1/3 = ×1.33 at two decimals and
     # ×1.3 at one.
+    @tag :roomy_city
     test "the Workforce multiplier is rendered to two decimals", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -902,6 +915,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # Targeted on `.font-semibold` rather than on the cell, because the cell's text
     # contains the marginal figure too and "+12" would happily match nothing while "+4"
     # matched the wrong line.
+    @tag :roomy_city
     test "park's labour total reports the placed parks' amenity, net of their staffing",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -915,6 +929,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+12"
     end
 
+    @tag :roomy_city
     test "at the cap park's labour total is bounded by the housing, not the park count",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -929,6 +944,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="park-labour"] .font-semibold}) |> render() =~ "+7"
     end
 
+    @tag :roomy_city
     test "past parity park's labour cell goes negative", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -942,6 +958,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "-1"
     end
 
+    @tag :roomy_city
     test "staffed types other than park render through the ordinary load path", %{
       conn: conn
     } do
@@ -1283,11 +1300,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
     @tag :stalled_city
     test "another viewer's reset clears this one's grid too", %{conn: conn} do
-      # The broadcast path, which the click path above cannot reach: `handle_event("wipe",
-      # …)` clears this view's own stream, so deleting `handle_info(:city_reset, …)`
-      # entirely leaves that test green while every *other* open tab keeps rendering the
-      # city it just watched being wiped. Broadcast directly rather than opening a second
-      # view, matching the removal test above.
+      # `handle_event("wipe", …)` no longer clears anything itself — it only calls
+      # `CityEngine.reset/1` and returns. Because that call is synchronous, the
+      # `{:city_reset, city_map}` broadcast is already sitting in this process's own
+      # mailbox by the time the call returns, and it is `handle_info({:city_reset, …})`
+      # that actually clears the stream and resizes the grid. So deleting that handler
+      # would break the click-path test above too, not just this one. What this test
+      # still proves and the click path cannot: a reset broadcast from a wipe *this view
+      # never issued* still reaches and clears it — the click-path test's wiper and
+      # viewer are the same process, so it can never exercise that. Broadcast directly
+      # rather than opening a second view, matching the removal test above.
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
@@ -1600,6 +1622,27 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       # assigns alone, which was correct only while a reset preserved its grid.
       assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
       assert cell_count(render(view)) == 4
+    end
+
+    test "placing the third block grows the grid the player is looking at", %{conn: conn} do
+      # The only test that crosses the whole seam: real clicks -> ManageInfrastructure ->
+      # CityEngine's growth detection -> the broadcast -> the view's handler. Every other
+      # growth test drives one side with a synthetic message, so the two sides could agree
+      # with each other and both be wrong about the message they exchange.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+
+      place(view, :residential, 0, 0)
+      place(view, :residential, 1, 0)
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+
+      place(view, :residential, 0, 1)
+
+      # 4 * 128: the third block crosses 70% of a 2x2, so the grid opens to 4x4 and the
+      # cell size has not changed yet (128 up to 6x6).
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+      assert render(view) =~ ~s{id="0:1"}
     end
   end
 
