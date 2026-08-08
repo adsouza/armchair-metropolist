@@ -10,6 +10,38 @@ defmodule ArmchairMetropolist.ReleaseTest do
   rolled straight back, and `Ecto.Migrator` does its work in a `Task`, which is not
   the process that owns a checked-out connection. `:auto` is a global setting, so
   this must not overlap with anything — hence `async: false`.
+
+  ## The two "redefining module" warnings are from here, and they are expected
+
+  Every `mix test` run prints:
+
+      warning: redefining module ArmchairMetropolist.Infrastructure.Persistence.
+      Repo.Migrations.CreateCitySnapshots (current version defined in memory)
+
+  and the same for `CityScopedSnapshots`. Both come from this file — measured: the
+  whole file emits 2, the rollback test alone emits 2, and "nothing left to do"
+  alone emits 0.
+
+  The mechanism is the rollback, and it is not avoidable while that test is honest.
+  `mix.exs`'s `test:` alias runs `ecto.migrate --quiet` *in the same VM* as the
+  tests, which defines both migration modules. `Release.rollback(Repo, 0)` then
+  makes both migrations pending again, so the `Release.migrate()` after it has
+  `Ecto.Migrator` compile the two `.exs` files a second time into a VM that already
+  holds those modules. One warning per file.
+
+  Nothing is wrong, and the rollback is the opposite of incidental — see the comment
+  on the first test: without it, "migrate/0 creates the table" passes just as well
+  when `migrate/0` does nothing at all.
+
+  **Left visible on purpose.** The only way to silence it is
+  `Code.put_compiler_option(:ignore_module_conflict, true)`, which is a *global*
+  compiler option — it would have to be restored in `on_exit` so a mid-test failure
+  could not leak it, and while set it would mask a genuine redefinition anywhere in
+  the VM. That is a real safety trade for two lines of output, so the note is here
+  instead. It exists because expected noise that reads like a fault has a cost: on
+  2026-08-08 the reaper's equally benign `[reaper] sweep failed` lines were filed as
+  a bug and cost a full investigation before the emitting test was read. Read this
+  paragraph before filing these.
   """
   use ExUnit.Case, async: false
 
