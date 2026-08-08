@@ -20,6 +20,8 @@
 - Commit messages: conventional prefix (`feat:`, `test:`, `docs:`, `refactor:`), and end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Branch is `ring-growth-grid`. Do not merge to `main`.
 - Never write a retired atom or a stale constant into a test. If a test needs a figure from the code, reference the function (`CityMap.opening_grant()`), do not restate the literal.
+- **`SimulatorLive` has no catch-all `handle_info/2`.** Its clauses end at `:171` and `render/1` follows at `:184`. `Phoenix.LiveView.Channel` calls `view.handle_info/2` whenever the function is exported, so an unmatched message raises `FunctionClauseError` and **kills the LiveView** — it does not log and continue. `CityEngine` *does* have a catch-all (`city_engine.ex:410`); do not confuse the two. Any task that changes a broadcast's shape must land the matching LiveView clause in the same commit.
+- **Line numbers in this plan are as of commit `8f0da1a`** and drift as tasks land — Task 2 inserts ~20 lines into `simulator_live.ex` above every anchor Task 5 uses, and Task 4 inserts ~20 into `city_engine.ex` above every anchor Task 6 uses. Treat every `file:line` as a hint and **locate the code by its content**, not by seeking to the line.
 
 ## File Structure
 
@@ -383,6 +385,11 @@ Add to `test/armchair_metropolist_web/live/simulator_live_test.exs`, in a new `d
       assert SimulatorLive.cell_size(20, 40) == 24
     end
 
+    # Tagged, deliberately. `@tag treasury:` seeds an explicit `CityMap.new(40, 30)`, which
+    # is what this test's name claims it is testing. Untagged it would ride the fresh-city
+    # path, and Task 6 makes that a 2x2 and adds a test asserting 256px on the same path —
+    # the two would contradict each other and one would have to be deleted.
+    @tag treasury: 400.0
     test "a stored 40x30 city renders at exactly today's size", %{conn: conn} do
       # Pins "no existing city changes appearance". 40 * 24 by 30 * 24.
       {:ok, view, _html} = live(conn, ~p"/")
@@ -549,19 +556,15 @@ Add to `test/armchair_metropolist/use_cases/manage_infrastructure_test.exs`:
       assert same.height == 2
     end
 
-    test "a refused placement never grows the grid" do
-      # A cell that is occupied on a map already over threshold. Growth must sit on the
-      # success path only: a refusal that grew the grid would let a player enlarge the map
-      # by clicking an occupied cell.
-      crowded =
-        Enum.reduce([{0, 0}, {1, 0}, {0, 1}], CityMap.new(2, 2), fn {x, y}, map ->
-          CityMap.put_node(map, Node.new(x, y, :park))
-        end)
-
-      assert {:error, :occupied} = ManageInfrastructure.place(crowded, 0, 0, :park)
-    end
   end
 ```
+
+**Do not add a "a refused placement never grows the grid" test.** It cannot fail: `place/4`'s
+error branches return `{:error, reason}` and no map, so growth on a refusal is unobservable
+at this layer under any mutation of the implementation below. The only assertion available is
+`{:error, :occupied}`, which `manage_infrastructure_test.exs:28` and `city_engine_test.exs:309`
+already make. Putting growth on the success branch of the `cond` is what makes it true, and
+nothing at this layer can check it.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -620,6 +623,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 4: Broadcast growth, and carry the map on reset
 
+> **Tasks 4 and 5 are one commit.** This task changes `:city_reset` from a bare atom to a
+> tuple and adds `{:city_grew, …}`; Task 5 adds the LiveView clauses that match them. In
+> between, the view has no clause for either message — and `SimulatorLive` has **no
+> catch-all `handle_info/2`**, so it raises `FunctionClauseError` and dies rather than
+> logging. Do Task 4, then Task 5, then commit once at the end of Task 5. Task 4 has no
+> commit step.
+
 **Files:**
 - Modify: `lib/armchair_metropolist/infrastructure/simulation/city_engine.ex:36-42` (moduledoc inventory), `:278-291` (`handle_call({:place, …})`), `:323` (the reset broadcast), `:157` (`reset/1`'s `@doc`)
 - Modify: `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
@@ -670,23 +680,42 @@ Add to `test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs
 
       refute_receive {:city_grew, _}, 200
       assert_receive {:city_node_placed, %Node{id: "0:1"}}
+      # Asserted in this case too, not only in the growing one: an early return that skipped
+      # the metrics on the non-growth path would otherwise go unnoticed.
+      assert_receive {:city_metrics, %{node_count: 2}}
     end
   end
 ```
 
-And a reset test, in whichever describe already covers `reset/1`:
+And a reset test in `describe "reset/1"`. **That describe has no shared `setup`** — every test
+in it calls `set_initial/1` and `start_supervised!/1` itself. Do the same, or
+`CityEngine.reset/1` reaches `CityRegistry.ensure_started/1` and leaves a
+DynamicSupervisor-owned engine running past the end of the test, which is the leak this
+file's comments were written to prevent:
 
 ```elixir
     test "a reset broadcasts the new city map, not a bare atom", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(12, 12)}})
+      start_supervised!({CityEngine, city_id: city_id})
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
 
       assert :ok = CityEngine.reset(city_id)
 
       # The map travels with the message because the view has to resize: a reset returns a
-      # 2x2 whatever grid the city had grown to.
+      # 2x2 whatever grid the city had grown to. Seeded at 12x12 so that is visible — from a
+      # 2x2 the assertion would hold without `reset/1` changing the grid at all.
       assert_receive {:city_reset, %CityMap{width: 2, height: 2, nodes: nodes}}
       assert nodes == %{}
     end
+```
+
+**Also rewrite the existing test that pins the bare atom.** `city_engine_test.exs:1238-1258`
+("broadcasts the reset and the new metrics") ends with `assert first == :city_reset`, written
+deliberately to pin broadcast order. Change that one line to match the new shape, keeping the
+ordering assertion intact:
+
+```elixir
+      assert match?({:city_reset, %CityMap{}}, first)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -745,25 +774,22 @@ Update the moduledoc inventory at `:36-42` — it enumerates every message the e
 
 And `reset/1`'s `@doc` at `:157` — "start a new one on the same grid" is now false. Replace "on the same grid" with "on a fresh starting grid".
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Run the engine tests to verify they pass**
 
 Run: `mix test test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs`
 Expected: PASS.
 
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 5: Run the whole suite and confirm only the expected failures**
 
 Run: `mix test`
 
-Expected: **one class of failure, in `simulator_live_test.exs`** — the LiveView still has `handle_info(:city_reset, socket)` matching the bare atom, which no longer arrives, so its catch-all logs and the wipe renders nothing. Task 5 fixes it. If you prefer a green suite at every commit, do Tasks 4 and 5 as one commit; otherwise note the expected failures in the commit message.
+Expected: **FAIL, in `simulator_live_test.exs` only.** Every failure must be a
+`FunctionClauseError` from `SimulatorLive.handle_info/2` — the view has no clause for
+`{:city_reset, city_map}` and none for `{:city_grew, …}`, and no catch-all, so it dies rather
+than ignoring them. Any failure that is *not* that is a real defect in this task; find it
+before moving on.
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add lib/armchair_metropolist/infrastructure/simulation/city_engine.ex test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs
-mix precommit
-```
-
-`mix precommit` runs the suite and will fail on the LiveView reset tests. Either combine with Task 5 or commit with `git commit --no-verify` and a message naming the expected failures. Prefer combining.
+**Do not commit.** Go straight to Task 5, which adds the matching clauses and commits both.
 
 ---
 
@@ -819,9 +845,10 @@ Add to `test/armchair_metropolist_web/live/simulator_live_test.exs`. These drive
 
     @tag :stalled_city
     test "the collapse banner is as wide as the grown grid", %{conn: conn} do
-      # 6x6 -> 8x8 again, and for the same reason: at 4x4 both correct code and a mutant
-      # that reassigns :width without :cell_size give 4 * 128 = 512. Here correct gives
-      # 8 * 96 = 768 and the mutant gives 8 * 128 = 1024.
+      # A 40x30 stalled city (cell 24, banner 960px) broadcast straight to 8x8. Correct code
+      # gives 8 * 96 = 768; a mutant that reassigns :width without :cell_size keeps cell 24
+      # and gives 8 * 24 = 192. Separated either way -- but note the mutant's figure is 192,
+      # not 1024: there is no 6x6 step here, so :cell_size never held 128.
       {:ok, view, _html} = live(conn, ~p"/")
 
       broadcast({:city_grew, %{CityMap.new(8, 8) | nodes: stalled_city(0.0).nodes}})
@@ -897,13 +924,41 @@ run:
   end
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 2: Run the tests to verify they fail — and note *how***
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
 
-Expected: FAIL. There is no `handle_info({:city_grew, …})` clause, so the catch-all swallows it and nothing resizes. **Confirm the first test fails on `width: 96px` specifically** — that failure is the evidence that stream entries do not re-render on an assign change, which is the whole reason for the `reset: true` below. If it passes without the fix, stop and re-read `LiveStream`'s `Enumerable` impl before continuing.
+Expected: FAIL with `FunctionClauseError` in `SimulatorLive.handle_info/2`. There is no
+clause for `{:city_grew, …}` and **no catch-all**, so the view is killed by the first
+broadcast and the following `render(view)` raises too.
 
-- [ ] **Step 3: Implement**
+This is *not yet* the failure that matters. The stale-geometry bug is invisible while the
+view is crashing, so the next step is deliberately split in two.
+
+- [ ] **Step 3: Add the handler WITHOUT `reset: true`, and watch the real failure**
+
+Add the growth clause with only the grid assigns — no re-stream:
+
+```elixir
+  def handle_info({:city_grew, city_map}, socket) do
+    {:noreply, assign_grid(socket, city_map)}
+  end
+```
+
+Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
+
+Expected: the crashes are gone, and **"an existing node's geometry follows the new cell size"
+now fails on `width: 96px`** — the rendered node still reads `width: 128px`. Read the failure
+message and confirm that is what it says.
+
+**Do not skip this step or fold it into the next.** This failure is the only empirical
+evidence that a LiveView stream does not re-render existing entries when an assign changes.
+Every other justification for `reset: true` is inference from `LiveStream`'s `Enumerable`
+impl. If this test *passes* here, that inference is wrong — stop and re-read
+`deps/phoenix_live_view/lib/phoenix_live_view/live_stream.ex:94-114` before writing anything
+else, because the rest of this task rests on it.
+
+- [ ] **Step 4: Implement**
 
 Replace `handle_info(:city_reset, …)` at `:171-173` and add the growth clause beside the other `handle_info`s:
 
@@ -983,17 +1038,34 @@ Finally rewrite the moduledoc at `:1-23`. Two claims are now false — "a 40x30 
   """
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `mix test test/armchair_metropolist_web/live/simulator_live_test.exs`
-Expected: PASS, including the pre-existing wipe/reset tests that Task 4 broke.
+Expected: PASS, including the pre-existing wipe/reset tests Task 4 broke — but only after the fix in Step 6 below. If "another viewer's reset clears this one's grid too" still fails, that is Step 6, not a defect here.
 
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 6: Fix the test that broadcasts the bare atom**
+
+`simulator_live_test.exs:1263-1275` ("another viewer's reset clears this one's grid too")
+broadcasts `:city_reset` directly on `@topic` at `:1272`, bypassing the engine entirely, so
+Task 4's change to the engine did not touch it and deleting the bare-atom clause breaks it:
+
+```elixir
+      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, CityMap.new()})
+```
+
+While there, extend it: the test asserts the node is gone, and it should now also assert the
+grid resized, which is the behaviour this task adds.
+
+```elixir
+      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+```
+
+- [ ] **Step 7: Run the whole suite**
 
 Run: `mix test`
-Expected: PASS.
+Expected: PASS. This is the first green suite since Task 3.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit Tasks 4 and 5 together**
 
 ```bash
 git add lib/armchair_metropolist_web/live/simulator_live.ex test/armchair_metropolist_web/live/simulator_live_test.exs lib/armchair_metropolist/infrastructure/simulation/city_engine.ex test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs
@@ -1064,50 +1136,117 @@ In `city_engine.ex`, delete `@default_grid_width` and `@default_grid_height` at 
 
 In `config/config.exs`, delete the `grid_width: 40,` and `grid_height: 30,` lines.
 
-- [ ] **Step 4: Run the whole suite and read every failure**
+- [ ] **Step 4: Find every affected test, with a recipe that actually finds them**
 
-Run: `mix test`
+Run: `mix test` and read the failures — but do **not** rely on the failure list alone, and do
+not rely on a naive grep. Coordinates reach the code three ways in this suite, and only the
+first is greppable as a literal:
 
-Expected: FAIL, in two files. Every failure is a test that seeds `{:error, :not_found}` and then addresses a cell outside a 2×2. **Two distinct symptoms, so do not pattern-match on one:**
+1. literal attributes — `phx-value-x="9"`, `"x" => "3"`, `place(city_id, 3, 4, …)`
+2. **the `place(view, type, x, y)` helper** at `simulator_live_test.exs:1199-1207`, which
+   interpolates `phx-value-x="#{x}"` — invisible to any search for a digit
+3. **interpolated loops** — `for x <- 1..4`, and the `phx-value-x="#{x}"` selectors at
+   `:510` and `:1039`
 
-- `CityEngine.place/4` returns `{:error, :out_of_bounds}`, which `handle_event` swallows into `{:noreply, socket}`, so the failure is an assertion on markup that never rendered.
-- `element(~s{[phx-value-x="9"]…})` raises **"no element found"**, because the grid only renders in-bounds cells.
-
-Find them all mechanically rather than trusting a list:
+And seeding is invisible too: `StubSnapshotRepository`'s **default is already
+`{:error, :not_found}`** (`test/support/stub_snapshot_repository.ex:14`), so a describe that
+never calls `set_initial/1` still hydrates a fresh city. `rg 'not_found'` will not find it.
 
 ```bash
-rg -n 'not_found' test/ ; rg -n 'phx-value-x="[2-9]"|"x" => "[2-9]"|place\(city_id, [2-9]' test/
+# every call through the helper, with its coordinates
+rg -n 'place\(view, ' test/
+# every literal coordinate reaching a command
+rg -n 'phx-value-x="[0-9]"|"x" => "[0-9]"|place\(city_id, [0-9]+, [0-9]+' test/
+# every describe that seeds a fresh city, INCLUDING by omission
+rg -n 'set_initial|describe ' test/armchair_metropolist/infrastructure/simulation/city_engine_test.exs
+# tests that assert the old default grid literally
+rg -n 'width == 40|height == 30|new\(40, 30\)' test/
 ```
 
-- [ ] **Step 5: Migrate, using the right fix per file**
+- [ ] **Step 5: Migrate, by category**
 
-**`city_engine_test.exs` — change the fixture, not the coordinates.** The "infrastructure commands" describe at `:250-253` seeds `{:error, :not_found}` and then places at `(3, 4)` seven times (`:259`, `:269`, `:272`, `:286`, `:296`, `:306`, `:309`). Those tests are about commands and broadcasts, not about grid size, so give the describe a roomy grid in one line instead of editing seven coordinates:
+Three categories, and the category decides the fix. Getting this backwards destroys what a
+test covers, so classify before editing.
+
+**(A) Tests whose subject *is* a fresh city — keep untagged, move the coordinate.**
+Only viable where the test places at most two nodes, since a third grows a 2×2. Move to
+`(1, 1)`, not `(0, 0)`, so the assertion still proves the coordinate was threaded through
+rather than defaulting to zero.
+
+| line | change | also update |
+|---|---|---|
+| `:198` | `%{"x" => "3", "y" => "4"}` → `"1"`/`"1"` | `id="3:4"` → `id="1:1"` at `:201-202` |
+| `:241` | same, in the desktop test | **`:248` `assert CityMap.occupied?(desktop_map, 3, 4)` and `:251` `refute CityMap.occupied?(session_map, 3, 4)`** → `1, 1` |
+| `:270` | `phx-value-x="2"][phx-value-y="3"` → `"1"`/`"1"` | see below — the assertion is vacuous and must change too |
+| `:288` | `phx-value-x="9"][phx-value-y="9"` → `"1"`/`"1"` | `id="9:9"` and the `title=` regex at `:294` |
+| `:329`, `:337` | `phx-value-x="7"][phx-value-y="8"` → `"1"`/`"1"` | both `id="7:8"` assertions |
+| `:467` | `phx-value-x="3"][phx-value-y="3"` → `"1"`/`"1"` | nothing — it asserts on legend cells |
+
+At `:270`, `assert render(view) =~ "2:3"` **cannot fail**: the background cell itself renders
+`title="place power_plant at 2:3"` (`simulator_live.ex:239`), so that substring is present
+whether or not the placement succeeded. It is vacuous today. Fix it while migrating:
 
 ```elixir
-    setup %{city_id: city_id} do
-      # An explicit 40x30 rather than `{:error, :not_found}`: these tests are about
-      # commands and broadcasts, and a fresh city is now a 2x2 where (3, 4) is out of
-      # bounds. `max(40, 30)` is at the cap, so this grid also never grows underneath a
-      # test that is not about growth.
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
-      start_supervised!({CityEngine, city_id: city_id})
-      :ok
-    end
+      assert render(view) =~ ~s{id="1:1"}
 ```
 
-Audit every other `set_initial` in the file the same way — known out-of-2×2 coordinates sit at `:329` `(5,5)`, `:385` and `:425` `(2,2)`, `:977` `(3,4)`, `:1136` `(10,10)`.
+**(B) Tests whose subject is grid-size-independent and which place more than a 2×2 holds —
+give them a roomy seed, do not touch their coordinates.** Add one `initial_snapshot/1`
+clause, **inserted among the existing clauses** so the compiler does not warn about ungrouped
+clauses:
 
-`:319` asserts `place(city_id, 40, 0)` is `:out_of_bounds`. With a 40×30 seed it keeps passing for its original reason — leave it. If a describe you reseed makes it pass for a *new* reason, add a comment saying which bound it is testing.
+```elixir
+  # `@tag :roomy_city` seeds an explicit 40x30 carrying the ordinary opening grant, for tests
+  # whose subject has nothing to do with grid size and which place more blocks than a 2x2
+  # holds. 40x30 is above the growth cap, so the grid cannot grow underneath them either --
+  # which matters, because a growing grid changes the legal coordinate set between clicks.
+  defp initial_snapshot(%{roomy_city: true}), do: {:ok, {0, CityMap.new(40, 30)}}
+```
 
-**`simulator_live_test.exs` — change the coordinates, not the fixture.** The untagged fallback at `:160` must stay `{:error, :not_found}`, because Task 6's new test and the "two visitors" test are *about* fresh cities. Move each of these five to `(1, 1)`, which is inside a 2×2, and one node is `10 > 28` false so none of them trips growth. Use `(1, 1)` and not `(0, 0)` so the assertion still proves the coordinate was threaded through rather than defaulting to zero:
+Then tag these six, all of which use the `place(view, …)` helper and place 2–7 nodes:
 
-| line | from | also update |
-|---|---|---|
-| `:198`, `:241` | `%{"x" => "3", "y" => "4"}` | `id="3:4"` → `id="1:1"` at `:201-202` |
-| `:270` | `phx-value-x="2"][phx-value-y="3"` | `assert render(view) =~ "2:3"` → `"1:1"` |
-| `:288` | `phx-value-x="9"][phx-value-y="9"` | `id="9:9"` and the `title=` regex at `:294` |
-| `:329`, `:337` | `phx-value-x="7"][phx-value-y="8"` | both `id="7:8"` assertions |
-| `:467` | `phx-value-x="3"][phx-value-y="3"` | nothing else — it asserts on legend cells |
+| line | places |
+|---|---|
+| `:848` | residential `(2,1)`, park `(3,1)` |
+| `:865` | residential `(1,1)`–`(3,1)`, park `(1,2)` |
+| `:883` | residential `(1,1)`–`(4,1)`, parks `(1,2)`–`(3,2)` — seven nodes |
+| `:896` | residential `(2,1)`, parks `(1,2)`, `(2,2)`, `(3,2)` |
+| `:910` | parks `(2,1)`, `(3,1)` |
+| `:923` | power plant `(2,1)` |
+
+**(C) Tests that assert the old default grid literally — change the assertion, never the
+seed.** Reseeding these deletes the fallback behaviour they exist to test:
+
+- `city_engine_test.exs:151-152` — `assert city_map.width == 40` / `== 30` become `== 2`. The
+  test is named "falls back to an empty **configured** grid when nothing is stored"; Task 6
+  deletes the config, so rename it to "falls back to an empty starting grid when nothing is
+  stored".
+- `city_engine_test.exs:207-208` — the same pair inside "start_link/1 returns before a slow
+  repository has answered". Assertions to `== 2`; the name still holds.
+
+**Engine describes that seed a fresh city and place out of bounds — reseed the describe.**
+These test commands and broadcasts, not grid size, so one line beats seven coordinate edits:
+
+```elixir
+      # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
+      # out of bounds. Above the growth cap, so it also never grows under a test that is not
+      # about growth.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+```
+
+- the "infrastructure commands" describe at `:250-253`, which places at `(3, 4)` seven times
+  (`:259`, `:269`, `:272`, `:286`, `:296`, `:306`, `:309`)
+- **the "isolation between cities" describe at `:794-826`, which has no `set_initial` at all**
+  and rides the stub's default. `:801` and `:818` place at `(3, 4)` and `:822` asserts
+  `{:city_node_placed, %Node{x: 3, y: 4}}`.
+- `:977`, which places at `(3, 4)`
+
+Leave `:319` (`place(city_id, 40, 0)` expecting `:out_of_bounds`) alone — with a 40×30 seed it
+still fails the same bound for the same reason.
+
+Two entries can be skipped, verified safe: `:329`'s `demolish(city_id, 5, 5)` never
+bounds-checks (`manage_infrastructure.ex:56-58`), and `:1136`'s `place(city_id, 10, 10, …)` is
+seeded by `dead_city/2`, which builds on an explicit `CityMap.new(40, 30)` (`:1374`).
 
 - [ ] **Step 6: Run the whole suite**
 
