@@ -46,8 +46,6 @@ config :armchair_metropolist,
 config :armchair_metropolist,
   snapshot_repository: ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore,
   notifier: ArmchairMetropolist.Infrastructure.Desktop.LogNotifier,
-  grid_width: 40,
-  grid_height: 30,
   tick_interval_ms: 1000,
   # How long an engine stays alive after its last viewer disconnects. A page reload
   # disconnects and reconnects within a second, so stopping immediately would make

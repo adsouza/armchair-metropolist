@@ -37,7 +37,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   On `topic(city_id)`: `{:city_delta, delta}` on every tick; `{:city_metrics,
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
-  `:city_reset` on a successful `reset/1`, followed by `{:city_metrics, metrics}`.
+  `{:city_grew, city_map}` immediately *before* `{:city_node_placed, …}` on a placement
+  that opened the grid. This does not protect geometry — `{:city_grew, city_map}`
+  already carries the post-put map, node included, and `SimulatorLive` re-streams it
+  with `reset: true`, so the final DOM is identical whichever order these two arrive
+  in. What the ordering buys is one fewer intermediate frame: sent the other way
+  round, the view would briefly paint the new node at the pre-growth cell size before
+  the growth message resized the grid under it. It *would* be load-bearing for a
+  subscriber that patches incrementally instead of resetting — geometry correctness
+  there would depend on seeing the resize first.
+  `{:city_reset, city_map}` on a successful `reset/1`, followed by `{:city_metrics,
+  metrics}`; it carries the map because a reset returns the city to a 2x2 grid.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
   a shared one would deliver every visitor's deltas to every other visitor.
 
@@ -99,8 +109,6 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   @tick_topic "city_tick"
 
-  @default_grid_width 40
-  @default_grid_height 30
   @default_checkpoint_every_ticks 50
   @default_city_id "default"
   @default_linger_ms 30_000
@@ -154,7 +162,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   def demolish(city_id, x, y), do: call(city_id, {:demolish, x, y})
 
   @doc """
-  Discard this city and start a new one on the same grid.
+  Discard this city and start a new one on a fresh starting grid.
 
   Deletes the stored snapshot, so the tick-0 city that replaces it is durable
   immediately rather than unsaveable until it outlives the city it replaced.
@@ -279,6 +287,27 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     case ManageInfrastructure.place(state.city_map, x, y, type) do
       {:ok, {city_map, node}} ->
         metrics = summarize(city_map)
+
+        # Detected by comparing widths against the map this engine already holds, so
+        # `ManageInfrastructure.place/4` needs no `:grew` flag in its return and its
+        # contract does not change.
+        #
+        # Sent *before* the node — not because a subscriber needs the resize first to end
+        # up correct, but to avoid a one-frame transient: `{:city_grew, city_map}` already
+        # carries the post-put map with the new node in it, and `SimulatorLive` re-streams
+        # from that map with `reset: true`, so the final DOM is identical whichever order
+        # these two arrive in. Sent the other way round, the view would briefly paint the
+        # new node at the pre-growth cell size before this message resized the grid under
+        # it. The ordering *would* be load-bearing for a subscriber that patches
+        # incrementally instead of resetting. Carries the whole map because the view must
+        # re-stream every node: a LiveView stream does not re-render existing entries when
+        # an assign changes, so nodes keep their old pixel geometry across a cell-size
+        # change — `reset: true` is what actually makes the geometry correct, not the
+        # message order.
+        if city_map.width != state.city_map.width do
+          broadcast(state.city_id, {:city_grew, city_map})
+        end
+
         broadcast(state.city_id, {:city_node_placed, node})
         # Commands change the city, so subscribers need the new figures now. Without
         # this the legend's counts would not move until the next tick — and in tests,
@@ -320,7 +349,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     delete(state.city_id)
     save(state.city_id, city_map)
 
-    broadcast(state.city_id, :city_reset)
+    broadcast(state.city_id, {:city_reset, city_map})
     broadcast(state.city_id, {:city_metrics, metrics})
 
     # Re-armed from the new city rather than left as it was, so the next deficit is a
@@ -464,12 +493,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
   end
 
-  defp new_city_map do
-    CityMap.new(
-      config(:grid_width, @default_grid_width),
-      config(:grid_height, @default_grid_height)
-    )
-  end
+  # `CityMap.new/0` rather than config values. The starting grid is a domain decision --
+  # growth, the cap and the starting size are one rule, stated once in `CityMap` -- and a
+  # config key here would be a second place to state it. That is the drift the
+  # `@opening_grant` comment in `city_map.ex` was written about.
+  defp new_city_map, do: CityMap.new()
 
   defp maybe_checkpoint(city_id, city_map) do
     every = config(:checkpoint_every_ticks, @default_checkpoint_every_ticks)

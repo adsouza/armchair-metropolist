@@ -195,4 +195,34 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :empty} = ManageInfrastructure.demolish(broke, 5, 5)
     end
   end
+
+  describe "place/4 and grid growth" do
+    test "the placement that crosses 70% opens the grid, and the node is on it" do
+      # Exactly two nodes, then place the third. The count is load-bearing: growth runs
+      # *after* the put, so it counts three and grows. A mutant that grows before the put
+      # counts two, 20 > 28 is false, and it does not grow. Start from a map already over
+      # threshold (three nodes, placing a fourth) and both grow — the mutant survives.
+      two =
+        CityMap.new(2, 2)
+        |> CityMap.put_node(Node.new(0, 0, :park))
+        |> CityMap.put_node(Node.new(1, 0, :park))
+
+      assert {:ok, {grown, node}} = ManageInfrastructure.place(two, 0, 1, :park)
+
+      assert grown.width == 4
+      assert grown.height == 4
+      assert node.id == "0:1"
+      assert CityMap.get_node(grown, 0, 1).type == :park
+      assert map_size(grown.nodes) == 3
+    end
+
+    test "a placement below the threshold leaves the grid alone" do
+      one = CityMap.put_node(CityMap.new(2, 2), Node.new(0, 0, :park))
+
+      assert {:ok, {same, _node}} = ManageInfrastructure.place(one, 1, 0, :park)
+
+      assert same.width == 2
+      assert same.height == 2
+    end
+  end
 end

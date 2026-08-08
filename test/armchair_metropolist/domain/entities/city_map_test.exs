@@ -25,6 +25,120 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "new/0" do
+    test "starts a city on the initial 2x2 grid with the opening grant" do
+      map = CityMap.new()
+
+      assert map.width == 2
+      assert map.height == 2
+      assert map.tick == 0
+      assert map.nodes == %{}
+      assert map.money == CityMap.opening_grant()
+    end
+
+    test "the struct defaults agree with new/0 on the starting grid" do
+      # `CityEngine.normalize_city_map/1` merges every decoded snapshot onto a fresh
+      # `%CityMap{}`, so the struct defaults are what a stored city inherits for a field
+      # it lacks. A literal in `defstruct` beside a different `@initial_size` desyncs the
+      # two on a path only cold loads exercise -- the same trap the `@opening_grant`
+      # comment above `defstruct` describes. No other test in this suite sees it.
+      assert %CityMap{}.width == CityMap.new().width
+      assert %CityMap{}.height == CityMap.new().height
+    end
+  end
+
+  describe "grow_if_crowded/1" do
+    # The threshold is pinned by three sizes, not one. Each size alone admits an interval
+    # of thresholds that would pass it, and only the intersection is narrow:
+    #   2x2 fires at 3, not 2  =>  t in [0.5, 0.75)     kills 0.75 and 0.8, spares 0.6
+    #   4x4 fires at 12, not 11 => t in [0.6875, 0.75)  kills 0.6 (fires at 10), 0.65 (11)
+    #   6x6 fires at 26, not 25 => t in [0.6944, 0.7222) kills 0.69 (fires at 25)
+    # Dropping any one of these leaves a wrong constant passing.
+    test "a 2x2 opens on its third block and not its second" do
+      refute grown?(crowd(CityMap.new(2, 2), 2))
+      assert grown?(crowd(CityMap.new(2, 2), 3))
+    end
+
+    test "a 4x4 opens on its twelfth block and not its eleventh" do
+      refute grown?(crowd(CityMap.new(4, 4), 11))
+      assert grown?(crowd(CityMap.new(4, 4), 12))
+    end
+
+    test "a 6x6 opens on its twenty-sixth block and not its twenty-fifth" do
+      refute grown?(crowd(CityMap.new(6, 6), 25))
+      assert grown?(crowd(CityMap.new(6, 6), 26))
+    end
+
+    test "growth adds two to both dimensions" do
+      grown = CityMap.grow_if_crowded(crowd(CityMap.new(2, 2), 4))
+
+      # Both asserted: a `+1` mutant gives 3x3 and a one-axis mutant gives 4x2.
+      assert grown.width == 4
+      assert grown.height == 4
+    end
+
+    test "growth leaves every node exactly where it was" do
+      # The anchoring invariant, and the reason this design needs no generation fence on
+      # coordinate-addressed commands. See spec section 9: a growth that moved the origin
+      # would make an in-flight click resolve to a *different* cell, because the old and
+      # new coordinate sets overlap. Comparing `nodes` by `==` catches any translation.
+      crowded =
+        Enum.reduce([{0, 0}, {1, 0}, {0, 1}, {1, 1}], CityMap.new(2, 2), fn {x, y}, map ->
+          CityMap.put_node(map, Node.new(x, y, :park))
+        end)
+
+      grown = CityMap.grow_if_crowded(crowded)
+
+      assert grown.width == 4
+      assert grown.nodes == crowded.nodes
+      assert Map.keys(grown.nodes) |> Enum.sort() == ["0:0", "0:1", "1:0", "1:1"]
+    end
+
+    test "growth stops at the cap" do
+      # 717 nodes, not a handful: `n * 10 > 7 * 1024` needs `n >= 717`, so a sparsely
+      # filled 32x32 does not grow under the correct code *or* under a cap-less mutant,
+      # and a smaller fixture would pass either way.
+      refute grown?(crowd(CityMap.new(32, 32), 717))
+    end
+
+    test "a city whose height alone is at the cap does not grow" do
+      # 30x40 rather than the legacy 40x30 shape, deliberately. With width 40 both
+      # `width < @max_size` and `max(width, height) < @max_size` are already false, so a
+      # 40x30 fixture cannot separate them. Only `width < 32 <= height` makes the
+      # `width`-only mutant grow where the correct predicate refuses.
+      refute grown?(crowd(CityMap.new(30, 40), 841))
+    end
+
+    test "the legacy 40x30 grid does not grow" do
+      # Every city stored before this change is 40x30. Asserted for its own sake: leaving
+      # them alone is the point of the cap check, not a side effect of it.
+      refute grown?(crowd(CityMap.new(40, 30), 841))
+    end
+
+    test "demolishing does not take rows away" do
+      # A guard against a future shrink path, not a mutation kill: `grow_if_crowded/1` is
+      # the only size-changing function and `delete_node/3` never calls it, so no mutation
+      # of today's implementation can fail this. Do not count it as coverage.
+      grown = CityMap.grow_if_crowded(crowd(CityMap.new(2, 2), 4))
+
+      shrunk =
+        Enum.reduce([{0, 0}, {1, 0}], grown, fn {x, y}, m -> CityMap.delete_node(m, x, y) end)
+
+      assert shrunk.width == 4
+      assert shrunk.height == 4
+    end
+  end
+
+  # `n` distinct nodes, laid out by index across the map's own width so the fixture works
+  # at every grid size this suite uses.
+  defp crowd(map, n) do
+    Enum.reduce(0..(n - 1), map, fn i, acc ->
+      CityMap.put_node(acc, Node.new(rem(i, map.width), div(i, map.width), :park))
+    end)
+  end
+
+  defp grown?(map), do: CityMap.grow_if_crowded(map) != map
+
   describe "debit/2" do
     test "subtracts from the treasury" do
       map = %{CityMap.new(40, 30) | money: 100.0}
@@ -43,7 +157,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
   end
 
   describe "reset/1" do
-    test "keeps the grid dimensions and discards everything else" do
+    test "starts a new city on a fresh 2x2 grid, discarding everything else" do
       city =
         CityMap.new(12, 7)
         |> CityMap.put_node(Node.new(1, 1, :power_plant))
@@ -55,17 +169,19 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
 
       # Each property named separately: a reset that forgets one of these is a real bug
       # and a single `==` against a literal struct would not say which.
-      assert reset.width == 12
-      assert reset.height == 7
+      assert reset.width == 2
+      assert reset.height == 2
       assert reset.tick == 0
       assert reset.nodes == %{}
       assert reset.money == CityMap.opening_grant()
     end
 
-    test "a reset city is indistinguishable from a new one of the same size" do
+    test "delegates to new/0 so there is one definition of a new city" do
       city = CityMap.put_node(CityMap.new(40, 30), Node.new(3, 3, :commercial))
 
-      assert CityMap.reset(city) == CityMap.new(40, 30)
+      # The grid does *not* survive a reset. A reset city is a new city in every respect,
+      # which is what keeps `new/0` the single definition of one.
+      assert CityMap.reset(city) == CityMap.new()
     end
   end
 

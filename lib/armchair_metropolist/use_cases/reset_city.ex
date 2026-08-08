@@ -1,5 +1,5 @@
 defmodule ArmchairMetropolist.UseCases.ResetCity do
-  @moduledoc "Use case: discard a city and start a new one on the same grid."
+  @moduledoc "Use case: discard a city and start a new one on a fresh starting grid."
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics

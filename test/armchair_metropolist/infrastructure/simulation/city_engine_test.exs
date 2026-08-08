@@ -143,13 +143,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert metrics.resources.power.satisfaction == 1.0
     end
 
-    test "falls back to an empty configured grid when nothing is stored", %{city_id: city_id} do
+    test "falls back to an empty starting grid when nothing is stored", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:error, :not_found})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 40
-      assert city_map.height == 30
+      assert city_map.width == 2
+      assert city_map.height == 2
       assert city_map.tick == 0
       assert CityMap.nodes(city_map) == []
       assert metrics.node_count == 0
@@ -204,8 +204,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       # ...and the hydration it deferred still completes.
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 40
-      assert city_map.height == 30
+      assert city_map.width == 2
+      assert city_map.height == 2
     end
   end
 
@@ -248,7 +248,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   describe "infrastructure commands" do
     setup %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
+      # out of bounds. Above the growth cap, so it also never grows under a test that is not
+      # about growth.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
@@ -792,6 +795,16 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   describe "isolation between cities" do
+    setup do
+      # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
+      # out of bounds. Above the growth cap, so it also never grows under a test that is not
+      # about growth. No `set_initial` here at all previously rode the stub's own
+      # `{:error, :not_found}` default, which was harmless while a fresh city was 40x30 and
+      # is not anymore.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      :ok
+    end
+
     test "one city's snapshot does not see another's nodes" do
       a = "iso-a-#{System.unique_integer([:positive])}"
       b = "iso-b-#{System.unique_integer([:positive])}"
@@ -970,6 +983,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "a frozen city reloads its state when next addressed", %{city_id: city_id} do
+      # An explicit 40x30 rather than a fresh city: this test places at (3, 4), out of
+      # bounds on the 2x2 a fresh city starts as now, and it is about reload-on-reattach,
+      # not grid size.
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
       StubSnapshotRepository.echo_saves()
       {:ok, _pid} = CityRegistry.ensure_started(city_id)
       viewer = spawn(fn -> Process.sleep(:infinity) end)
@@ -1196,6 +1213,49 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "grid growth" do
+    setup %{city_id: city_id} do
+      two =
+        CityMap.new(2, 2)
+        |> CityMap.put_node(Node.new(0, 0, :park))
+        |> CityMap.put_node(Node.new(1, 0, :park))
+
+      StubSnapshotRepository.set_initial({:ok, {0, two}})
+      start_supervised!({CityEngine, city_id: city_id})
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+      :ok
+    end
+
+    test "broadcasts the grown map before the node that grew it", %{city_id: city_id} do
+      assert {:ok, _node} = CityEngine.place(city_id, 0, 1, :park)
+
+      # Received with a catch-all and *then* matched, deliberately. `assert_receive` scans
+      # the whole mailbox, so two `assert_receive`s in sequence pass in either order and
+      # would not pin the ordering at all. A subscriber that sees the node before the
+      # resize paints it onto a grid that is still 2x2.
+      assert_receive first when is_tuple(first)
+      assert match?({:city_grew, %CityMap{width: 4, height: 4}}, first)
+
+      assert_receive second when is_tuple(second)
+      assert match?({:city_node_placed, %Node{id: "0:1"}}, second)
+
+      assert_receive {:city_metrics, %{node_count: 3}}
+    end
+
+    test "does not announce growth on a placement that did not grow", %{city_id: city_id} do
+      # The 2x2 holds two nodes; a third grows it, so demolish one first and place into a
+      # map that stays at 2x2.
+      assert {:ok, _id} = CityEngine.demolish(city_id, 0, 0)
+      assert {:ok, _node} = CityEngine.place(city_id, 0, 1, :park)
+
+      refute_receive {:city_grew, _}, 200
+      assert_receive {:city_node_placed, %Node{id: "0:1"}}
+      # Asserted in this case too, not only in the growing one: an early return that skipped
+      # the metrics on the non-growth path would otherwise go unnoticed.
+      assert_receive {:city_metrics, %{node_count: 2}}
+    end
+  end
+
   describe "reset/1" do
     test "clears the city, restores the grant, and returns to tick 0", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
@@ -1253,8 +1313,22 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert_receive first
       assert_receive second
 
-      assert first == :city_reset
+      assert match?({:city_reset, %CityMap{}}, first)
       assert {:city_metrics, %{node_count: 0, tick: 0}} = second
+    end
+
+    test "a reset broadcasts the new city map, not a bare atom", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(12, 12)}})
+      start_supervised!({CityEngine, city_id: city_id})
+      Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
+
+      assert :ok = CityEngine.reset(city_id)
+
+      # The map travels with the message because the view has to resize: a reset returns a
+      # 2x2 whatever grid the city had grown to. Seeded at 12x12 so that is visible — from a
+      # 2x2 the assertion would hold without `reset/1` changing the grid at all.
+      assert_receive {:city_reset, %CityMap{width: 2, height: 2, nodes: nodes}}
+      assert nodes == %{}
     end
 
     test "a reset city ticks again", %{city_id: city_id} do

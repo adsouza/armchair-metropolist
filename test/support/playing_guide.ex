@@ -166,6 +166,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
   @spec opening_max_gap_ticks() :: non_neg_integer()
   def opening_max_gap_ticks do
     Enum.find(@gap_ladder, 0, fn gap ->
+      # An explicit 40x30 and not `CityMap.new/0`. Every figure this module generates is
+      # independent of grid size -- the simulation reads no coordinates -- and 40x30 is above
+      # the growth cap, so capacity never binds and no measurement here can be perturbed by a
+      # grid that grew mid-sequence. Migrating this to `new/0` would change what the guide
+      # measures.
       CityMap.new(40, 30)
       |> run_sequence(@opening_order, gap)
       |> finished_healthy?()

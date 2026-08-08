@@ -142,6 +142,43 @@ the server crash-loops on hydrate, the desktop app starts an empty grid.
 persisted struct has the same one-way property, and the safe pattern is two
 releases — one that interns the atom without writing it, then the writer.
 
+## The fourth trap: rolling back past the ring-growth grid
+
+The ring-growth-grid branch adds no new `CityMap` field and no new atom, so the
+decode trap above does not apply to it — every city it writes still decodes on an
+older binary. What it changes is *semantic*, and semantic drift needs the same
+warning as a decode failure, because an older binary reads the row happily and gets
+the wrong answer.
+
+A city created — or reset — under this release starts on a 2x2 grid and stores
+those dimensions. `CityMap`'s normalization (`CityEngine.normalize_city_map/1`)
+merges a decoded snapshot onto a fresh `%CityMap{}`, preserving whatever width and
+height were stored; it does not know about growth, so an older binary loads such a
+city exactly as a 2x2. That older binary also has no growth path — `grow_if_crowded/1`
+does not exist in it — and no notion of `@min_cell`/`@max_cell` clamping, so it
+renders the city at its own fixed cell size, 24px: a 48x48 four-cell grid that fills
+after two blocks and then cannot expand, ever, until the newer release is restored.
+Nothing crashes and nothing 500s — the city is just quietly capped.
+
+`d2725f7` is the minimum rollback target. It is the first commit whose binary can
+serve a 2x2 city correctly — the point at which all four pieces are present together:
+the 2x2 struct default and `grow_if_crowded/1` (`5c2992d`), the derived cell size
+(`1fd07a8`), growth wired into `ManageInfrastructure.place/4` (`f32de9a`), and
+`CityEngine` broadcasting `{:city_grew, …}` with `SimulatorLive` resizing on it
+(`d2725f7`). Rolling back to it or later is safe for these cities; rolling back past
+it revives the 4-cell-grid trap for any still in play.
+
+Note which commit this is *not*. It is not the first commit on the branch — that one
+(`882f322`) is documentation only and contains none of the code above, so rolling back
+to it reproduces the trap exactly rather than avoiding it. "Where did this branch
+start" and "what is the earliest binary that handles the data this branch writes" are
+different questions, and only the second one is a rollback target.
+
+The hazard *window* opens later than the floor, which is worth keeping straight: no
+2x2 city can exist until `8d63470`, the commit where `new_city_map/0` becomes
+`CityMap.new/0`. Before that the engine still built 40x30 cities from config, so the
+only route to a small grid was `reset/1`, which has returned a 2x2 since `5c2992d`.
+
 ## Deploying the server
 
 ```bash
