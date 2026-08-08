@@ -20,6 +20,21 @@ and a refused click says what it wanted and what you have. Demolishing charges a
 fee, which is less than the cheapest block but is not nothing: a city with an empty
 treasury cannot tear anything down either.
 
+### The map grows with the city
+
+You start on a 2×2 grid — four cells. Place your third block and two more rows and
+columns open up, giving you a 4×4; the twelfth opens a 6×6, and so on up to 32×32. The
+grid opens whenever more than 70% of its cells are occupied, so you are never forced to
+fill it completely before it gives you room.
+
+New rows and columns appear at the right and bottom edges. Nothing you have already built
+moves, and no block changes its coordinates — the map grows away from the corner you
+started in, rather than shifting your city around.
+
+The cells themselves shrink as the grid grows, so the whole map stays a comfortable size
+on screen rather than running off the edge: it reaches its full width at 6×6 and stays
+there.
+
 Hover either grid square and the tooltip names the action it will perform — though either
 may name one you cannot afford: a placement when the balance is under that type's cost, a
 demolition when it is under the flat fee. The dimmed legend row and the refused click are
