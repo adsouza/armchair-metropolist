@@ -35,7 +35,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     industrial: "🏭",
     transit_hub: "🚉",
     residential: "🏘️",
-    commercial: "🛝️",
+    commercial: "🛍️",
     park: "🌳"
   ]
 
@@ -539,6 +539,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       end
     end
 
+    test "keeps the matrix columns at their compact intrinsic width", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      table = view |> element("#block-legend") |> render()
+
+      assert has_element?(view, "#block-legend.w-fit")
+      assert table =~ "[&amp;_th]:px-1"
+      assert table =~ "[&amp;_td]:px-1"
+    end
+
+    test "wraps the totals footnote instead of letting it widen the legend", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#legend-footnote.max-w-xl")
+    end
+
     # Two power plants at 80 each is 160, comfortably inside the 400 opening grant —
     # measured, this test passes with the tag removed, so the treasury is insulation
     # rather than necessity. It is kept because it pins a round balance that neither the
@@ -682,7 +698,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
       # The header names the order. It is a decision, so a silent revert to
       # supplied/demanded must redden something.
-      assert render(view) =~ "demanded/supplied · met this tick"
+      label =
+        view
+        |> element("#legend-totals > th:first-child")
+        |> render()
+
+      assert has_element?(view, "#legend-totals > th:first-child > div + div")
+      assert label =~ "demanded/supplied"
+      assert label =~ "met this tick"
+      refute label =~ "·"
+
+      # The resource cells use the same two-line treatment; splitting only the label
+      # would leave values such as `120/150 · 100.0%` setting the column width.
+      assert has_element?(view, ~s{[data-total="power"] > div + div})
+      refute view |> element(~s{[data-total="power"]}) |> render() =~ "·"
     end
 
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
@@ -690,7 +719,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # treasury of 487 (carried) brings the balance-inclusive `satisfaction` to
     # 1.0 -- exactly the case that used to render "23/13 · 100.0%", where dividing
     # the two numbers shown gives 57%, not 100%. The cell must read the flow-only
-    # figure instead, so 56.5% (13/23) is what belongs beside 23/13.
+    # figure instead, so 56.5% (13/23) is what belongs under 23/13.
     test "the money totals cell reads the flow-only percentage, not the balance-inclusive one",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -884,46 +913,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     # `min_by` breaks it arbitrarily — it read "Tightest: traffic 100%", which is true
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
-    # Where Metrics sits relative to the legend is CSS, but *which* threshold governs it
-    # is server-rendered, and it has to change with the state: the sidebar's width decides
-    # where it wraps and collapsing changes that width. One constant for both is the bug
-    # this pins — collapsing a wrapped legend moved it back beside the grid while Metrics
-    # stayed alongside it.
-    #
-    # The values are midpoints of measured windows, not the wrap points themselves.
-    # Collapsed, 1415 is the midpoint of a measured window [1415, 1415] — degenerate, so
-    # it is the only legal value rather than a midpoint with slack.
-    #
-    # Expanded, 2424 was re-measured 2026-08-07 (fix round) after the negative-polarity
-    # footnote was reworded a second time, to a shorter sentence than the first draft: the
-    # first draft's 1626px pushed the threshold past 2560px, a common monitor width,
-    # dropping the legend below the grid there where it previously sat beside it. The
-    # shorter wording measures 1288px, and the threshold was re-derived by the same
-    # binary-search method as the comment in `render/1` — forcing `flexDirection` on the
-    # real inner div and reloading fresh at each candidate viewport (never resizing into
-    # it; that reads differently because of the scrollbar) — rather than by shifting the
-    # prior constant by a measured delta, which is what put this test into a fix round in
-    # the first place. That search found window [2343, 2505] (2343 = W_col, the boundary
-    # forcing `column`; 2505 = W_row, forcing `row`), whose midpoint is exactly 2424. If a
-    # legitimate content change moves the footnote again, re-measure in the browser and
-    # move this value to the *new* midpoint — do not derive it from this one plus a guess.
-    test "the metrics wrap threshold follows the collapsed state", %{conn: conn} do
+    # The grid grows from 256px to 768px and legacy snapshots can be wider, so viewport
+    # width cannot tell this inner container whether the outer flex row wrapped. The hook
+    # measures the actual grid/sidebar positions and drives this data variant instead.
+    test "metrics layout follows the sidebar's measured position", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      expanded = view |> element(~s{aside div.flex}) |> render()
-      assert expanded =~ "max-[2424px]:flex-row"
-      refute expanded =~ "max-[1415px]:flex-row"
+      assert has_element?(view, ~s{#legend-and-metrics[data-position="side"].flex.flex-col})
 
-      view |> element("#toggle-legend-detail") |> render_click()
+      layout = view |> element("#legend-and-metrics") |> render()
+      assert layout =~ "data-[position=below]:flex-row"
 
-      collapsed = view |> element(~s{aside div.flex}) |> render()
-      assert collapsed =~ "max-[1415px]:flex-row"
-      refute collapsed =~ "max-[2424px]:flex-row"
+      assert has_element?(
+               view,
+               ~s{#sidebar-placement-observer[phx-hook][phx-update="ignore"]}
+             )
     end
 
-    # `grow` on the aside let daisyUI's `.table { width: 100% }` stretch the matrix across
-    # the whole page whenever the sidebar was alone on its flex line. The sidebar must be
-    # content-sized in both positions; that is what makes the table's `100%` a fixpoint.
+    # `grow` on the aside let the sidebar stretch across the whole page whenever it was
+    # alone on its flex line. It must remain content-sized in both positions; the matrix
+    # independently overrides daisyUI's `width: 100%` with `w-fit`.
     test "the sidebar is never wider than its own content", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
