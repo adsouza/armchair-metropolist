@@ -97,4 +97,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
 
     assert SnapshotVocabulary.modernize(city).waste_stock == 42.0
   end
+
+  test "added_fields names every CityMap field an older release could not decode" do
+    # `waste_stock` was added 2026-08-07. A field absent from this list is one a
+    # rolled-back binary will fail to decode, so the list is pinned rather than
+    # merely exercised.
+    assert SnapshotVocabulary.added_fields() == [:waste_stock]
+  end
 end

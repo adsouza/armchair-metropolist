@@ -70,18 +70,21 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   @doc "The modules whose atoms a persisted city can contain."
   def modules, do: @modules
 
+  @doc """
+  Struct field names added since the first release, interned by appearing here.
+
+  Not modules, so `ensure_loaded!/0` has nothing to load for them — a bare atom
+  is interned the instant this module is, which is the same reason
+  `@node_type_renames`'s keys need no loader. This accessor exists so the list is
+  reachable and testable rather than dead: a field missing from it is a field an
+  older release cannot decode. See docs/deploying.md, "The third trap: rolling
+  back past a new CityMap field".
+  """
+  def added_fields, do: @added_fields
+
   @doc "Interns every atom a persisted city can legitimately contain."
   def ensure_loaded! do
     Enum.each(@modules, &Code.ensure_loaded!/1)
-
-    # `@added_fields` lists struct field names, not modules — there is nothing to
-    # `Code.ensure_loaded!/1` for a plain atom. It is already interned simply by
-    # appearing as a literal in this module's own compiled code, true the instant
-    # `SnapshotVocabulary` itself is loaded (the same reason `@node_type_renames`'s
-    # keys need no loader either). Reading it here keeps it wired into a real code
-    # path instead: an attribute nothing reads is a compiler warning in this
-    # project, and dead code a later edit could delete without anyone noticing.
-    Enum.each(@added_fields, &Function.identity/1)
   end
 
   @doc """
