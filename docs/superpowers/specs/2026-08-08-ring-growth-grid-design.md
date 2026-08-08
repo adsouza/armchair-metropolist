@@ -412,11 +412,12 @@ against a future shrink path, and do not count it as coverage.
 * **2×2 → 128 and 4×4 → 128 kill the ceiling clamp.** Dropping `min(@max_cell, …)` gives
   384 and 192. **6×6 → 128 does not**, because `div(768, 6) = 128` exactly — it is as blind
   to the ceiling as 8×8 is. Keep it as a boundary case, not as ceiling coverage.
-* **40×30 → 24 kills the floor clamp**, since `div(768, 40) = 19`. None of the square sizes
-  can: dropping `max(@min_cell, …)` leaves 2×2, 4×4, 6×6, 8×8 and 32×32 all unchanged.
-  This is the *only* floor test.
-* 20×40 → 24, driven by the height — kills `div(@target_px, width)` in place of
-  `max(width, height)`, which would give 38.
+* **40×30 → 24 and 20×40 → 24 both kill the floor clamp**, since `div(768, 40) = 19` for
+  either — `max(20, 40)` is also 40, so the two cases are arithmetically identical on this
+  axis. None of the square sizes can: dropping `max(@min_cell, …)` leaves 2×2, 4×4, 6×6,
+  8×8 and 32×32 all unchanged.
+* 20×40 → 24 *also* kills `div(@target_px, width)` in place of `max(width, height)`, which
+  would give 38. That is the mutation it is uniquely for; the floor it shares with 40×30.
 * 8×8 → 96 and 32×32 → 24 — the interior of the ramp and its far end.
 * The rendered 40×30 grid container is 960×720 — pins "pixel-identical to today".
 

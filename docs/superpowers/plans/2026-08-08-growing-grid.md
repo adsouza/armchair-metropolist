@@ -366,8 +366,9 @@ Add to `test/armchair_metropolist_web/live/simulator_live_test.exs`, in a new `d
     #   2x2 -> 128 and 4x4 -> 128 kill the *ceiling*: without `min/2` they are 384 and 192.
     #   6x6 -> 128 kills nothing, because div(768, 6) is exactly 128. Kept as a boundary
     #     case; it is as blind to the ceiling as 8x8 is.
-    #   40x30 -> 24 is the *only* case that kills the floor: div(768, 40) is 19. None of the
-    #     square sizes can, since dropping `max/2` leaves every one of them unchanged.
+    #   40x30 -> 24 and 20x40 -> 24 both kill the *floor*: div(768, 40) is 19 for either, so
+    #     dropping `max/2` returns 19 from both. None of the square sizes can -- dropping the
+    #     floor leaves 2x2, 4x4, 6x6, 8x8 and 32x32 all unchanged.
     #   20x40 -> 24 kills `div(768, width)` in place of `max(width, height)`, which gives 38.
     test "cell size shrinks as the grid grows, clamped at both ends" do
       assert SimulatorLive.cell_size(2, 2) == 128
