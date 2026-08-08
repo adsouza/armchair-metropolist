@@ -728,6 +728,132 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
   end
 
+  describe "waste as an accumulating stock" do
+    test "unprocessed waste carries into the next tick" do
+      city = five_houses()
+      assert city.waste_stock == 0.0
+
+      {next, _delta} = Calc.advance_tick(city)
+
+      # 50 emitted, 40 absorbed by the baseline, 10 left in the ground.
+      assert_in_delta next.waste_stock, 10.0, 0.001
+    end
+
+    test "the stock drains on spare capacity and reaches exactly zero" do
+      # Five houses (50 emitted) plus one industrial (90 capacity) against the
+      # baseline's 40: capacity 130, emissions 50, so the first tick's stock
+      # falls by 80 (200 -> 120).
+      #
+      # Capacity is NOT constant at 130 from here on, though: this fixture gives
+      # industrial no power_plant or water_plant, so it is short of both (power
+      # 40/115 = 8/23, water 40/85 = 8/17 — neither has anything to do with
+      # waste) and its health decays by a constant 90/23 per tick as a result.
+      # Waste capacity is health-scaled, so industrial's share shrinks right
+      # along with it: 90.0 -> 1989/23 (~86.48) before the second tick. The
+      # second tick's drain is therefore supply(126.478) - demand(50) =
+      # 76.478, not 80, landing on 120 - 76.478 = 1001/23 (~43.522) rather than
+      # the naive 40 a constant-capacity story predicts.
+      #
+      # The third tick is unaffected: even at further-reduced capacity,
+      # available (~79.4) still comfortably exceeds demand (50), so the deficit
+      # floors at exactly 0.0 regardless of the exact capacity figure.
+      nodes = [Node.new(9, 9, :industrial) | for(i <- 0..4, do: Node.new(i, 0, :residential))]
+      city = %{map_with(nodes) | waste_stock: 200.0}
+
+      {t1, _} = Calc.advance_tick(city)
+      {t2, _} = Calc.advance_tick(t1)
+      {t3, _} = Calc.advance_tick(t2)
+
+      assert_in_delta t1.waste_stock, 120.0, 0.001
+      assert_in_delta t2.waste_stock, 1001 / 23, 0.001
+
+      # Exactly zero, not merely smaller: a stock that decreases without ever
+      # clearing is a different and much crueller mechanic.
+      assert t3.waste_stock == 0.0
+    end
+
+    test "a backlog worsens satisfaction instead of improving it" do
+      # THE mutation this whole describe block exists to catch: `carried(:waste)`
+      # returning +stock rather than -stock turns the landfill into a second
+      # treasury. Every "the city survives" test in the suite passes under it.
+      clean = five_houses()
+      backlogged = %{five_houses() | waste_stock: 60.0}
+
+      clean_sat = Calc.resource_stats(clean).waste.satisfaction
+      backlogged_sat = Calc.resource_stats(backlogged).waste.satisfaction
+
+      # 40/50 = 0.8 clean; (40 - 60)/50 = -0.4 backlogged. Under the sign mutation
+      # the backlogged figure becomes min(1.0, 100/50) = 1.0 and this fails.
+      assert_in_delta clean_sat, 0.8, 0.001
+      assert_in_delta backlogged_sat, -0.4, 0.001
+      assert clean_sat > backlogged_sat
+    end
+
+    test "the backlog does not touch flow_satisfaction" do
+      # `flow_satisfaction` answers "is my per-tick economy balanced", which stays
+      # true while digging out. Catches the mutation that wires the stock into it.
+      clean = Calc.resource_stats(five_houses()).waste.flow_satisfaction
+
+      backlogged =
+        Calc.resource_stats(%{five_houses() | waste_stock: 60.0}).waste.flow_satisfaction
+
+      assert_in_delta clean, 0.8, 0.001
+      assert_in_delta backlogged, 0.8, 0.001
+    end
+
+    test "traffic does not accumulate" do
+      # Only waste is in @carryover. Six houses draw 36 traffic against the
+      # baseline's 40 and 60 waste against the same 40, so waste builds a stock
+      # in the very same tick that traffic does not.
+      city = map_with(for i <- 0..5, do: Node.new(i, 0, :residential))
+      {next, _} = Calc.advance_tick(city)
+
+      assert_in_delta next.waste_stock, 20.0, 0.001
+      refute Map.has_key?(next, :traffic_stock)
+      assert Calc.resource_stats(next).traffic.carried == 0.0
+    end
+
+    test "a large backlog decays health faster than @decay_per_tick" do
+      # The consequence of leaving satisfaction unfloored, asserted directly so
+      # that adding a `max(0.0, ...)` later reddens something.
+      #
+      # Five houses at 200 stock: waste demanded 50, supplied 40, available -160,
+      # satisfaction -3.2. Power is the next worst at 40/75 = 0.533, so waste is
+      # the binding constraint. health_delta = -(1 - -3.2) * 6.0 = -25.2.
+      city = %{five_houses() | waste_stock: 200.0}
+      {next, _} = Calc.advance_tick(city)
+
+      assert_in_delta next.nodes["0:0"].health, 74.8, 0.001
+
+      # And the contrast, so the figure above cannot be satisfied by a coincidence:
+      # the same city with no backlog loses only (1 - 0.533) * 6.0 = 2.8.
+      {clean_next, _} = Calc.advance_tick(five_houses())
+      assert_in_delta clean_next.nodes["0:0"].health, 97.2, 0.001
+    end
+
+    test "a city whose landfill is still draining is not stalled" do
+      # Five dead houses emit 50 against the baseline's 40, so at stock 60 the
+      # next deficit is max(0, 50 - 40 + 60) = 70 — still climbing, no route back.
+      dead = for i <- 0..4, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
+      assert Calc.metrics(%{map_with(dead) | waste_stock: 60.0}).stalled
+
+      # Every emitter demolished: demand 0 against the baseline's 40, so the next
+      # deficit is max(0, 0 - 40 + 60) = 20 < 60 and the landfill is draining.
+      # The engine skips ticks for a stalled city, so calling THIS stalled would
+      # freeze the stock permanently — the deadlock this clause exists to prevent.
+      refute Calc.metrics(%{map_with([]) | waste_stock: 60.0}).stalled
+    end
+
+    test "a settled dead city is still stalled" do
+      # The regression guard for the clause above: three dead houses emit 30
+      # against the baseline's 40, so the deficit is 0, equal to the stock, and
+      # nothing is moving. Power is what keeps them dead (45 drawn against 40).
+      dead = for i <- 0..2, do: %Node{Node.new(i, 0, :residential) | health: 0.0}
+
+      assert Calc.metrics(map_with(dead)).stalled
+    end
+  end
+
   describe "geography" do
     # Characterises the *absence* of a spatial mechanic rather than claiming one would
     # be wrong. Resources are pooled city-wide, so coordinates serve only as identity
@@ -766,4 +892,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
                "update the 'layout is free' claim in docs/PLAYING.md"
     end
   end
+
+  # Five houses emit 50 waste against the free baseline's 40. Five and not four:
+  # four emit exactly 40, leave nothing, and would make every waste-stock
+  # assertion read the same whether the mechanic exists or not.
+  defp five_houses, do: map_with(for i <- 0..4, do: Node.new(i, 0, :residential))
 end

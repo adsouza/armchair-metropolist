@@ -16,7 +16,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        This asymmetry is what makes failures cascade rather than self-correct.
     3. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
        nothing demands the resource, where `available` is supply plus the
-       carried balance.
+       carried balance. **Not** floored at zero: a large enough backlog drives
+       this negative, which is what lets waste's stock (see step 10) decay
+       health past `@decay_per_tick` rather than at it.
     4. Each node looks at the satisfaction of only the resources it consumes
        and takes the worst of them.
     5. A fully supplied node regenerates `+1.0` health; a starved one loses
@@ -29,6 +31,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     9. Money's surplus persists: the city map's `money` balance becomes
        `max(0.0, supplied + carried - demanded)`, a treasury rather than a
        per-tick flow.
+   10. Waste's *deficit* persists, as the mirror of that: the `waste_stock`
+       balance becomes the tick's waste `deficit`, so unprocessed waste adds to
+       the next tick's load and drains at `capacity - emissions`. Because the
+       stock enters through `carried/2` negated, a backlog drives `satisfaction`
+       below zero and health decay past `@decay_per_tick` — which is therefore a
+       coefficient, not a maximum.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -57,10 +65,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @resources Map.keys(@baseline_capacity)
   @no_resources Map.new(@resources, fn resource -> {resource, 0.0} end)
 
-  # The resources whose unspent supply survives the tick boundary. Every other
-  # resource discards its surplus; money is a treasury. Named as a list rather
-  # than tested against the atom :money at each site.
-  @carryover [:money]
+  # The resources whose unspent supply survives the tick boundary. Money is a
+  # treasury: its surplus carries forward as an asset. Waste is the mirror — its
+  # *deficit* carries forward as a liability, which is why `carried/2` negates it.
+  # Traffic does not accumulate: a landfill persists, a jam clears.
+  @carryover [:money, :waste]
 
   # The park amenity: parks per housing block multiply labour supply. Both values are
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
@@ -160,7 +169,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     money = new_balance(Map.fetch!(stats, :money))
 
-    {%{city_map | nodes: nodes, tick: city_map.tick + 1, money: money}, delta}
+    # The stock *is* the deficit — see `carried/2`. Read from the same pre-tick
+    # `stats` every node saw, so the landfill and the health decay it caused
+    # cannot disagree about the same tick.
+    waste_stock = Map.fetch!(stats, :waste).deficit
+
+    {%{city_map | nodes: nodes, tick: city_map.tick + 1, money: money, waste_stock: waste_stock},
+     delta}
   end
 
   @doc """
@@ -175,7 +190,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       amenity: labour_multiplier(nodes),
       amenity_marginal_labour: marginal_amenity_labour(nodes),
       amenity_labour: placed_amenity_labour(nodes),
-      stalled: stalled?(nodes, stats)
+      stalled: stalled?(nodes, stats, city_map.waste_stock)
     }
 
     SimulationMetrics.build(city_map, stats, derived)
@@ -269,10 +284,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     Map.update(acc, resource, amount, &(&1 + amount))
   end
 
-  # Derived from @carryover rather than matching on :money directly, so the list
-  # is the single place a reader looks to learn which resources are treasuries.
-  defp carried(city_map, resource) when resource in @carryover, do: city_map.money
+  # The guard stays on @carryover so the list remains the single place a reader
+  # looks to learn which resources carry a balance; the sign lives in the clauses
+  # below it.
+  #
+  # Waste's balance is returned **negated**, and that one sign is the whole
+  # mechanic. It makes `available = supplied + carried` read `supplied - stock`,
+  # and therefore makes `deficit = max(0.0, demanded - available)` equal
+  # `demanded - supplied + stock` — exactly the next tick's stock, with no second
+  # formula to keep in step.
+  defp carried(city_map, resource) when resource in @carryover,
+    do: carried_balance(city_map, resource)
+
   defp carried(_city_map, _resource), do: 0.0
+
+  defp carried_balance(city_map, :money), do: city_map.money
+  defp carried_balance(city_map, :waste), do: -city_map.waste_stock
 
   # Floors at zero: debt is not modelled. An upkeep that cannot be paid shows up
   # as satisfaction below 1.0, which the existing decay path already handles.
@@ -303,8 +330,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # the clamp holds them at zero, and demand — which is not health-scaled — does not
   # move. The next tick is therefore identical in every node.
   #
-  # Both clauses are load-bearing. Without the empty-list clause an untouched grid is
-  # "stalled", because `Enum.all?/2` over nothing is true. Without the satisfaction
+  # Both node clauses are load-bearing. Without the empty-list clause an untouched grid
+  # is "stalled", because `Enum.all?/2` over nothing is true. Without the satisfaction
   # test, one or two dead houses are called stalled the tick before they heal: they
   # draw 30 power against the free baseline of 40, so they are fully supplied at zero
   # health and regenerate. The cliff is `15n <= 40`.
@@ -312,12 +339,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # Written per-node rather than against `avg_health`: health is clamped non-negative,
   # so "every node at 0.0" and "the average is 0.0 over a non-empty set" say the same
   # thing, and this form has no float sum in it to reason about.
-  defp stalled?([], _stats), do: false
+  #
+  # The third argument closes a route the node check alone cannot see: a stalled node
+  # fixpoint says no *node* can recover on its own, but a draining landfill means the
+  # *city* still can, one tick from now, once the stock clears. `>=` and not `==`: a
+  # growing landfill (`deficit > stock`) is getting monotonically worse and stays
+  # stalled; only a draining one (`deficit < stock`) has a route back. The engine
+  # skips ticks entirely while stalled, so calling a draining city stalled would freeze
+  # the stock forever and the city could never satisfy `SimulationMetrics.game_over?/1`.
+  defp stalled?([], _stats, _stock), do: false
 
-  defp stalled?(nodes, stats) do
+  defp stalled?(nodes, stats, stock) do
     Enum.all?(nodes, fn node ->
       node.health == @min_health and worst_satisfaction(node, stats) < 1.0
-    end)
+    end) and Map.fetch!(stats, :waste).deficit >= stock
   end
 
   defp health_delta(worst) when worst >= 1.0, do: @regen_per_tick
