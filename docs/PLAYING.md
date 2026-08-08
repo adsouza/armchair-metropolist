@@ -32,8 +32,8 @@ moves, and no block changes its coordinates — the map grows away from the corn
 started in, rather than shifting your city around.
 
 The cells themselves shrink as the grid grows, so the whole map stays a comfortable size
-on screen rather than running off the edge: it reaches its full width at 6×6 and stays
-there.
+on screen rather than running off the edge: it reaches close to its full width at 6×6
+and stays around there from then on.
 
 Hover either grid square and the tooltip names the action it will perform — though either
 may name one you cannot afford: a placement when the balance is under that type's cost, a
