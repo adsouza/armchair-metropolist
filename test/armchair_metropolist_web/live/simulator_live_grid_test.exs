@@ -46,6 +46,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       # instead of the correct 40 * 30 = 1200 — 400 extra clickable divs whose clicks are
       # silently refused `:out_of_bounds`.
       assert cell_count(render(view)) == 1200
+
+      place(view, :park, 0, 0)
+      assert rendered_node(render(view), "0:0") =~ "font-size: 18px"
     end
   end
 
@@ -66,13 +69,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
 
       broadcast({:city_grew, CityMap.new(6, 6)})
       broadcast({:city_node_placed, Node.new(1, 1, :park)})
-      assert rendered_node(render(view), "1:1") =~ "width: 128px"
+      html = rendered_node(render(view), "1:1")
+      assert html =~ "width: 128px"
+      assert html =~ "font-size: 96px"
 
       eight = %{CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park)) | width: 8, height: 8}
       broadcast({:city_grew, eight})
 
       html = rendered_node(render(view), "1:1")
       assert html =~ "width: 96px"
+      assert html =~ "font-size: 64px"
       assert html =~ "left: 96px"
       refute html =~ "128px"
     end

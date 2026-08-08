@@ -1135,7 +1135,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   defp node_style(x, y, cell_size) do
-    "#{cell_style(x, y, cell_size)} font-size: #{min(32, max(16, div(cell_size, 3)))}px;"
+    # Keep the block at 18px at the 24px cell-size floor, but let it fill the generous
+    # cells of a young city: 96px in a 128px cell and 64px in a 96px cell. Below that
+    # boundary, two-thirds scaling reaches the same 64px without a visual jump.
+    font_size =
+      if cell_size >= 96 do
+        cell_size - 32
+      else
+        max(18, div(cell_size * 2, 3))
+      end
+
+    "#{cell_style(x, y, cell_size)} font-size: #{font_size}px; line-height: 1;"
   end
 
   defp status_class(:online), do: "bg-success/30 dark:bg-success/20"
