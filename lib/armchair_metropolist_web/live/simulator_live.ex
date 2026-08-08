@@ -34,6 +34,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
+  @block_emojis %{
+    power_plant: "⚡️",
+    water_plant: "💧",
+    industrial: "🏭",
+    transit_hub: "🚉",
+    residential: "🏘️",
+    commercial: "🛍️",
+    park: "🌳"
+  }
+
   # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
   # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
   # and 768px while cells shrink to @min_cell at the 32x32 cap.
@@ -325,16 +335,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               :for={{dom_id, node} <- @streams.nodes}
               id={dom_id}
               class={[
-                "absolute flex cursor-pointer items-center justify-center text-[8px]",
+                "absolute flex cursor-pointer items-center justify-center",
                 status_class(node.status)
               ]}
-              style={cell_style(node.x, node.y, @cell_size)}
+              style={node_style(node.x, node.y, @cell_size)}
               phx-click="demolish"
               phx-value-x={node.x}
               phx-value-y={node.y}
               title={"#{node.id} · #{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
             >
-              {short_label(node.type)}
+              {block_emoji(node.type)}
             </div>
           </div>
         </div>
@@ -717,12 +727,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                       by keyboard and expose button semantics to assistive tech. --%>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-xs w-full justify-start"
+                  class="btn btn-ghost btn-xs w-full justify-start gap-1.5"
                   phx-click="select_type"
                   phx-value-type={type}
                   aria-pressed={to_string(type == @selected_type)}
                 >
-                  {type}
+                  <span aria-hidden="true">{block_emoji(type)}</span>
+                  <span>{type}</span>
                 </button>
               </td>
               <td data-cell={"#{type}-count"} class="text-right tabular-nums">
@@ -1110,15 +1121,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     "left: #{x * cell_size}px; top: #{y * cell_size}px; width: #{cell_size}px; height: #{cell_size}px;"
   end
 
-  defp status_class(:online), do: "bg-success/70"
+  defp node_style(x, y, cell_size) do
+    "#{cell_style(x, y, cell_size)} font-size: #{min(32, max(16, div(cell_size, 3)))}px;"
+  end
+
+  defp status_class(:online), do: "bg-success/30 dark:bg-success/20"
   defp status_class(:degraded), do: "bg-warning/70"
   defp status_class(:offline), do: "bg-error/70"
 
-  defp short_label(type) do
-    type
-    |> Atom.to_string()
-    |> String.split("_")
-    |> Enum.map_join("", &String.first/1)
-    |> String.upcase()
-  end
+  defp block_emoji(type), do: Map.fetch!(@block_emojis, type)
 end

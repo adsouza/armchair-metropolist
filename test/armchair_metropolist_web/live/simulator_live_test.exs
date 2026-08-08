@@ -29,6 +29,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   # The topic for the city id this test's session (below) pins the view to —
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
   @topic CityEngine.topic(CityEngine.default_city_id())
+  @block_emojis [
+    power_plant: "⚡️",
+    water_plant: "💧",
+    industrial: "🏭",
+    transit_hub: "🚉",
+    residential: "🏘️",
+    commercial: "🛝️",
+    park: "🌳"
+  ]
 
   setup %{conn: conn} = context do
     previous_repo = Application.get_env(:armchair_metropolist, :snapshot_repository)
@@ -112,7 +121,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     end
 
     untouched_before = rendered_node(render(view), "6:7")
-    assert untouched_before =~ "bg-success"
+    assert untouched_before =~ "bg-success/30"
+    assert untouched_before =~ "dark:bg-success/20"
 
     degraded = %Node{Node.new(4, 5, :power_plant) | health: 41.0, status: :degraded}
 
@@ -338,6 +348,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     assert render(view) =~ ~s{id="1:1"}
   end
 
+  @tag :roomy_city
+  test "placed blocks use a distinct emoji for every block type", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    for {{type, _emoji}, x} <- Enum.with_index(@block_emojis) do
+      send(view.pid, {:city_node_placed, Node.new(x, 0, type)})
+    end
+
+    render(view)
+
+    for {{_type, emoji}, x} <- Enum.with_index(@block_emojis) do
+      text =
+        view
+        |> element(~s{[id="#{x}:0"]})
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.text()
+        |> String.trim()
+
+      assert text == emoji
+    end
+  end
+
   test "selecting a type changes what placing a cell creates", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
@@ -484,6 +517,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "legend" do
+    test "shows each block emoji immediately before its type label", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for {type, emoji} <- @block_emojis do
+        selector = ~s{#legend-row-#{type} button}
+
+        assert has_element?(view, "#{selector} > span[aria-hidden=true] + span")
+        assert view |> element(selector) |> render() =~ "gap-1.5"
+
+        text =
+          view
+          |> element(selector)
+          |> render()
+          |> LazyHTML.from_fragment()
+          |> LazyHTML.text()
+          |> String.split()
+          |> Enum.join(" ")
+
+        assert text == "#{emoji}#{type}"
+      end
+    end
+
     # Two power plants at 80 each is 160, comfortably inside the 400 opening grant —
     # measured, this test passes with the tag removed, so the treasury is insulation
     # rather than necessity. It is kept because it pins a round balance that neither the
