@@ -1528,22 +1528,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "the view resizes when the grid grows" do
-    test "an existing node's geometry follows the new cell size", %{conn: conn} do
-      # 6x6 -> 8x8 and NOT 2x2 -> 4x4. This is the whole point of the test: cell size is
-      # 128 at 2x2, 4x4 and 6x6, so across those growths correct and broken code emit
-      # byte-identical geometry and the test cannot fail. 6x6 -> 8x8 is the first growth
-      # that moves cell size, 128 -> 96.
+    test "an already-streamed node's geometry follows the new cell size", %{conn: conn} do
+      # 6x6 -> 8x8 and NOT 2x2 -> 4x4: cell size is 128 at 2x2, 4x4 and 6x6, so across those
+      # growths correct and broken code emit byte-identical geometry. 6x6 -> 8x8 is the first
+      # growth that moves it, 128 -> 96.
       #
-      # A LiveView stream does not re-render existing entries when an assign changes --
-      # `LiveStream`'s Enumerable reduces over pending inserts only -- so without an
+      # The node is streamed by {:city_node_placed, ...} *before* the growth, deliberately.
+      # An earlier version of this test introduced it through the growth payload itself, so
+      # a handler that did not re-stream made the node *absent* rather than *stale* -- it
+      # could not tell those two failure modes apart, and stale geometry is the one that
+      # matters. A LiveView stream does not re-render existing entries when an assign
+      # changes (`LiveStream`'s Enumerable reduces over pending inserts only), so without an
       # explicit re-stream this node keeps `width: 128px` on a 96px grid.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      six = CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park))
-      broadcast({:city_grew, six})
+      broadcast({:city_grew, CityMap.new(6, 6)})
+      broadcast({:city_node_placed, Node.new(1, 1, :park)})
       assert rendered_node(render(view), "1:1") =~ "width: 128px"
 
-      eight = %{six | width: 8, height: 8}
+      eight = %{CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park)) | width: 8, height: 8}
       broadcast({:city_grew, eight})
 
       html = rendered_node(render(view), "1:1")
