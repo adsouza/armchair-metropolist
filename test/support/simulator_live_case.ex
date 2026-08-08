@@ -60,14 +60,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         StubSnapshotRepository.set_initial(initial_snapshot(context))
         start_supervised!({CityEngine, city_id: CityEngine.default_city_id()})
 
-        # Every test but the two-visitor one below shares this session's city id with
+        # Every test but the two-visitor one (in `simulator_live_test.exs`) shares this
+        # session's city id with
         # `start_supervised!`'s engine above, exactly as a single shared deployment did
         # before Task 4. Without this, EnsureCityId (router.ex) would hand each `conn` its
         # own random id, mount/3 would open an engine the DynamicSupervisor owns instead of
         # this test's `start_supervised!`, and it would outlive the test that opened it.
         conn = Plug.Test.init_test_session(conn, %{"city_id" => CityEngine.default_city_id()})
 
-        # The two-visitor test below still mounts two more cities through the production
+        # The two-visitor test (`simulator_live_test.exs`) still mounts two more cities through the production
         # ensure_started/1 path rather than start_supervised!/1, so nothing but this stops
         # them. ExUnit tears down `start_supervised!`'s "default" engine above before
         # on_exit callbacks run, so anything this sweep finds is one of those two leaks —
@@ -156,7 +157,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # placement this test means to drive itself, through a real click, afterwards.
       #
       # Laid out by index across the 6x6 grid (rows y = 0..3 filled, plus (0, 4)), which
-      # leaves (1, 4) free for the real click below. `residential` at 15 each is comfortably
+      # leaves (1, 4) free for the real click in `simulator_live_grid_test.exs`. `residential`
+      # at 15 each is comfortably
       # affordable at the seeded balance, for both the 25 free nodes and the one placed live.
       defp initial_snapshot(%{crowded_six_by_six: true}) do
         city =
@@ -170,12 +172,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       defp initial_snapshot(_context), do: {:error, :not_found}
 
       # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
-      # ones, purely so the compiler sees all of that function's clauses grouped together.
-      # `mix.exs` sets `elixirc_paths(:test)` to only "lib" and "test/support", so this file
-      # is outside what `mix precommit`'s `--warnings-as-errors` compiles and the "clauses
-      # ... should be grouped together" warning it would otherwise raise never gates the
-      # build — but it is a real warning worth not having, and `mix test` prints it on
-      # every run, which is reason enough to keep the clauses together.
+      # ones, so the compiler sees all of that function's clauses grouped together.
+      #
+      # This used to be advisory and is now enforced. `mix.exs` sets `elixirc_paths(:test)` to
+      # "lib" and "test/support", and these clauses lived in a `_test.exs` file until the split
+      # — outside what `--warnings-as-errors` compiles, so the "clauses ... should be grouped
+      # together" warning printed on every `mix test` and gated nothing. Here in `test/support`
+      # it is compiled, so ungrouping these clauses now fails `mix precommit` outright.
       defp house_and_park(money) do
         city =
           CityMap.new(40, 30)
@@ -210,7 +213,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       end
 
       # How many background cells the grid rendered. A plain regex over the markup rather than
-      # a DOM query — not because a parser is unavailable: `cost_text/2` above uses `LazyHTML`
+      # a DOM query — not because a parser is unavailable: `cost_text/2`, in
+      # `simulator_live_legend_test.exs`, uses `LazyHTML`
       # for exactly this kind of parsing. Counting is what makes the regex the right choice
       # here regardless: this only needs the number of `phx-click="place"` attribute
       # occurrences, which needs no parse tree at all, whereas `LazyHTML.text/1` throws away
