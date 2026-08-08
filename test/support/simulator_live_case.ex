@@ -111,7 +111,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       defp initial_snapshot(%{stalled_city: true}), do: {:ok, {0, stalled_city(0.0)}}
 
       # The same city with money in the bank — stalled, but a rescue is still affordable.
-      defp initial_snapshot(%{stalled_solvent_city: true}), do: {:ok, {0, stalled_city(105.0)}}
+      defp initial_snapshot(%{stalled_solvent_city: true}),
+        do: {:ok, {0, stalled_city(105.0, 7)}}
 
       # `@tag :stalled_tiny_city` seeds the stalled city on the starting 2x2 grid, so the
       # banner's width can be pinned at the smallest grid the game ever renders. Three dead
@@ -188,9 +189,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         %{city | money: money}
       end
 
-      defp stalled_city(money) do
+      defp stalled_city(money, count \\ 3) do
         city =
-          Enum.reduce(0..2, CityMap.new(40, 30), fn x, map ->
+          Enum.reduce(0..(count - 1), CityMap.new(40, 30), fn x, map ->
             CityMap.put_node(map, %Node{
               Node.new(x, 0, :residential)
               | health: 0.0,

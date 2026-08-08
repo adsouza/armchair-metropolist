@@ -6,7 +6,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        capacity for `r`, plus whatever balance `r` carried over from the
-       previous tick (only money and waste carry anything; see step 10 for
+       previous tick (only money and waste carry anything; see step 11 for
        waste's balance, which is negated). Labour is then
        multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
        both sides health-weighted — so parks raise the workforce their housing
@@ -15,24 +15,27 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
-    3. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
+    3. Power, water, waste disposal and labour shortfalls are bought from the
+       external market for one money per unit. Only treasury carried into the
+       tick is spendable, after reserving any net upkeep. If it cannot cover
+       every shortfall, the same fraction of each is bought; traffic is never
+       purchasable.
+    4. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
        nothing demands the resource, where `available` is supply plus the
-       carried balance. **Not** floored at zero: a large enough backlog drives
-       this negative, which is what lets waste's stock (see step 10) decay
-       health past `@decay_per_tick` rather than at it.
-    4. Each node looks at the satisfaction of only the resources it consumes
+       carried balance and purchases. **Not** floored at zero: a large enough
+       unfunded backlog drives this negative.
+    5. Each node looks at the satisfaction of only the resources it consumes
        and takes the worst of them.
-    5. A fully supplied node regenerates `+1.0` health; a starved one loses
+    6. A fully supplied node regenerates `+1.0` health; a starved one loses
        `(1 - worst) * 6.0`.
-    6. Health is clamped to `0.0..100.0` and status is re-derived from it.
-    7. The tick counter advances by one.
-    8. The returned delta holds only those nodes whose display signature
+    7. Health is clamped to `0.0..100.0` and status is re-derived from it.
+    8. The tick counter advances by one.
+    9. The returned delta holds only those nodes whose display signature
        (`{round(health), status}`) actually changed, so sub-pixel health
        movement does not push a full-grid diff to consumers.
-    9. Money's surplus persists: the city map's `money` balance becomes
-       `max(0.0, supplied + carried - demanded)`, a treasury rather than a
-       per-tick flow.
-   10. Waste's *deficit* persists, as the mirror of that: the `waste_stock`
+   10. Money's surplus persists after market spending: the city map's `money`
+       balance becomes `max(0.0, supplied + carried - demanded - purchases)`.
+   11. Waste's *deficit* persists, as the mirror of that: the `waste_stock`
        balance becomes the tick's waste `deficit`, so unprocessed waste adds to
        the next tick's load and drains at `capacity - emissions`. Because the
        stock enters through `carried/2` negated, a backlog drives `satisfaction`
@@ -48,7 +51,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
 
-  # No free workers: labour comes only from housing, which is the point of the resource.
+  # No free workers: local labour comes only from housing; imports cost treasury money.
   # No free income either: money has no baseline, which is what forces commercial to be
   # built once the capacity and load tables arrive.
   #
@@ -71,6 +74,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # Waste is the mirror: its *unmet demand* carries forward as a liability, which is why
   # `carried/2` negates it. Traffic does not accumulate: a landfill persists, a jam clears.
   @carryover [:money, :waste]
+
+  # An external market backstops shortages without becoming another resource. Traffic is
+  # absent deliberately: congestion cannot be imported away. Prices also define the
+  # eligible set, so eligibility and cost cannot drift apart.
+  @market_prices %{power: 1.0, water: 1.0, waste: 1.0, labour: 1.0}
 
   # The park amenity: parks per housing block multiply labour supply. Both values are
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
@@ -114,12 +122,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec baseline_capacity() :: %{Node.resource() => float()}
   def baseline_capacity, do: @baseline_capacity
 
+  @doc "The money price of one externally purchased unit, by eligible resource."
+  @spec market_prices() :: %{Node.resource() => float()}
+  def market_prices, do: @market_prices
+
   @doc """
-  Supply, demand, deficit and satisfaction for every resource in the city.
+  Supply, purchases, demand, deficit and satisfaction for every resource in the city.
 
   Always returns an entry for all six resources, even on an empty map. A node's
   capacity is scaled by that node's health; load is not scaled at all. The free
-  baseline folded into `supplied` is scaled by nothing — it belongs to no node.
+  baseline folded into `supplied` is scaled by nothing — it belongs to no node. Market
+  capacity is reported separately as `purchased`.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
   def resource_stats(city_map) do
@@ -127,29 +140,46 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     supply = total_supply(nodes)
     demand = total_demand(nodes)
 
-    Map.new(@resources, fn resource ->
-      supplied = Map.fetch!(supply, resource)
-      carried = carried(city_map, resource)
-      demanded = Map.fetch!(demand, resource)
-      available = supplied + carried
+    raw_stats =
+      Map.new(@resources, fn resource ->
+        supplied = Map.fetch!(supply, resource)
+        carried = carried(city_map, resource)
+        demanded = Map.fetch!(demand, resource)
 
-      stats = %{
-        supplied: supplied,
-        carried: carried,
-        demanded: demanded,
-        deficit: max(0.0, demanded - available),
-        satisfaction: satisfaction(available, demanded),
-        # Same ratio, minus `carried`: the per-tick economy, ignoring any treasury
-        # covering for it. `worst_satisfaction/2` (health decay), the deficit
-        # notification and `tightest_resource/1` all answer "what is damaging the
-        # city right now", so they keep the balance-inclusive `satisfaction` above —
-        # a deficit savings are covering must not decay anything or page anyone.
-        # The legend's totals cell answers a different question, "is my per-tick
-        # economy balanced", so it reads this field instead.
-        flow_satisfaction: satisfaction(supplied, demanded)
-      }
+        {resource,
+         %{
+           supplied: supplied,
+           carried: carried,
+           purchased: 0.0,
+           demanded: demanded,
+           deficit: max(0.0, demanded - supplied - carried),
+           satisfaction: satisfaction(supplied + carried, demanded),
+           # Same ratio, minus `carried`: the per-tick economy, ignoring any treasury
+           # covering for it. Purchases are a current-tick flow, so the final value below
+           # includes them on the supplied side.
+           flow_satisfaction: satisfaction(supplied, demanded)
+         }}
+      end)
 
-      {resource, stats}
+    # Imports are bought from the treasury already on hand. This tick's income reaches
+    # the treasury at the boundary and can fund the next tick; it does not get spent
+    # before it has arrived. Net upkeep is reserved first, so imports can never make a
+    # city miss an otherwise-affordable bill.
+    purchase_budget = min(city_map.money, raw_stats |> Map.fetch!(:money) |> new_balance())
+    purchases = market_purchases(raw_stats, purchase_budget)
+
+    Map.new(raw_stats, fn {resource, stats} ->
+      purchased = Map.get(purchases, resource, 0.0)
+      available = stats.supplied + stats.carried + purchased
+
+      {resource,
+       %{
+         stats
+         | purchased: purchased,
+           deficit: max(0.0, stats.demanded - available),
+           satisfaction: satisfaction(available, stats.demanded),
+           flow_satisfaction: satisfaction(stats.supplied + purchased, stats.demanded)
+       }}
     end)
   end
 
@@ -180,7 +210,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         {Map.put(nodes, key, advanced), delta}
       end)
 
-    money = new_balance(Map.fetch!(stats, :money))
+    money = max(0.0, new_balance(Map.fetch!(stats, :money)) - market_spend(stats))
 
     # The stock *is* the deficit — see `carried/2`. Read from the same pre-tick
     # `stats` every node saw, so the landfill and the health decay it caused
@@ -205,6 +235,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         amenity: labour_multiplier(nodes),
         amenity_marginal_labour: marginal_amenity_labour(nodes),
         amenity_labour: placed_amenity_labour(nodes),
+        market_spend: market_spend(stats),
         stalled: stalled
       }
       |> Map.merge(solvency(city_map, nodes, stats, stalled))
@@ -436,6 +467,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       node.type
       |> Node.load()
       |> Enum.reduce(acc, &add_resource/2)
+    end)
+  end
+
+  # When the budget cannot cover every shortage, fund the same fraction of each one.
+  # A sequential allocation would turn resource display order into a gameplay priority.
+  defp market_purchases(stats, budget) do
+    required_cost =
+      Enum.reduce(@market_prices, 0.0, fn {resource, price}, total ->
+        total + Map.fetch!(stats, resource).deficit * price
+      end)
+
+    funded_fraction =
+      if required_cost > 0.0, do: min(1.0, budget / required_cost), else: 0.0
+
+    Map.new(@market_prices, fn {resource, _price} ->
+      {resource, Map.fetch!(stats, resource).deficit * funded_fraction}
+    end)
+  end
+
+  defp market_spend(stats) do
+    Enum.reduce(@market_prices, 0.0, fn {resource, price}, total ->
+      total + Map.fetch!(stats, resource).purchased * price
     end)
   end
 

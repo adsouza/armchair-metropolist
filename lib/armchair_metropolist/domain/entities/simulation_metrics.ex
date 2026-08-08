@@ -6,12 +6,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   @typedoc """
   Two satisfaction figures, on two different bases. `satisfaction` is computed
-  over `supplied + carried` — the balance-inclusive figure that drives health
+  over `supplied + carried + purchased` — the balance-inclusive figure that drives health
   decay, the deficit notification and the *Tightest* line, all of which answer
   "what is damaging the city right now". `flow_satisfaction` is the same ratio
-  computed over `supplied` alone, ignoring `carried` entirely — the figure the
+  computed over `supplied + purchased`, ignoring `carried` entirely — the figure the
   legend's totals cell renders, answering "is my per-tick economy balanced".
-  Most resources carry nothing (`carried: 0.0`), so the two agree. Money and
+  `purchased` records external-market capacity added for this tick. Most resources
+  carry nothing (`carried: 0.0`), so the two satisfaction figures agree. Money and
   waste are the two that do, and they diverge in opposite directions: money's
   carried balance is a treasury, so `satisfaction` never sits *below*
   `flow_satisfaction` — savings can only cover a flow deficit, never worsen one.
@@ -24,6 +25,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   @type resource_stats :: %{
           supplied: float(),
           carried: float(),
+          purchased: float(),
           demanded: float(),
           deficit: float(),
           satisfaction: float(),
@@ -51,6 +53,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           by_type: %{Node.node_type() => type_stats()},
           money: float(),
           waste_stock: float(),
+          market_spend: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
           amenity_labour: float(),
@@ -101,6 +104,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     amenity: 1.0,
     amenity_marginal_labour: 0.0,
     amenity_labour: 0.0,
+    market_spend: 0.0,
     stalled: false,
     money_ceiling: 0.0,
     insolvent: false,
@@ -116,6 +120,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             by_type: %{},
             money: 0.0,
             waste_stock: 0.0,
+            market_spend: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
             amenity_labour: 0.0,
@@ -144,7 +149,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   travel this way rather than being derived here even though the first two look local: it is
   computed by projecting the city forward with `advance_tick/2`.
 
-  All eight are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  `:market_spend` is the money those automatic purchases consume this tick.
+
+  All nine are computed by `Domain.Services.SimulationCalculator`, which this module cannot
   call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
   here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
@@ -164,6 +171,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       by_type: build_by_type(nodes),
       money: city_map.money,
       waste_stock: city_map.waste_stock,
+      market_spend: Map.fetch!(derived, :market_spend),
       amenity: Map.fetch!(derived, :amenity),
       amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
       amenity_labour: Map.fetch!(derived, :amenity_labour),

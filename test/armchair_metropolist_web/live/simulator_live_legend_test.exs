@@ -199,6 +199,33 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       refute view |> element(~s{[data-total="power"]}) |> render() =~ "·"
     end
 
+    test "purchased capacity appears in totals and market spending appears in metrics",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      power =
+        stat(40.0, 60.0)
+        |> Map.merge(%{purchased: 20.0, deficit: 0.0, satisfaction: 1.0, flow_satisfaction: 1.0})
+
+      metrics = %{empty_city_metrics() | resources: %{power: power}, market_spend: 20.0}
+      send(view.pid, {:city_metrics, metrics})
+      render(view)
+
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "60/60"
+      assert view |> element(~s{[data-total="power"]}) |> render() =~ "100.0%"
+      assert view |> element("#metrics-market") |> render() =~ "Automatic purchases: 20.0/tick"
+
+      footnote =
+        view
+        |> element("#legend-footnote")
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.text()
+        |> String.replace(~r/\s+/, " ")
+
+      assert footnote =~ "1 money per unit"
+    end
+
     # Finding 1: a treasury covering a per-tick deficit must not make the totals
     # cell contradict its own two halves. Money supplied 13, demanded 23, but a
     # treasury of 487 (carried) brings the balance-inclusive `satisfaction` to

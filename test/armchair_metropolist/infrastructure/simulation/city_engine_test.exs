@@ -651,7 +651,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "names the resources in deficit, worst first", %{city_id: city_id} do
-      seed_funded_city()
+      # Exactly enough to place the ten shops, leaving no treasury for imports.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 400.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -659,28 +660,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert_receive {:notified, title, body}, 1_000
       assert is_binary(title)
-      assert body =~ "power at 18% of demand"
+      assert body =~ "power at 67% of demand"
 
-      # Ten commercial nodes against baseline capacity alone, as plain ratios:
-      # labour 0/80 (no housing at all, so 0%), power 40/220, waste 40/140,
-      # traffic 40/90, water 40/80. The order below is the severity signal the
-      # operator reads first, so it is pinned, not incidental — but it is not
-      # simply those ratios sorted, because waste is not a plain ratio here.
-      #
-      # Waste sorts ahead of labour despite labour being wholly unsupplied: a
-      # backlog drives satisfaction *below* zero (here -0.429) while an unmet
-      # flow bottoms out at 0.0. That ordering is the accumulating-stock
-      # mechanic surfacing, not a regression. This is the first tick the
-      # deficit exists, so `advance_tick/1` writes a fresh waste_stock of 100.0
-      # (140 demanded - 40 supplied) into the very map these post-tick metrics
-      # are read from, making waste's satisfaction (40 - 100) / 140 = -0.429 —
-      # worse than labour's floor-of-zero 0/80.
+      # The first tick earns 300, which reaches the post-tick treasury and is then
+      # available to the metrics' next-tick market plan. That budget is split across
+      # power, water, waste and labour; traffic remains wholly unpurchasable. Waste also
+      # carries the first tick's backlog, so it still ranks first. The order below is the
+      # severity signal the operator reads first and is pinned rather than incidental.
       named =
         body
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["waste", "labour", "power", "traffic", "water"]
+      assert named == ["waste", "traffic", "labour", "power", "water"]
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
@@ -778,7 +770,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     # `starve/1` idiom of ten placements.
     test "a waste backlog is reported at 0% rather than a negative percentage",
          %{city_id: city_id} do
-      seed_funded_city()
+      # Exactly enough to place the ten houses, leaving no treasury to buy disposal.
+      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 150.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :residential) end)
 
@@ -1145,7 +1138,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # houses are still at 0.0 and the plant itself has decayed to 40.0. That is a
       # worse deficit than the 45/40 power shortfall it replaced. The clock restarting
       # is the whole claim here; do not restate it as a recovery.
-      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 105.0}}})
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(7, 0.0) | money: 105.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
@@ -1164,12 +1157,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       #
       # Seeded at exactly 10.0 — the demolition fee, and the `bankrupt` boundary. At 9
       # the command is refused and this test would assert nothing about the freeze.
-      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(3, 0.0) | money: 10.0}}})
+      StubSnapshotRepository.set_initial({:ok, {3, %{dead_city(7, 0.0) | money: 112.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{metrics: %{stalled: true}}} = CityEngine.snapshot(city_id)
 
-      assert {:ok, _id} = CityEngine.demolish(city_id, 2, 0)
+      assert {:ok, _id} = CityEngine.demolish(city_id, 6, 0)
 
       assert {:ok, %{metrics: %{stalled: false}}} = CityEngine.snapshot(city_id)
     end
@@ -1188,7 +1181,15 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # `stalled: true` forward, or the very next `{:tick, ...}` still matches
       # `handle_info({:tick, _}, %{metrics: %{stalled: true}})` and the city never
       # ticks again — the landfill would sit at 130 forever instead of draining.
-      seeded = %{dead_city(5, 0.0) | waste_stock: 130.0, money: 1000.0}
+      dead_parks =
+        for x <- 0..6,
+            do: %Node{Node.new(x, 1, :park) | health: 0.0, status: :offline}
+
+      seeded =
+        Enum.reduce(dead_parks, %{dead_city(5, 0.0) | waste_stock: 130.0, money: 20.0}, fn
+          node, city -> CityMap.put_node(city, node)
+        end)
+
       StubSnapshotRepository.set_initial({:ok, {3, seeded}})
       start_supervised!({CityEngine, city_id: city_id})
 
@@ -1358,17 +1359,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # of the moduledoc's "three byte-identical notifications" story: there the flag was
       # too eager, here a leftover flag would be too quiet.
       #
-      # One commercial block on an otherwise empty grid demands labour (8) the reset city
-      # cannot supply at all - no housing exists yet, so labour's baseline is the 0.0 every
-      # resource without free capacity gets - which makes this deficit both cheap (40 of the
-      # 400 opening grant) and unambiguously new rather than a continuation of the power
-      # shortfall reset just wiped away.
+      # Five commercial blocks draw 45 traffic against the baseline's 40. Traffic is the
+      # one shortfall the external market cannot buy away, so this remains a real deficit
+      # despite the reset city's opening grant.
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert :ok = CityEngine.reset(city_id)
 
-      {:ok, _node} = CityEngine.place(city_id, 0, 0, :commercial)
+      for {x, y} <- [{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}] do
+        {:ok, _node} = CityEngine.place(city_id, x, y, :commercial)
+      end
+
       broadcast_tick(1)
 
       assert_receive {:notified, _title, _body}, 1_000

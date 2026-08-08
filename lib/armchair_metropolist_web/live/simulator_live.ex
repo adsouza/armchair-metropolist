@@ -818,7 +818,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@detail} id="legend-footnote" class="mt-1 max-w-xl text-xs opacity-60">
         Totals include the free baseline of 40, belonging to no type: power and water
         supplied, waste and traffic absorbed. Labour and money have no free baseline.
-        Labour's total also includes the park amenity; park's own row carries it.
+        Labour's total also includes the park amenity; park's own row carries it. Shortfalls
+        in power, water, waste disposal and labour are bought automatically for 1 money per
+        unit while the treasury can pay; purchased units count toward supplied totals.
       </p>
     </div>
     """
@@ -865,6 +867,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
+      <p :if={@metrics.market_spend > 0.0} id="metrics-market">
+        Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick
+      </p>
       <%!-- Only while the drain is permanent, which is what `insolvent` means, and only while
             the projection actually found a deadline inside its horizon. A city merely spending
             faster than it earns today recovers as its earners heal, so a countdown there would
@@ -1068,12 +1073,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       stats ->
         # `flow_satisfaction`, not `satisfaction`: the two numbers shown are demanded
-        # and supplied, both flow-only, so the percentage under them has to be
+        # and flow supply (local plus purchased), so the percentage under them has to be
         # computed on that same basis or it stops being derivable from what's on
         # screen. For money, `satisfaction` also counts the treasury and would make
         # this cell contradict its own two halves (23/13 while reading 100%).
         {
-          "#{round(stats.demanded)}/#{round(stats.supplied)}",
+          "#{round(stats.demanded)}/#{round(stats.supplied + Map.get(stats, :purchased, 0.0))}",
           "#{Float.round(stats.flow_satisfaction * 100, 1)}%"
         }
     end

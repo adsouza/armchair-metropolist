@@ -53,7 +53,10 @@ more of the problem. A dash means the type does not touch that resource at all,
 which is different from netting to zero. The totals row gives city-wide demand, supply
 and satisfaction, per tick. Four of the six resources have a free baseline of 40 built
 in — supply for power and water, absorption for waste and traffic; labour and money
-have none, deliberately — see below.
+have none, deliberately — see below. When the city is short of power, water, waste
+disposal or labour, it automatically buys the missing amount for **1 money per unit**.
+Purchased capacity appears in the supplied total, and the Metrics panel shows the cost
+as *Automatic purchases*. Traffic cannot be bought.
 
 **Show detail / Hide detail** collapses the legend to its type, count and cost columns,
 which is how you make the window narrower — the six resource columns are most of its
@@ -65,12 +68,11 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 
 **Every block needs staff except the homes the staff live in.** Power plants, water
 plants, transit hubs, parks, industry and commerce all draw labour; `residential` is the
-only thing that supplies it. So a city with no housing cannot run *any* infrastructure —
-measured, a lone power plant is offline in 14 ticks and dead in 17, and so is a lone
-anything-that-needs-staff.
+only thing that produces it locally. Imported labour can bridge the gap while the treasury
+lasts, but housing is the cheaper durable source.
 
-Place one residential block before anything else. It needs no support at all on an empty
-grid, and it is the only block that will still be standing in a minute if you walk away.
+Place one residential block before anything else. It needs no support on an empty grid,
+earns 1 per tick, and never needs imports there.
 
 This qualifies the "build producers first" rule below rather than replacing it: demand
 still arrives instantly and in full, so a consumer placed before its support still does
@@ -103,9 +105,9 @@ radius or distance cost anywhere in the domain, and the spec never discussed one
 that ever changes, the characterisation test in `simulation_calculator_test.exs` fails
 and takes this section with it.
 
-## Why your first city dies
+## Why your first city runs out of runway
 
-**On the third residential block.**
+**The third residential block starts importing power.**
 
 The city starts with free baseline capacity — 40 each of power, water, waste and
 traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
@@ -120,21 +122,14 @@ emitters. Traffic does not work this way: a jam clears at the tick boundary, and
 only waste accumulates.
 
 Labour and money have no free baseline; they arrive only once you build for them. A
-residential block draws `power 15`. Two blocks come to 30 and hold at full health
-forever. The third makes 45, against a supply of 40, and from that moment the city
-is dying.
+residential block draws `power 15`. Two blocks come to 30 and hold at full health forever.
+The third makes 45, so the city buys 5 power per tick. Three houses earn only 3: the
+treasury falls by 2 per tick even though every resource reads 100% supplied. Starting from
+the grant, that buffer lasts about 200 ticks; once it is gone, health begins to fall.
 
-| residential, no support | worst satisfaction | after 200 ticks    |
-|-------------------------|--------------------|--------------------|
-| 1–2                     | 1.0                | 100 health, stable |
-| 3                       | 0.889              | every node dead    |
-| 19                      | −5.32              | every node dead    |
-
-The 1–2 and 3 rows never emit enough waste to cross the 40 baseline, so their worst
-satisfaction is set by power, on the very first tick, and never moves. 19 does cross it:
-power is worst for one tick (0.14), then the landfill takes over and keeps deepening
-every tick after — by the time the city freezes at tick 7, waste satisfaction has fallen
-to −5.32, which is the figure above.
+Larger unsupported neighbourhoods exhaust the treasury faster, and seven houses already
+exceed the unpurchasable traffic baseline. Imports buy time and can make a deliberately
+import-dependent city viable, but they do not make capacity planning optional.
 
 ## The one rule
 
@@ -157,10 +152,10 @@ screen with the legend collapsed.
 
 The cheapest city that earns anything is three blocks — one house, one park, one
 commercial, 75 in all, holding at full health and **+28 per tick** (see `park` in the
-reference below). Build that first. It is also a dead end, and the shape of the dead end
-is the most useful thing on this page.
+reference below). Build that first. It is a useful staging point: its income can pay for
+some imports while you expand, but local infrastructure leaves a much larger margin.
 
-**Nothing you can add to it works.** Not one of the seven:
+Without imports, every possible fourth block overruns something:
 
 <!-- generated:opening_wall -->
 | add this to the earner | what overruns |
@@ -178,13 +173,15 @@ Three different walls, and none of them is money. The free baseline is already c
 of its 40 power and 38 of its 40 water, so five of the seven overrun one of those on the
 tick they go up. `commercial` and `industrial` overrun those too, but they run out of
 something scarcer first: one house and one park staff ten workers, of which the shop you
-already have takes eight, and a second shop wants another eight.
+already have takes eight, and a second shop wants another eight. The market now fills those
+gaps if the treasury can pay; the table tells you what that convenience will cost each tick.
 
 So the way forward is a power plant and a water plant. Those need *each other*: the power
 plant drinks 20 water, the water plant draws 25 power, and neither fits beside the earner.
 What is in the way is the shop. Its 22 power is exactly what leaves only 3 free — take it
 out and the house and park draw 15, leaving 25, which is the water plant's draw to the
-unit. **You cannot own a shop while you build the waterworks.**
+unit. Selling it is the import-free route; keeping it is faster, but makes the treasury pay
+for the temporary shortfall.
 
 That is why the second city is a *sequence* and not a next step, and why it goes up with
 nothing earning:
@@ -218,9 +215,9 @@ resource whose surplus survives a tick, and a shortfall it covers costs nothing 
 treasury is what pays the plants' and parks' upkeep until the shop arrives to take over.
 What the grant buys you here is not blocks, it is the right to take your time.
 
-**The shop goes last.** This sharpens the "one house, then producers, then the rest" rule
-above rather than contradicting it: `commercial` is emphatically "the rest", and putting it
-up early is the one mistake this whole sequence is arranged to avoid.
+**The shop goes last in the import-free sequence.** Putting it up earlier is now a valid
+shortcut when you have priced the automatic purchases and kept enough cash for the next
+construction.
 
 ### If you need longer between clicks
 
@@ -243,10 +240,9 @@ the detour.
 | 60 ticks (60 s) | 2000 |
 <!-- /generated:opening_pace -->
 
-Do not use the extra money to take the *other* route, the tempting one that puts the shop
-up before the plants. No size of treasury rescues that: health decays at a rate set by the
-size of the shortfall, and the treasury is not one of the terms. A city short of water
-loses health just as fast with 2000 in the bank as with 20.
+Extra money can fund the other route, with the shop before the plants. Watch *Automatic
+purchases* as well as the block prices: the market charge repeats every tick, so a large
+treasury is runway rather than proof that the layout is sustainable.
 
 ## What a support set can carry
 
@@ -256,17 +252,18 @@ health:
 <!-- generated:capacities -->
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
-| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 5 | **5** | 11 | 0.45 |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 6 | **7** | 14 | 0.5 |
-| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 10 | **12** | 24 | 0.5 |
+| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 1 | **7** | 13 | 0.54 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 2 | **10** | 17 | 0.59 |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 3 | **14** | 26 | 0.54 |
 <!-- /generated:capacities -->
 
-About 0.5 residential per tile is the ceiling. Two practical consequences:
+These measured ceilings include sustainable market purchases where the support set's
+income can pay for them. Two practical consequences:
 
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
-before its support starts doing damage on the very next tick. This is subordinate to
-housing, though: a producer placed on an empty grid has no staff and dies in 17 ticks.
-See "Build a house first" above.
+before its support starts an import bill on the very next tick. This is subordinate to
+housing, though: a producer placed on an empty grid must buy its staff until housing
+exists. See "Build a house first" above.
 
 **Place one node at a time and watch the panel.** Because the six resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
@@ -287,58 +284,30 @@ warning you get first and the way back out.
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
 plants, transit hubs, parks, industry and commerce all draw labour, and residential is the
-only thing that supplies it — so build a support set with too few homes and those blocks
-starve for staff instead of power or water, and the shortfall just shows up in a different
-column.
+only local source. A support set with fewer homes must import its missing workers; the
+minimum is where the whole economy, including that market bill, remains sustainable.
 
 ## Rescuing a city that is already dying
 
-**Dead housing supplies no labour, and every type but `residential` draws some — so a
-staffed block added to a city whose housing has died starves from its first tick, and
-cannot regain a point of health until some housing has.** Once every residential block is
-dead (health 0), it produces zero labour — production is health-scaled, same as everything
-else — and `industrial` and `commercial` both need labour to hold their own health.
-Simulated against 19 dead residential blocks: adding 5 power, 4 water, 3 industrial and 3
-transit hubs — a combination that reaches full satisfaction on power, water, waste and
-traffic simultaneously — still fails. The fresh `industrial` block starves for workers
-from the very first tick, decays, and its falling waste processing drags the rest of the city
-down before the dead residential can recover on power and water alone. Measured: every
-node's health is still 0.0 after 150 ticks.
+The treasury is now a direct rescue resource. Before placing anything, read *Automatic
+purchases*: if the city can afford every power, water, disposal and labour shortfall, those
+imports immediately count toward satisfaction and can let dead blocks regenerate. Traffic
+is the exception; reduce traffic demand or add transit capacity.
 
-That measurement drove `SimulationCalculator` directly for the full 150 ticks, to make the
-point stick. A player never watches that happen: every block sitting at zero health, every
-one of them still short, and the landfill no longer able to drain is exactly the condition
-the engine stops on, so the game freezes on the frozen board well before tick 150, not 150
-more ticks of decay arriving on screen. See "When the city stops" below.
+Three rescue routes remain useful:
 
-The trap is the labour dependency, not the upkeep: `industrial` and `commercial`
-need living residential to staff them, and dead residential cannot staff anything, no
-matter how much power and water arrives on the same tick. Prices make that rescue worse
-rather than better — those fifteen blocks cost 980 to build, and a city whose housing and
-shops are all dead earns nothing to put towards it.
+1. **Let the market bridge a temporary gap.** This is best when damaged producers are
+   already present and will need fewer imports as they heal. Current-tick income cannot be
+   spent until the next tick, so the treasury shown now is the hard first-tick limit.
+2. **Bulldoze demand.** This lowers both the recurring import bill and the local capacity
+   required. Account for the whole series of 10-money demolition fees before starting.
+3. **Build durable supply.** Power plants, water plants, industry, transit, housing and
+   parks replace recurring purchases with local capacity, but their own inputs arrive
+   immediately and may increase the import bill before they reduce it.
 
-Two approaches work without waiting on labour to recover:
-
-1. **Bulldoze back to what the baseline supports** (two residential, no `industrial` in
-   the mix) and let them heal on power, water, waste and traffic alone — none of which
-   residential needs labour or money for. The landfill this particular city built up
-   comes with them, though: verified against the nineteen-block board this section
-   describes, the two houses left standing draw only 20 waste against the 40 baseline, so
-   the inherited backlog of 1050 takes 53 ticks to drain before they are fully supplied
-   again, then 99 more to heal from zero — **152 ticks** in total, not 100. A pair that
-   never carried a landfill reaches 100 health in 100 ticks flat; see "Running out of
-   money" below for that measurement, on a clean grid rather than a bulldozed one.
-
-   That has a price now. Cutting a nineteen-block city back to the two houses the baseline
-   supports means seventeen demolitions, which is 170 — and a city whose money producers
-   are all dead earns nothing to pay it with. Start bulldozing while the treasury can cover
-   the whole cut: stopping part way earns nothing back, because a house regains health only
-   when all four of the resources it draws are fully supplied, and every house you have not
-   removed yet is still drawing its full share of them.
-2. **Never let residential fully die in the first place.** Add support while some
-   residential is still alive — this is the "build producers first" advice above,
-   and it is the only way to keep labour (and, once a commercial block exists, income)
-   flowing rather than having to restart it from zero.
+Waste disposal deserves special attention: buying disposal can clear the current landfill,
+but every unprocessed unit that remains carries into the next tick. A partial disposal
+budget slows the spiral; it does not erase it.
 
 **Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on the parks costs more.** The
 multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
@@ -353,62 +322,28 @@ full in 100 ticks.
 
 ## Running out of money
 
-The treasury is the one resource whose surplus survives a tick, and the one you can spend
-to zero with no warning. Two things follow.
+The treasury pays three different bills: construction, demolition, and automatic imports.
+Construction and demolition are one-off charges; imports repeat every tick. The market
+reserves net upkeep first and then splits the remaining import budget proportionally across
+every eligible shortage. If it can fund only half the total bill, power, water, disposal and
+labour each receive half of what they need.
 
-**Dead is not the same as unrecoverable — but the way back has a fixed price.** Money has
-no free baseline: the only sources are `residential` and `commercial`, and production is
-scaled by health, so a city whose housing and shops are all dead earns nothing *while they
-stay dead*.
-A block regains health only when every resource *it* draws is fully supplied,
-so each stays dead while anything on its own list is short. Housing's list is power, water,
-waste and traffic — every one of which has a free baseline — so cut back until what the
-houses still standing draw fits inside it, and dead housing heals itself with an empty
-treasury and no further help: measured on a clean grid with no landfill behind it, two
-dead houses and 0 in the bank are at full health in 100 ticks, having earned 99 on the
-way. Approach 1 above starts from a bigger city and inherits its landfill, so this is not
-approach 1 finished — see "Rescuing a city that is already dying" above, where the same
-two houses take 152 ticks, not 100, because the backlog has to drain first.
+Only money already in the treasury can be imported with. Income produced during this tick
+arrives at its end and becomes spendable on the next one. That one-tick lag matters most at
+zero: a city may earn money while still taking one tick of unassisted shortage.
 
-The cliff is arithmetic, and it is the one that killed your first city: a house draws 15
-power against a baseline of 40, and dead blocks draw in full, so two dead houses heal and
-three never do. That makes bulldozing all or nothing. Demolition stays *available* while
-the treasury holds 10, but 10 buys exactly one block, the bill is 10 a block, and nothing
-is earned until the cut is finished — nineteen dead houses cut back to three still earn
-zero over 400 ticks. Nineteen down to two is 170, and 169 is not close: it leaves you three
-houses, 9 in the bank, and nothing the treasury will pay for — no demolition at 10, no
-house at 15, and nothing earning to change that.
+At an empty treasury the old baseline cliffs still apply. Two dead houses on a clean grid
+draw 30 power and heal; three draw 45 and cannot. With money on hand, the city buys that
+five-power gap and all three can heal, at 5 per tick, until the treasury or the gap is gone.
 
-**Getting out is easier the earlier you start.** A house costs 15, needs no support on an
-empty grid, and consumes no money, so on a clear grid one house is enough to start earning
-again. Beside dead blocks it is two sums, not one.
-A block regains health only when every resource *it* draws is fully supplied,
-and the house's own list is power, water, waste and traffic —
-so whether it survives turns on those four alone: its own share on top of
-everything else still standing, against one shared pool. A shortfall in labour or money
-cannot touch it, however severe, which is why a house can sit at full health beside a block
-that never recovers. Whether *that* block recovers is the other sum, over what it draws: a
-house supplies labour and money, and none of the four that dead housing goes short of, so no
-number of houses adds a drop of what dead housing needs.
+**Getting out is easier the earlier you start.** Compare the recurring import bill with the
+one-off fix. Spending 20 every tick to bridge a power gap may be reasonable for two ticks
+while a plant heals and ruinous as a permanent design. Conversely, a small labour import can
+be cheaper than an emergency building that introduces larger power, water and traffic loads.
 
-The two sums can disagree, so there is no single order. Two dead houses heal on their own,
-and a third placed beside them leaves all three dead, because housing draws the same four
-resources the baseline is already carrying for the dead ones — so where the house would
-not fit, demolish first. A dead power plant goes the other way: it is short of one unit of
-labour and nothing else the baseline cannot cover, so building the house first heals both
-and starts earning, while demolishing first spends 10 that does nothing toward the house.
-Read what the dead blocks draw — and what the house you would add draws — before choosing
-what to spend on.
-
-Demolishing one block and then rebuilding has a floor of 25 — 10 for the removal, 15 for
-the house — and below it that order is the fatal one. On a single dead `industrial` with 15
-in hand, demolishing leaves 5, the rebuild is refused, and an empty grid with 5 in it is
-where the city ends. Building first on the same 15 recovers: both blocks die, but the house
-earns while it goes down, and that pays to clear
-the `industrial` afterwards — which leaves the dead house drawing only what the baseline
-covers, so it heals back to 100 on its own. When the treasury cannot cover both gestures,
-check what building first would earn you before spending on the demolition, because income
-collected on the way down can pay for a removal that the treasury cannot.
+Leave enough treasury for the command that ends the dependency. A market-supported city can
+look perfectly healthy while its remaining runway is falling every tick; the *Automatic
+purchases* line is the warning that satisfaction alone cannot provide.
 
 **You do get told, but only about the permanent kind.** Spending your treasury down is normal
 and the game says nothing; what it watches for is upkeep exceeding the most your city could
@@ -432,8 +367,10 @@ survivable while large ones are not.
 ## When the city stops
 
 A city **stalls** when every block sits at zero health, at least one of its inputs is
-short, and the landfill is not draining. Health and status are a genuine fixpoint at that
-point: production scales with health and so is zero, consumption does not scale and so is
+short **after automatic purchases**, and the landfill is not draining. A funded power,
+water, disposal or labour gap therefore prevents a stall; an unfunded gap or a traffic
+shortage can still freeze the city. Health and status are a genuine fixpoint at that point:
+production scales with health and so is zero, consumption does not scale and so is
 unchanged, and every tick would recompute the same health and status for every block. The
 landfill does not always share that sameness — a *drowning* city, one whose backlog is
 still growing rather than merely holding steady, would keep adding to it tick after tick
@@ -455,16 +392,12 @@ stall again once it dies. The empty-grid case is the edge of the same rule: an e
 has no block at zero health, so it is never stalled — demolishing the very last dead block
 always restarts the clock, with nothing left in the city to run.
 
-The landfill route is the odd one out: it restarts the clock without healing anything.
-Five houses with no other support stall at tick 13 with a landfill of 130; demolish two of
-them and the remaining three are not stalled — nobody is fully supplied (power sits at
-0.889, waste at −3.0) and the grid is not empty — but ticking resumes anyway, because
-cutting to three drops waste demand under what the baseline absorbs and the backlog starts
-draining. Health does not move: all three are still short of power and sit at zero the
-whole time. Thirteen ticks later the landfill reaches zero, the deficit stops shrinking,
-and the city re-stalls exactly as before, just poorer by two demolition fees. Short of one
-of those three routes, the rest of the city is free to stay dead forever. Houses crowding
-each other out under the free baseline are the common case:
+The landfill route is the odd one out: it can restart the clock without healing anything.
+If a demolition cuts emissions below disposal capacity, the backlog begins draining and
+the city is no longer at a fixpoint even while every block remains at zero. Buying enough
+disposal has the same effect and may clear the landfill immediately; buying only part can
+turn growth into drainage. Short of one of those routes, the rest of the city is free to
+stay dead forever. Houses crowding
 tear one house out of three and the remaining two are supplied and heal, tear one out of
 five and the remaining four are still over the line and nothing moves. It is not the only
 case: three dead houses beside one dead transit hub are stalled the same way, and
@@ -581,6 +514,20 @@ upkeep, so the smallest city with a park in it is three blocks. Measured: water 
 income +28 per tick, stable indefinitely. A second park needs a water plant, which needs
 power. A neglected park is worse than none: amenity is scaled by health, its staffing and
 water draw are not, so a dead park amplifies nothing while still costing everything.
+
+### Automatic market purchases
+
+| resource | price per unit | purchasable |
+|---|---:|---|
+| power | 1 money | yes |
+| water | 1 money | yes |
+| waste disposal | 1 money | yes |
+| labour | 1 money | yes |
+| traffic | — | no |
+
+Net upkeep is reserved before imports. If the remaining treasury cannot cover every
+eligible shortage, the same percentage of each is purchased. Money earned during a tick
+becomes available for imports on the following tick.
 
 ### What each type costs
 

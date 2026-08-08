@@ -8,7 +8,9 @@ resources — power, water, waste, traffic, labour and money — as demand again
 capacity; starved nodes lose health and eventually go offline, which removes their
 contribution and starves the rest of the city further. Money is the one resource
 whose surplus survives the tick boundary, so a city can read fully satisfied on the
-other five and still be quietly going broke.
+other five and still be quietly going broke. Power, water, waste disposal and labour
+shortfalls are automatically purchased for 1 money per unit while the treasury can pay;
+traffic must always be handled locally.
 
 Every visitor gets their own city. A 22-character code in the signed session cookie
 identifies it, the page shows the code, and `/c/<code>` re-enters that city from
@@ -173,12 +175,12 @@ release rather than merely labelling it.
 
 ## Actually playing it
 
-Your first city will almost certainly find the fast way to lose: baseline capacity
-supports exactly **two** residential blocks, and the third starts a death spiral that
-cannot be reversed by building more.
+Your first city will almost certainly find the quiet way to lose: baseline capacity
+supports exactly **two** residential blocks, and the third starts buying 5 power per tick.
+The city stays healthy while the treasury slowly drains.
 
 The slow one is insolvency. Four resources have a free baseline of 40; labour and
-money have none, and a city opens with a one-off 150 in the treasury. A support set
+money have none, and a city opens with a one-off 400 in the treasury. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
 the whole game while every other resource reads 100% satisfied — commercial is part
 of the ratio, not an optional extra.
