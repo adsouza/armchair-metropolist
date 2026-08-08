@@ -69,19 +69,27 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert grown?(crowd(CityMap.new(6, 6), 26))
     end
 
-    test "growth adds two to both dimensions" do
+    test "growth adds two to both dimensions and opens a ring on every side" do
       grown = CityMap.grow_if_crowded(crowd(CityMap.new(2, 2), 4))
 
       # Both asserted: a `+1` mutant gives 3x3 and a one-axis mutant gives 4x2.
       assert grown.width == 4
       assert grown.height == 4
+
+      # The window opens on every side, not just the right and bottom: `min_x`/`min_y`
+      # both move to -1, so the new cells are as much to the left and above as they are
+      # to the right and below. An anchored-growth mutant that only bumped width/height
+      # would leave these at their `CityMap.new/2` default of 0.
+      assert grown.min_x == -1
+      assert grown.min_y == -1
     end
 
     test "growth leaves every node exactly where it was" do
-      # The anchoring invariant, and the reason this design needs no generation fence on
-      # coordinate-addressed commands. See spec section 9: a growth that moved the origin
-      # would make an in-flight click resolve to a *different* cell, because the old and
-      # new coordinate sets overlap. Comparing `nodes` by `==` catches any translation.
+      # The invariant this design needs, and the reason it needs no generation fence on
+      # coordinate-addressed commands: a node's `x`/`y` (and therefore its id) never
+      # change on growth. See spec section 9. It is the *window* that moves -- `min_x`
+      # and `min_y` shift negative, tested above -- while `nodes` is untouched.
+      # Comparing `nodes` by `==` catches any translation of the node map itself.
       crowded =
         Enum.reduce([{0, 0}, {1, 0}, {0, 1}, {1, 1}], CityMap.new(2, 2), fn {x, y}, map ->
           CityMap.put_node(map, Node.new(x, y, :park))
@@ -198,6 +206,21 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       refute CityMap.in_bounds?(map, 0, -1)
       refute CityMap.in_bounds?(map, 40, 0)
       refute CityMap.in_bounds?(map, 0, 30)
+    end
+
+    test "is window-relative: a grown map accepts negative coordinates at its new origin" do
+      # A map that has never grown has min_x/min_y at 0, which is what the two tests
+      # above pin -- both would still pass against a mutant that used a fixed 0 lower
+      # bound instead of reading `map.min_x`/`map.min_y`. This is the one that kills it:
+      # after one growth the window's origin is (-1, -1), so -1 is in bounds and -2 and
+      # 4 (one past the far edge, at width 4) are not.
+      grown = CityMap.grow_if_crowded(crowd(CityMap.new(2, 2), 4))
+
+      assert CityMap.in_bounds?(grown, -1, -1)
+      refute CityMap.in_bounds?(grown, -2, -1)
+      refute CityMap.in_bounds?(grown, -1, -2)
+      refute CityMap.in_bounds?(grown, 4, -1)
+      refute CityMap.in_bounds?(grown, -1, 4)
     end
   end
 

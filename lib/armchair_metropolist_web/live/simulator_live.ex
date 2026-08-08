@@ -12,10 +12,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   entries are patched. Nodes are absolutely positioned over the grid so the two layers
   stay independent.
 
-  **A growth is the exception, and it re-streams every node.** Growth is anchored at the
-  origin, so no id changes — but cell size shrinks as the grid grows, and a LiveView
-  stream does not re-render existing entries when an assign changes. `{:city_grew, ...}`
-  therefore passes `reset: true`; see `handle_info/2`.
+  **A growth is the exception, and it re-streams every node.** A node's coordinates —
+  and therefore its id — never change on growth; only the window around it does, gaining
+  a ring on every side (see `CityMap.grow_if_crowded/1`). But cell size shrinks as the
+  grid grows, and a LiveView stream does not re-render existing entries when an assign
+  changes. `{:city_grew, ...}` therefore passes `reset: true`; see `handle_info/2`.
 
   ## Where the figures come from
 
@@ -132,17 +133,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:ok, socket}
   end
 
-  # The four assigns that describe the grid, in one place, because they have to move
+  # The six assigns that describe the grid, in one place, because they have to move
   # together: `:cell_size` is a function of the dimensions and `:grid_cells` is a function
-  # of both. Called from mount, from a growth, and from a reset — reassigning `:width`
-  # without the others is the bug this exists to prevent.
+  # of the whole window. Called from mount, from a growth, and from a reset — reassigning
+  # `:width` without the others is the bug this exists to prevent.
+  #
+  # `:min_x`/`:min_y` carry the window's origin, which a growth moves into negative
+  # coordinates while no node's `x`/`y` ever changes — see `CityMap.grow_if_crowded/1`.
+  # The comprehension below walks world coordinates (`city_map.min_x` upward), not grid
+  # indices starting at 0, so `@grid_cells` always names real cells even after growth.
   defp assign_grid(socket, %CityMap{} = city_map) do
     grid_cells =
-      for y <- 0..(city_map.height - 1), x <- 0..(city_map.width - 1), do: {x, y}
+      for y <- city_map.min_y..(city_map.min_y + city_map.height - 1),
+          x <- city_map.min_x..(city_map.min_x + city_map.width - 1),
+          do: {x, y}
 
     socket
     |> assign(:width, city_map.width)
     |> assign(:height, city_map.height)
+    |> assign(:min_x, city_map.min_x)
+    |> assign(:min_y, city_map.min_y)
     |> assign(:cell_size, cell_size(city_map.width, city_map.height))
     |> assign(:grid_cells, grid_cells)
   end
@@ -225,11 +235,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   # Carries the whole map, and re-streams every node rather than patching. Nothing is
-  # re-keyed by a growth — the origin does not move, so every node keeps its id — but
-  # cell size shrinks as the grid grows, and a LiveView stream does not re-render existing
-  # entries when an assign changes. Without `reset: true` the nodes keep the pixel
-  # geometry they were first rendered with: from 6x6 -> 8x8 that is 128px boxes on a 96px
-  # grid.
+  # re-keyed by a growth — a node's `x`/`y` and therefore its id never change, only the
+  # window around it does — but cell size shrinks as the grid grows, and a LiveView
+  # stream does not re-render existing entries when an assign changes. Without
+  # `reset: true` the nodes keep the pixel geometry they were first rendered with: from
+  # 6x6 -> 8x8 that is 128px boxes on a 96px grid, and after this change also the wrong
+  # *position*, since the window's origin has moved and `@min_x`/`@min_y` changed too.
   #
   # Unconditional, not "only when cell size actually moved". That condition is true at
   # every growth from 6x6 upward, and getting it wrong is silent.
@@ -317,10 +328,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           class="relative shrink-0 border border-base-300"
           style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
         >
+          <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
+                coordinate the server places at — while `cell_style/3` is given
+                `x - @min_x`/`y - @min_y`, a grid *index* counting from the window's
+                visible corner. Conflating the two is what would re-key nodes: pixels
+                need "how many cells from the left edge", the click needs "which cell
+                this actually is", and after a growth those are no longer the same
+                number. --%>
           <div
             :for={{x, y} <- @grid_cells}
             class="absolute border border-base-200 cursor-pointer"
-            style={cell_style(x, y, @cell_size)}
+            style={cell_style(x - @min_x, y - @min_y, @cell_size)}
             phx-click="place"
             phx-value-x={x}
             phx-value-y={y}
@@ -344,7 +362,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 "absolute flex cursor-pointer items-center justify-center",
                 status_class(node.status)
               ]}
-              style={node_style(node.x, node.y, @cell_size)}
+              style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
               phx-click="demolish"
               phx-value-x={node.x}
               phx-value-y={node.y}

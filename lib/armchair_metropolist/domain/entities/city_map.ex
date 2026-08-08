@@ -6,6 +6,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @type t :: %__MODULE__{
           width: pos_integer(),
           height: pos_integer(),
+          min_x: integer(),
+          min_y: integer(),
           tick: non_neg_integer(),
           nodes: %{optional(String.t()) => Node.t()},
           money: float(),
@@ -77,8 +79,18 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @fill_numerator 7
   @fill_denominator 10
 
+  # `min_x`/`min_y` default to 0, not `-@initial_size` or anything else — 0 is what a
+  # fresh 2x2 city has always meant (its window already ran 0..1 on both axes), and
+  # `CityEngine.normalize_city_map/1` merges every decoded snapshot onto a fresh
+  # `%CityMap{}`, so a city stored before this field existed inherits exactly that
+  # meaning: an origin that has never moved. No new atom is introduced — both values
+  # are plain integers — so `Infrastructure.Persistence.SnapshotVocabulary` needs no
+  # entry for them, unlike a field whose values are atoms defined outside this module.
+  # The next reader will ask, so it is worth saying even though nothing here forces it.
   defstruct width: @initial_size,
             height: @initial_size,
+            min_x: 0,
+            min_y: 0,
             tick: 0,
             nodes: %{},
             money: @opening_grant,
@@ -107,25 +119,44 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   def new, do: new(@initial_size, @initial_size)
 
   @doc """
-  Open two more rows and columns if the grid is more than 70% occupied, else return `map`.
+  Open one more ring — a cell on every side — if the grid is more than 70% occupied,
+  else return `map`.
 
-  **Growth is anchored at the origin**: the two rows and two columns appear at the right
-  and bottom edges, and every existing node keeps its `x`, `y` and `id`. `nodes` is not
-  rebuilt and not re-keyed.
+  **The window extends; node coordinates never move.** `grow_if_crowded/1` widens the
+  grid by shifting `min_x`/`min_y` down by one and adding two to `width`/`height`, so
+  the window gains a cell on the left and top as well as the right and bottom. `nodes`
+  is not touched — not rebuilt, not re-keyed. A node placed at `(3, 4)` is still at
+  `(3, 4)` after any number of growths; only the *window* it sits inside grows around
+  it, and that window's origin can go negative.
 
-  That is load-bearing, not incidental. A click carries `phx-value-x` / `phx-value-y` baked
-  into the DOM at render time, and the browser's DOM is stale for a full round trip after a
-  growth, so commands composed against the old grid keep arriving afterwards. Because the
-  origin does not move, `(3, 4)` names the same cell before and after and those commands
-  are still correct. A version that recentred the city would reinterpret them — and since
-  the old and new coordinate sets overlap, they would not fail, they would hit a
-  *different* cell. That variant needs a generation token on every coordinate-addressed
-  command; this one needs nothing. See the design doc's "Why growth is anchored".
+  That is load-bearing, not incidental. A click carries `phx-value-x` / `phx-value-y`
+  baked into the DOM at render time, and the browser's DOM is stale for a full round
+  trip after a growth, so commands composed against the old grid keep arriving
+  afterwards. Because a node's coordinates never change, `(3, 4)` names the same cell
+  before and after and those commands are still correct.
+
+  **Do not re-key nodes to recentre them** — the tempting alternative, where growth
+  moves every node so `(0, 0)` becomes `(1, 1)`. It reintroduces exactly the hazard
+  `docs/superpowers/specs/2026-08-08-ring-growth-grid-design.md` (§9, "Why growth is
+  anchored and not centred") measured for a plain anchored-vs-centred choice: the old
+  and new coordinate sets overlap, so a stale click would not fail, it would resolve
+  to a *different* cell and demolish the wrong block. That analysis is why growth used
+  to be anchored at the origin outright, trading away centring to avoid the hazard.
+  Extending the window is what recovers centring without it: the re-keying that
+  analysis warns against is exactly what this function does not do. A re-keying
+  variant would need a generation token on every coordinate-addressed command to
+  detect the staleness; this one needs nothing, because no node ever moves.
   """
   @spec grow_if_crowded(t()) :: t()
   def grow_if_crowded(map) do
     if max(map.width, map.height) < @max_size and crowded?(map) do
-      %{map | width: map.width + 2, height: map.height + 2}
+      %{
+        map
+        | min_x: map.min_x - 1,
+          min_y: map.min_y - 1,
+          width: map.width + 2,
+          height: map.height + 2
+      }
     else
       map
     end
@@ -176,10 +207,15 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
 
   @doc """
   Check if the given coordinates are within the city bounds.
-  Valid range is 0 <= x < width and 0 <= y < height.
+
+  Window-relative, not origin-anchored: valid range is `min_x <= x < min_x + width`
+  and `min_y <= y < min_y + height`. A city that has never grown has `min_x` and
+  `min_y` at 0, so this reduces to the old `0 <= x < width` check exactly; a grown
+  city's window can start at a negative coordinate.
   """
   def in_bounds?(map, x, y) do
-    x >= 0 and x < map.width and y >= 0 and y < map.height
+    x >= map.min_x and x < map.min_x + map.width and
+      y >= map.min_y and y < map.min_y + map.height
   end
 
   @doc """

@@ -169,6 +169,42 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       assert cell_count(render(view)) == 16
     end
 
+    test "the grid grows on every side, not just the right and bottom edges",
+         %{conn: conn} do
+      # The whole point of the ring-growth change: a growth used to widen the grid only
+      # at the right and bottom (`width`/`height` increasing with the origin pinned at
+      # 0), which crammed the player's city into the top-left corner. Now it opens a
+      # ring on every side by moving `min_x`/`min_y` negative — see
+      # `CityMap.grow_if_crowded/1` — while no node's coordinates or dom id change.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      place(view, :residential, 0, 0)
+      place(view, :residential, 1, 0)
+      place(view, :residential, 0, 1)
+
+      # Third block crosses 70% of the 2x2 starting grid, growing it to 4x4.
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+      assert cell_count(render(view)) == 16
+
+      # New space opened to the *left*: a background cell now exists at x = -1, which
+      # no cell on an anchored (right/bottom-only) growth could ever be.
+      assert has_element?(view, ~s{[phx-click="place"][phx-value-x="-1"]})
+
+      html = render(view)
+
+      # The node placed at (0, 0) is still addressed as (0, 0) -- its dom id, and the
+      # world coordinate a stale click would still carry, never changed.
+      assert html =~ ~s{id="0:0"}
+
+      # This is the assertion that distinguishes ring growth from the old anchored
+      # growth. The window's origin moved to (-1, -1), so (0, 0) is now the *second*
+      # cell from each edge: grid index (0 - (-1), 0 - (-1)) = (1, 1), at 128px cells,
+      # is left: 128px; top: 128px. Under the old anchored growth the origin never
+      # moves, (0, 0) stays the first cell, and this would read left: 0px; top: 0px
+      # instead -- byte-identical to before the growth happened at all.
+      assert rendered_node(html, "0:0") =~ "left: 128px; top: 128px"
+    end
+
     @tag :crowded_six_by_six
     test "a real click that grows 6x6 to 8x8 refreshes an already-placed node's geometry",
          %{conn: conn} do
