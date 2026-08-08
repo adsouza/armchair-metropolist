@@ -38,7 +38,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   metrics}` on every tick and on every successful `place`/`demolish`;
   `{:city_node_placed, node}` and `{:city_node_removed, id}` on successful commands.
   `{:city_grew, city_map}` immediately *before* `{:city_node_placed, …}` on a placement
-  that opened the grid — the view has to resize before the node is painted on it.
+  that opened the grid. This does not protect geometry — `{:city_grew, city_map}`
+  already carries the post-put map, node included, and `SimulatorLive` re-streams it
+  with `reset: true`, so the final DOM is identical whichever order these two arrive
+  in. What the ordering buys is one fewer intermediate frame: sent the other way
+  round, the view would briefly paint the new node at the pre-growth cell size before
+  the growth message resized the grid under it. It *would* be load-bearing for a
+  subscriber that patches incrementally instead of resetting — geometry correctness
+  there would depend on seeing the resize first.
   `{:city_reset, city_map}` on a successful `reset/1`, followed by `{:city_metrics,
   metrics}`; it carries the map because a reset returns the city to a 2x2 grid.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
@@ -285,10 +292,18 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         # `ManageInfrastructure.place/4` needs no `:grew` flag in its return and its
         # contract does not change.
         #
-        # Sent *before* the node, so a subscriber sizes the grid before the new node lands
-        # on it. Carries the whole map because the view must re-stream every node: a
-        # LiveView stream does not re-render existing entries when an assign changes, so
-        # nodes keep their old pixel geometry across a cell-size change.
+        # Sent *before* the node — not because a subscriber needs the resize first to end
+        # up correct, but to avoid a one-frame transient: `{:city_grew, city_map}` already
+        # carries the post-put map with the new node in it, and `SimulatorLive` re-streams
+        # from that map with `reset: true`, so the final DOM is identical whichever order
+        # these two arrive in. Sent the other way round, the view would briefly paint the
+        # new node at the pre-growth cell size before this message resized the grid under
+        # it. The ordering *would* be load-bearing for a subscriber that patches
+        # incrementally instead of resetting. Carries the whole map because the view must
+        # re-stream every node: a LiveView stream does not re-render existing entries when
+        # an assign changes, so nodes keep their old pixel geometry across a cell-size
+        # change — `reset: true` is what actually makes the geometry correct, not the
+        # message order.
         if city_map.width != state.city_map.width do
           broadcast(state.city_id, {:city_grew, city_map})
         end
