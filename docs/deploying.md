@@ -179,6 +179,32 @@ The hazard *window* opens later than the floor, which is worth keeping straight:
 `CityMap.new/0`. Before that the engine still built 40x30 cities from config, so the
 only route to a small grid was `reset/1`, which has returned a 2x2 since `5c2992d`.
 
+### A second dimension: negative origins, from `89e4a7a`
+
+`89e4a7a` changed growth from anchored-at-the-origin to a ring on every side: `CityMap`
+gained `min_x`/`min_y`, and `grow_if_crowded/1` now shifts both negative instead of
+only growing `width`/`height` from a pinned `(0, 0)`. No node is re-keyed — a node's
+`x`/`y` never move — but a cell the player can place at *is* now sometimes negative,
+because that is what "a ring opened to the left and above" means. A city grown under
+this release can therefore store a node with a negative `x` or `y`, on top of the
+small `width`/`height` the trap above already covers.
+
+An older binary — one before `89e4a7a` — has no `min_x`/`min_y` field, but that alone
+does not break the load: `CityEngine.normalize_city_map/1` merges the decoded snapshot
+onto that older binary's own `%CityMap{}`, so the extra keys ride along as ordinary map
+entries the old code never looks at. The break is in the two places that *do* read a
+coordinate without them. Rendering still computes `left: x * cell_size` directly —
+there is no `min_x` to subtract — so a node stored at `x = -1` renders one whole cell
+width off the left edge of the grid's own container, outside its clipping box and
+invisible. And the old `in_bounds?/3` is `x >= 0 and x < width`, which refuses every
+negative coordinate outright, so `place/4` cannot be used to build on that ring either
+— though `demolish/3` still can, since it looks a node up by id rather than checking
+bounds. Nothing crashes and nothing 500s, same as the trap above: the city just quietly
+loses access to whichever ring of itself grew while a newer release was running.
+
+Rolling back to `89e4a7a` or later is safe for a city that has grown a negative ring.
+Rolling back past it reproduces this on top of the small-grid trap already described.
+
 ## Deploying the server
 
 ```bash
