@@ -326,10 +326,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end)
   end
 
-  # The city has reached a fixpoint in health: every node is on the floor and every
-  # node is still short of something, so `health_delta/1` is negative for all of them,
-  # the clamp holds them at zero, and demand — which is not health-scaled — does not
-  # move. The next tick is therefore identical in every node.
+  # The city has reached a fixpoint: every node is on the floor and still short of
+  # something, so `health_delta/1` is negative for all of them and the clamp holds
+  # them at zero — and the landfill is not draining, so nothing can lift them off
+  # it later either.
+  #
+  # That third condition is `deficit >= stock`, not `== stock`, and the comparator
+  # is load-bearing. A *growing* landfill is a city getting monotonically worse and
+  # is stalled; only a draining one has a route back. Testing `==` would call the
+  # growing case unstalled, so a city drowning in waste would tick forever and
+  # never satisfy `SimulationMetrics.game_over?/1`.
+  #
+  # Without the stock condition entirely, a backlogged stalled city freezes
+  # permanently: `CityEngine.handle_info/2` runs no tick while `stalled` is true,
+  # un-stalling needs the stock drained, and draining needs a tick.
   #
   # Both node clauses are load-bearing. Without the empty-list clause an untouched grid
   # is "stalled", because `Enum.all?/2` over nothing is true. Without the satisfaction
@@ -340,14 +350,6 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # Written per-node rather than against `avg_health`: health is clamped non-negative,
   # so "every node at 0.0" and "the average is 0.0 over a non-empty set" say the same
   # thing, and this form has no float sum in it to reason about.
-  #
-  # The third argument closes a route the node check alone cannot see: a stalled node
-  # fixpoint says no *node* can recover on its own, but a draining landfill means the
-  # *city* still can, one tick from now, once the stock clears. `>=` and not `==`: a
-  # growing landfill (`deficit > stock`) is getting monotonically worse and stays
-  # stalled; only a draining one (`deficit < stock`) has a route back. The engine
-  # skips ticks entirely while stalled, so calling a draining city stalled would freeze
-  # the stock forever and the city could never satisfy `SimulationMetrics.game_over?/1`.
   defp stalled?([], _stats, _stock), do: false
 
   defp stalled?(nodes, stats, stock) do

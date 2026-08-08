@@ -94,10 +94,20 @@ and takes this section with it.
 
 The city starts with free baseline capacity — 40 each of power, water, waste and
 traffic, no infrastructure needed: enough to supply 40 power and 40 water, and enough
-to absorb 40 waste and 40 traffic. Labour and money have no free baseline; they arrive
-only once you build for them. A residential block draws `power 15`. Two blocks come to
-30 and hold at full health forever. The third makes 45, against a supply of 40, and
-from that moment the city is dying.
+to absorb 40 waste and 40 traffic.
+
+Waste is the one bad that keeps a score. Whatever you emit past your absorption
+capacity stays in the ground as a **Landfill**, shown in the metrics panel, and it
+is added to next tick's load — so a city that is 10 over runs 10 short, then 20,
+then 30. The backlog drains at capacity minus emissions once you are back under,
+which makes the exit from a waste spiral either an `industrial` block or fewer
+emitters. Traffic does not work this way: a jam clears at the tick boundary, and
+only waste accumulates.
+
+Labour and money have no free baseline; they arrive only once you build for them. A
+residential block draws `power 15`. Two blocks come to 30 and hold at full health
+forever. The third makes 45, against a supply of 40, and from that moment the city
+is dying.
 
 | residential, no support | worst satisfaction | after 200 ticks    |
 |-------------------------|--------------------|--------------------|
