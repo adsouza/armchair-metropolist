@@ -54,8 +54,31 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # 1000 and 2000. `:tick_interval_ms` is the knob on that axis.
   @opening_grant 400.0
 
-  defstruct width: 40,
-            height: 30,
+  # The grid a new city starts on. A city opens two more rows and columns whenever more
+  # than 70% of its cells are occupied, up to `@max_size`.
+  #
+  # Referenced by `defstruct` below rather than restated there. `CityEngine`'s
+  # `normalize_city_map/1` merges every decoded snapshot onto a fresh `%CityMap{}`, so the
+  # struct defaults are what a stored city inherits for any field it lacks — exactly the
+  # split the `@opening_grant` comment above describes. A literal in `defstruct` beside a
+  # different value here desyncs them on a path only cold loads exercise.
+  @initial_size 2
+
+  # Growth stops here. This bounds the data structure, not the game: reaching a 32x32
+  # takes 631 blocks, some 9,465 in construction costs, far past anything a player reaches.
+  # It also keeps every stored 40x30 city off the ladder, since 40 exceeds it.
+  @max_size 32
+
+  # The occupancy that opens a new pair of rows, as a ratio rather than a float, so the
+  # trigger is integer arithmetic and never a float comparison.
+  #
+  # 70% and not 80%: at 80% the boundary on a 2x2 is 3.2, so the starter grid alone had to
+  # be completely full before it would open. At 70% no size on the ladder does.
+  @fill_numerator 7
+  @fill_denominator 10
+
+  defstruct width: @initial_size,
+            height: @initial_size,
             tick: 0,
             nodes: %{},
             money: @opening_grant,
@@ -74,18 +97,58 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   end
 
   @doc """
-  Discard this city and start a new one on the same grid.
+  Create a new city on the starting grid.
 
-  Tick 0, no nodes, and the treasury back to `opening_grant/0` — delegating to `new/2`
-  rather than resetting fields by hand, so there is exactly one definition of what a new
-  city is and this cannot drift from it.
+  The one definition of what a new city is. `new/2` exists for fixtures that want a grid
+  large enough that capacity never binds; it is *not* how a stored city is rebuilt, which
+  goes through `CityEngine.normalize_city_map/1` and the struct defaults.
+  """
+  @spec new() :: t()
+  def new, do: new(@initial_size, @initial_size)
+
+  @doc """
+  Open two more rows and columns if the grid is more than 70% occupied, else return `map`.
+
+  **Growth is anchored at the origin**: the two rows and two columns appear at the right
+  and bottom edges, and every existing node keeps its `x`, `y` and `id`. `nodes` is not
+  rebuilt and not re-keyed.
+
+  That is load-bearing, not incidental. A click carries `phx-value-x` / `phx-value-y` baked
+  into the DOM at render time, and the browser's DOM is stale for a full round trip after a
+  growth, so commands composed against the old grid keep arriving afterwards. Because the
+  origin does not move, `(3, 4)` names the same cell before and after and those commands
+  are still correct. A version that recentred the city would reinterpret them — and since
+  the old and new coordinate sets overlap, they would not fail, they would hit a
+  *different* cell. That variant needs a generation token on every coordinate-addressed
+  command; this one needs nothing. See the design doc's "Why growth is anchored".
+  """
+  @spec grow_if_crowded(t()) :: t()
+  def grow_if_crowded(map) do
+    if max(map.width, map.height) < @max_size and crowded?(map) do
+      %{map | width: map.width + 2, height: map.height + 2}
+    else
+      map
+    end
+  end
+
+  defp crowded?(map) do
+    map_size(map.nodes) * @fill_denominator >
+      @fill_numerator * map.width * map.height
+  end
+
+  @doc """
+  Discard this city and start a new one.
+
+  Tick 0, no nodes, the treasury back to `opening_grant/0`, and the grid back to the
+  starting size — delegating to `new/0` rather than resetting fields by hand, so there is
+  exactly one definition of what a new city is and this cannot drift from it.
 
   The grant has to come back. A collapsed city's treasury has drained to zero and the
-  cheapest block costs 15, so a wipe that cleared the grid and left the balance alone
-  would trade one dead end for another: an empty grid earns nothing, forever.
+  cheapest block costs 15, so a wipe that cleared the grid and left the balance alone would
+  trade one dead end for another.
   """
   @spec reset(t()) :: t()
-  def reset(map), do: new(map.width, map.height)
+  def reset(_map), do: new()
 
   @doc """
   The money a new city starts with.

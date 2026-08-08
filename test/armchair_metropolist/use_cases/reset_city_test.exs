@@ -15,7 +15,7 @@ defmodule ArmchairMetropolist.UseCases.ResetCityTest do
 
     assert {:ok, %{city_map: reset, metrics: metrics}} = ResetCity.execute(city)
 
-    assert reset == CityMap.new(40, 30)
+    assert reset == CityMap.new()
 
     # Computed from the *new* map, the same way AdvanceCityTick computes from the
     # post-tick map. Metrics of the old city here would leave the view rendering a
