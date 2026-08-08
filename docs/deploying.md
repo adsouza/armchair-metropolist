@@ -142,6 +142,30 @@ the server crash-loops on hydrate, the desktop app starts an empty grid.
 persisted struct has the same one-way property, and the safe pattern is two
 releases — one that interns the atom without writing it, then the writer.
 
+## The fourth trap: rolling back past the ring-growth grid
+
+The ring-growth-grid branch adds no new `CityMap` field and no new atom, so the
+decode trap above does not apply to it — every city it writes still decodes on an
+older binary. What it changes is *semantic*, and semantic drift needs the same
+warning as a decode failure, because an older binary reads the row happily and gets
+the wrong answer.
+
+A city created — or reset — under this release starts on a 2x2 grid and stores
+those dimensions. `CityMap`'s normalization (`CityEngine.normalize_city_map/1`)
+merges a decoded snapshot onto a fresh `%CityMap{}`, preserving whatever width and
+height were stored; it does not know about growth, so an older binary loads such a
+city exactly as a 2x2. That older binary also has no growth path — `grow_if_crowded/1`
+does not exist in it — and no notion of `@min_cell`/`@max_cell` clamping, so it
+renders the city at its own fixed cell size, 24px: a 48x48 four-cell grid that fills
+after two blocks and then cannot expand, ever, until the newer release is restored.
+Nothing crashes and nothing 500s — the city is just quietly capped.
+
+`882f322` is the minimum rollback target for any city created or reset after it —
+the first commit on this branch, after the merge-base with `main`; once merged, the
+merge commit itself becomes the reference point. Rolling back to it or later is
+safe for these cities; rolling back past it revives the 4-cell-grid trap for any of
+them still in play.
+
 ## Deploying the server
 
 ```bash
