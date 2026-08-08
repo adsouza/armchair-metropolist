@@ -24,6 +24,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.StubSnapshotRepository
+  alias ArmchairMetropolistWeb.SimulatorLive
 
   # The topic for the city id this test's session (below) pins the view to —
   # broadcasting on the old hardcoded "city_simulation" would silently miss the view.
@@ -1461,6 +1462,45 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
       render_click(view, "place", %{"x" => "1", "y" => "1"})
 
       refute has_element?(view, "#metrics-rescue")
+    end
+  end
+
+  describe "grid geometry" do
+    # Cell size is `min(128, max(24, div(768, max(width, height))))`. Each case below kills
+    # a different clamp, and the assignment of case to clamp is not interchangeable:
+    #
+    #   2x2 -> 128 and 4x4 -> 128 kill the *ceiling*: without `min/2` they are 384 and 192.
+    #   6x6 -> 128 kills nothing, because div(768, 6) is exactly 128. Kept as a boundary
+    #     case; it is as blind to the ceiling as 8x8 is.
+    #   40x30 -> 24 is the *only* case that kills the floor: div(768, 40) is 19. None of the
+    #     square sizes can, since dropping `max/2` leaves every one of them unchanged.
+    #   20x40 -> 24 kills `div(768, width)` in place of `max(width, height)`, which gives 38.
+    test "cell size shrinks as the grid grows, clamped at both ends" do
+      assert SimulatorLive.cell_size(2, 2) == 128
+      assert SimulatorLive.cell_size(4, 4) == 128
+      assert SimulatorLive.cell_size(6, 6) == 128
+      assert SimulatorLive.cell_size(8, 8) == 96
+      assert SimulatorLive.cell_size(32, 32) == 24
+    end
+
+    test "the floor keeps a legacy 40x30 grid at today's cell size" do
+      assert SimulatorLive.cell_size(40, 30) == 24
+    end
+
+    test "cell size is driven by the longer axis" do
+      assert SimulatorLive.cell_size(20, 40) == 24
+    end
+
+    # Tagged, deliberately. `@tag treasury:` seeds an explicit `CityMap.new(40, 30)`, which
+    # is what this test's name claims it is testing. Untagged it would ride the fresh-city
+    # path, and Task 6 makes that a 2x2 and adds a test asserting 256px on the same path —
+    # the two would contradict each other and one would have to be deleted.
+    @tag treasury: 400.0
+    test "a stored 40x30 city renders at exactly today's size", %{conn: conn} do
+      # Pins "no existing city changes appearance". 40 * 24 by 30 * 24.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{[style*="width: 960px; height: 720px;"]})
     end
   end
 end

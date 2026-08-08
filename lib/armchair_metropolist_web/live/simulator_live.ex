@@ -28,7 +28,30 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
-  @cell_size 24
+  # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
+  # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
+  # and 768px while cells shrink to @min_cell at the 32x32 cap.
+  #
+  # @max_cell 128 is *measured*, not chosen for looks. The collapse banner is styled to the
+  # grid's own width, and its widest headline (":locked") needs a 245px banner to wrap to
+  # two lines rather than three. 2 * 128 = 256 clears that with 11px of slack. 96 would
+  # give 192px against a 193px three-line threshold — one pixel short, on a boundary that
+  # is bistable. 128 also divides @target_px exactly, so every cell on the ramp is an
+  # integer. Do not change these without re-measuring; see the design doc's "Why 128".
+  #
+  # @min_cell 24 is today's fixed value, which is what keeps a stored 40x30 city
+  # pixel-identical: div(768, 40) is 19, clamped up to 24, giving the same 960x720.
+  @min_cell 24
+  @max_cell 128
+  @target_px 768
+
+  @doc false
+  # Public only so the test suite can pin the clamps directly rather than inferring them
+  # from rendered markup at five grid sizes.
+  @spec cell_size(pos_integer(), pos_integer()) :: pos_integer()
+  def cell_size(width, height) do
+    min(@max_cell, max(@min_cell, div(@target_px, max(width, height))))
+  end
 
   @impl true
   # Checked before the session, deliberately. The desktop target's window still
@@ -77,19 +100,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
     socket = assign(socket, city_id: city_id)
 
-    grid_cells =
-      for y <- 0..(city_map.height - 1), x <- 0..(city_map.width - 1), do: {x, y}
-
     socket =
       socket
-      |> assign(:width, city_map.width)
-      |> assign(:height, city_map.height)
-      |> assign(:grid_cells, grid_cells)
+      |> assign_grid(city_map)
       |> assign(:metrics, metrics)
       |> assign(:node_types, Node.types())
       |> assign(:selected_type, List.first(Node.types()))
       |> assign(:legend_detail, true)
-      |> assign(:cell_size, @cell_size)
       # False only on the desktop target (see mount/3): a recovery code the desktop
       # cannot use — there is no "elsewhere" to return to it from, and it would
       # change on every launch — is worse than none.
@@ -97,6 +114,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> stream(:nodes, CityMap.nodes(city_map), dom_id: & &1.id)
 
     {:ok, socket}
+  end
+
+  # The four assigns that describe the grid, in one place, because they have to move
+  # together: `:cell_size` is a function of the dimensions and `:grid_cells` is a function
+  # of both. Called from mount, from a growth, and from a reset — reassigning `:width`
+  # without the others is the bug this exists to prevent.
+  defp assign_grid(socket, %CityMap{} = city_map) do
+    grid_cells =
+      for y <- 0..(city_map.height - 1), x <- 0..(city_map.width - 1), do: {x, y}
+
+    socket
+    |> assign(:width, city_map.width)
+    |> assign(:height, city_map.height)
+    |> assign(:cell_size, cell_size(city_map.width, city_map.height))
+    |> assign(:grid_cells, grid_cells)
   end
 
   @impl true
@@ -465,6 +497,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@variant == :dead} class="font-semibold">
         Game over — this city is dead.
       </p>
+      <%!-- Width-constrained. This is the widest of the four headlines (417px at
+            max-content, measured 2026-08-08 at 16px/600 in ui-sans-serif) and it is what
+            sets `@max_cell 128`: the banner shares the grid's width, a 2x2 grid is 256px,
+            and this line needs a 245px banner to wrap to two lines rather than three.
+            There are 11px of slack. Lengthening this sentence spends them, and no test
+            will tell you -- Elixir cannot measure text. Re-measure in the browser. --%>
       <p :if={@variant == :locked} class="font-semibold">
         City locked — nothing more can be built or demolished.
       </p>
