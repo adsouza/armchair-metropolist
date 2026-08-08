@@ -160,11 +160,24 @@ renders the city at its own fixed cell size, 24px: a 48x48 four-cell grid that f
 after two blocks and then cannot expand, ever, until the newer release is restored.
 Nothing crashes and nothing 500s — the city is just quietly capped.
 
-`882f322` is the minimum rollback target for any city created or reset after it —
-the first commit on this branch, after the merge-base with `main`; once merged, the
-merge commit itself becomes the reference point. Rolling back to it or later is
-safe for these cities; rolling back past it revives the 4-cell-grid trap for any of
-them still in play.
+`d2725f7` is the minimum rollback target. It is the first commit whose binary can
+serve a 2x2 city correctly — the point at which all four pieces are present together:
+the 2x2 struct default and `grow_if_crowded/1` (`5c2992d`), the derived cell size
+(`1fd07a8`), growth wired into `ManageInfrastructure.place/4` (`f32de9a`), and
+`CityEngine` broadcasting `{:city_grew, …}` with `SimulatorLive` resizing on it
+(`d2725f7`). Rolling back to it or later is safe for these cities; rolling back past
+it revives the 4-cell-grid trap for any still in play.
+
+Note which commit this is *not*. It is not the first commit on the branch — that one
+(`882f322`) is documentation only and contains none of the code above, so rolling back
+to it reproduces the trap exactly rather than avoiding it. "Where did this branch
+start" and "what is the earliest binary that handles the data this branch writes" are
+different questions, and only the second one is a rollback target.
+
+The hazard *window* opens later than the floor, which is worth keeping straight: no
+2x2 city can exist until `8d63470`, the commit where `new_city_map/0` becomes
+`CityMap.new/0`. Before that the engine still built 40x30 cities from config, so the
+only route to a small grid was `reset/1`, which has returned a 2x2 since `5c2992d`.
 
 ## Deploying the server
 
