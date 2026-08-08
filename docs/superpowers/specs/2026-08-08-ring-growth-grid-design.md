@@ -137,6 +137,75 @@ and demolish symmetrical, both driven entirely by the broadcast, and removes the
 This is the one part of this change that alters existing behaviour, so it needs its own
 test: placing a block still renders it, with the reply-side insert gone.
 
+### The coordinate-space fence
+
+Clicks carry coordinates, not identities — `phx-value-x={x}` / `phx-value-y={y}` on the
+grid cell, and `phx-value-x={node.x}` / `phx-value-y={node.y}` on the node — baked into
+the DOM at render time. Recentring reinterprets those coordinates, so **a command issued
+against a pre-growth DOM addresses the wrong cell**, and because the old and new key sets
+overlap it does not merely fail. On a 2×2 holding nodes at `(0,0)` and `(1,1)`, growth
+moves them to `(1,1)` and `(2,2)`; a demolish click on `(1,1)` then destroys the node that
+used to be at `(0,0)`. Money is spent, the wrong block is gone, and no error is raised.
+
+Two ways in, and they need separating because only one is a narrow race:
+
+* **Same viewer.** Phoenix delivers one connection's events in order to one LiveView
+  process, and the engine call is synchronous, so a second click can only overtake the
+  growth broadcast if it lands in the window between the call being issued and the engine
+  broadcasting. That is microseconds on a small city — but the window contains
+  `summarize/1` over every node, so it *widens with city size*, and the later growths are
+  the ones with hundreds of nodes.
+* **Second viewer.** Deterministic and easy to hit. The re-entry code puts two browsers on
+  one city. A's placement grows the grid; B's DOM is stale for a full network round trip,
+  and every click B makes in that window carries old coordinates.
+
+**The fence goes in `CityEngine`, not the LiveView.** Both mutating commands carry the
+grid width the DOM was rendered at, and the engine refuses the command unless it matches
+`state.city_map.width`:
+
+```elixir
+def handle_call({:place, x, y, type, grid_width}, _from, state) do
+  if grid_width != state.city_map.width do
+    {:reply, {:error, :stale_grid}, state}
+  else
+    # … as before
+  end
+end
+```
+
+`width` is a sufficient generation token without adding a persisted field: growth is
+one-way and monotone, and coordinate meaning is a total function of it. Adding a
+`grid_generation` field would mean a `SnapshotVocabulary.modernize/1` entry, a
+`normalize_city_map/1` default and committed old-vocabulary fixtures — real cost for no
+extra safety on this hazard.
+
+The fence must not live in the LiveView, and the reason is specific rather than a
+generality about clients. A LiveView is a server process, so a check against its own
+assigns *is* server-side — but it is a check against a replica, and the replica is stale
+in exactly the case that matters. In the second-viewer case that LiveView's assigns are
+fresh while its browser's DOM is stale, so the check would work. In the same-viewer case
+the LiveView has not processed the growth broadcast either: payload stale, assigns stale,
+check passes, bug survives. Only the process that owns the map can arbitrate.
+
+**Reject rather than translate.** The offset is exactly `+1, +1`, so the engine *could*
+compute what the player "meant" and place there. That guesses which of two things the
+click aimed at — the logical cell or the screen position — and after a recentring those
+are different cells, because the ring is added around the outside and every pixel now
+shows a different coordinate. The LiveView ignores `{:error, :stale_grid}` silently: the
+growth broadcast is already in flight and will resynchronise the view, so a flash message
+would explain a discarded click the player has no way to act on.
+
+**Accepted limitation.** A reset from a 2×2 to a 2×2 has matching widths, so a click that
+crosses it is accepted and places a block in the new city at the coordinate clicked. That
+is the right cell, in an unintended city, for 15. Every reset from a grown city is fenced,
+since the width differs. Closing the 2×2 case is what a dedicated monotonic counter would
+buy, and it is not worth a snapshot migration.
+
+**This hazard is the price of recentring**, and it did not exist before this change: a
+fixed grid was the only thing making a coordinate a stable global name, and nothing in the
+code recorded that it was doing that job. An anchored, append-only growth has no
+re-keying, no overlap and no fence. See §9.
+
 ## 3. Cell size
 
 Replaces `@cell_size 24` with three attributes and a function:
@@ -284,6 +353,25 @@ float comparison, which is a different benefit.
 * `{:city_metrics, …}` still follows in both branches — kills an early return that skips
   it.
 
+**The coordinate-space fence.** These assert on *state*, not on the return value. A test
+that only checks `{:error, :stale_grid}` came back passes against a fence that returns the
+error after mutating, so each of these reads the node set afterwards.
+
+* Given a 2×2 with nodes at `(0,0)` and `(1,1)`, grow it, then demolish at `(1,1)` with
+  `grid_width: 2`. Assert **both nodes are still present** — kills the unfenced code, which
+  destroys the node translated from `(0,0)`. This is the wrong-block case and it is the one
+  test that must exist; a stale coordinate landing on an *empty* cell fails anyway and
+  proves nothing, so a fixture with only one node cannot discriminate.
+* Same setup, place at `(1,1)` with `grid_width: 2`. Assert the node count is unchanged and
+  `money` is unchanged — kills a fence that refuses the placement after debiting.
+* A command carrying the current width succeeds — kills a fence that rejects everything,
+  which every test above would otherwise pass.
+* A command carrying a width *greater* than current is refused too — kills `<` in place of
+  `!=`. Not reachable in the app, since growth is one-way, but the comparison should not
+  encode an assumption the fence does not need.
+* The LiveView renders no flash on `{:error, :stale_grid}` — kills surfacing a discarded
+  click the player cannot act on.
+
 **LiveView**
 
 * Placing a block renders it with the reply-side `stream_insert` removed — kills removing
@@ -341,3 +429,32 @@ the struct and a literal in `new/2` desynced on a path only cold loads exercised
   threshold by another route — a hand-edited snapshot, a future bulk-place — will not
   grow until the next placement. Acceptable; growth on load would mean re-keying during
   hydration, and no such route exists today.
+* **Every future coordinate-addressed command inherits the fence requirement.** The fence
+  is a rule about the command path, not a property of `place`/`demolish`, and nothing in
+  the type system enforces it. A later feature that takes an `x, y` — bulldoze a region,
+  drag to place, an undo — is wrong by default until it carries the width.
+
+## 9. The recentring decision, reopened
+
+Recentring was chosen over anchoring at top-left early in the design, on the stated
+grounds that anchoring "is not really a ring" while a stable-coordinate variant was "more
+machinery than either option". §2's fence is the bill for that, and it was not in the
+estimate:
+
+| | recentre | anchor top-left |
+|---|---|---|
+| node ids on growth | all rewritten | unchanged |
+| in-flight commands | old and new key sets overlap, so a stale click hits the **wrong** node | coordinates never change meaning |
+| generation fence | required on every coordinate-addressed command, now and in future | not required |
+| LiveView on growth | full stream reset | grid assigns only |
+| city position | stays centred | drifts toward the top-left |
+
+Anchoring dissolves §2's entire fence section, its five tests, and the standing obligation
+on future commands. What it costs is the visual property that motivated the feature: the
+city stays put as the map grows around it, instead of the map growing away from it.
+
+**This is a decision to retake, not something to settle here.** The comparison that chose
+recentring priced it as "rebuild a map, re-render a stream" and the real price is a
+concurrency invariant. Recentring remains defensible — the fence is about forty lines and
+five tests, the hazard is fully understood, and the visual payoff is the whole point of the
+change. But it should be chosen against an honest bill.
