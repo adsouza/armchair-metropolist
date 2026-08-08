@@ -15,6 +15,8 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   takes the engine down and rolls the city back to its last checkpoint. And
   `insufficient_funds` goes last, so a click on an occupied cell reports occupancy rather
   than reporting that you are broke about a build that was never possible there.
+
+  On success, the returned map may have grown: see `CityMap.grow_if_crowded/1`.
   """
   @spec place(CityMap.t(), integer(), integer(), atom()) ::
           {:ok, {CityMap.t(), Node.t()}}
@@ -40,6 +42,12 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           city_map
           |> CityMap.put_node(node)
           |> CityMap.debit(Node.construction_cost(type))
+          # After the put, so the occupancy test counts the node just placed. Growth lives
+          # here rather than in `CityMap.put_node/2` because `put_node/2` is a primitive
+          # that sets one key: a growth policy inside it would reach every caller,
+          # including fixtures that build a city of a chosen size, and there would then be
+          # no way to build one at all.
+          |> CityMap.grow_if_crowded()
 
         {:ok, {city_map, node}}
     end
