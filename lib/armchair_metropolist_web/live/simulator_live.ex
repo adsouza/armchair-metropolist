@@ -180,7 +180,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   def handle_event("wipe", _params, socket) do
     :ok = CityEngine.reset(socket.assigns.city_id)
 
-    {:noreply, stream(socket, :nodes, [], reset: true)}
+    # No stream clear here. `CityEngine.reset/1` is a synchronous call, so
+    # `{:city_reset, city_map}` is already in this process's mailbox by the time it
+    # returns, and `handle_info({:city_reset, ...})` below does strictly more: it also
+    # resizes the grid. Clearing here too would render one frame at the pre-reset (grown)
+    # grid size with an empty stream, before the resize catches up.
+    {:noreply, socket}
   end
 
   def handle_event("toggle_legend_detail", _params, socket) do
@@ -225,10 +230,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   def handle_info({:city_reset, city_map}, socket) do
     # The grid resizes too: a reset returns the city to a 2x2 whatever it had grown to.
+    # Streamed from `city_map.nodes` rather than the literal `[]`, matching the growth
+    # clause above: both clauses are handed a whole map and trust it, rather than this one
+    # relying on `ResetCity`/`CityMap.reset/1` happening to return an empty node set.
     {:noreply,
      socket
      |> assign_grid(city_map)
-     |> stream(:nodes, [], reset: true)}
+     |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
   end
 
   @impl true
