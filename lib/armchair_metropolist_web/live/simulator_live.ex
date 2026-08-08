@@ -27,6 +27,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   """
   use ArmchairMetropolistWeb, :live_view
 
+  require Logger
+
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
@@ -237,6 +239,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
      socket
      |> assign_grid(city_map)
      |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
+  end
+
+  # Anyone may broadcast on the subscribed topic, so unrecognised messages are dropped
+  # rather than allowed to crash the view and lose the connection — mirrors
+  # `CityEngine`'s own catch-all, for the same reason. Concretely reachable in a
+  # mixed-version deploy: this branch changed `:city_reset` from a bare atom to
+  # `{:city_reset, city_map}`, so an old-version engine broadcasting the bare atom to a
+  # new-version view would otherwise hit no clause above and crash it.
+  def handle_info(message, socket) do
+    Logger.debug("SimulatorLive ignoring unexpected message: #{inspect(message)}")
+    {:noreply, socket}
   end
 
   @impl true

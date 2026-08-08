@@ -83,6 +83,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     assert has_element?(view, "#legend-totals")
   end
 
+  test "an unrecognised message is dropped rather than crashing the view", %{conn: conn} do
+    # Regression: SimulatorLive had no catch-all handle_info/2, so any unmatched message
+    # raised FunctionClauseError and killed the view. Concretely reachable in a
+    # mixed-version deploy — this branch changed `:city_reset` from a bare atom to
+    # `{:city_reset, city_map}`, so an old-version engine broadcasting the bare atom to a
+    # new-version view would hit this exact gap. `:some_retired_message` stands in for
+    # any such stale broadcast.
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, :some_retired_message)
+
+    assert render(view) =~ "Armchair Metropolist"
+  end
+
   test "a delta broadcast updates only the affected node", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
