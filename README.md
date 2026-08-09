@@ -152,17 +152,14 @@ release *list* — the changelog a software centre shows — so the task prepend
 to it rather than overwriting, and dates the entry today:
 
 ```bash
-mix version.set 0.2.0
-git commit -am "Release 0.2.0" && git push
-git tag -m "Armchair Metropolist 0.2.0" v0.2.0 && git push origin v0.2.0
+scripts/release.sh 0.5.0
 ```
 
-`-m` rather than a bare `git tag`: with `tag.gpgsign` set — as it is for this
-repository's author — a bare `git tag` tries to sign, needs a message, finds no
-editor in a non-interactive shell, and dies with `fatal: no tag message?`
-*after* the commit has already been pushed. Passing a message works whether or
-not signing is configured, and an annotated tag is the better artefact for a
-release regardless.
+The script requires a clean, up-to-date `main` checkout and a `MAJOR.MINOR.PATCH`
+version. It runs `mix version.set` and `mix precommit`, verifies that only the five
+version files changed, creates the release commit and annotated tag, then pushes
+`main` and the tag atomically. If the push succeeds, CI builds and publishes the
+GitHub Release; if either ref cannot be pushed, neither is.
 
 The tag is checked against the declared version in CI, so a tag that disagrees
 fails before anything is published — as does a tag whose shape is wrong, such as
