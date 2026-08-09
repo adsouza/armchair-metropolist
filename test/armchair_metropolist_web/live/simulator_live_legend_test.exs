@@ -616,7 +616,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     # name a resource, so this refutation has a state in which it fails.
     # The grid grows from 256px to 768px and legacy snapshots can be wider, so viewport
     # width cannot tell this inner container whether the outer flex row wrapped. The hook
-    # measures the actual grid/sidebar positions and drives this data variant instead.
+    # compares the city column and sidebar, the two direct flex items, and drives this data
+    # variant instead. Comparing the grid itself is wrong whenever a goal banner sits above it.
     test "metrics layout follows the sidebar's measured position", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

@@ -555,9 +555,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             </button>
 
             <%!-- Column is the safe first paint: Metrics must stay below the legend while the
-                sidebar is beside the grid. The colocated hook changes `data-position` only
-                after measuring the real grid and sidebar tops; unlike a viewport breakpoint,
-                that remains correct while the grid grows and for wider legacy snapshots. --%>
+                sidebar is beside the city column. The colocated hook changes `data-position`
+                only after comparing the two direct flex items' tops; unlike a viewport
+                breakpoint, that remains correct while the grid grows, while a goal banner sits
+                above it, and for wider legacy snapshots. --%>
             <div
               id="legend-and-metrics"
               data-position="side"
@@ -591,19 +592,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               export default {
                 mounted() {
                   this.layout = this.el.closest("#simulator-layout")
-                  this.grid = this.layout.querySelector("#city-grid")
+                  this.cityColumn = this.layout.querySelector("#city-column")
                   this.sidebar = this.el.closest("aside")
                   this.content = this.sidebar.querySelector("#legend-and-metrics")
+                  this.placement = this.content.dataset.position
                   this.frame = null
 
                   this.syncPosition = () => {
                     this.frame = null
 
-                    const gridTop = this.grid.getBoundingClientRect().top
-                    const sidebarTop = this.sidebar.getBoundingClientRect().top
-                    const position = Math.abs(gridTop - sidebarTop) < 2 ? "side" : "below"
+                    // LiveView renders `side` as the safe first-paint default on every
+                    // patch. Restore the last measured placement before reading geometry;
+                    // otherwise that transient column layout can make the sidebar fit
+                    // beside the grid and turn the reset into a self-fulfilling reflow.
+                    if (this.content.dataset.position !== this.placement) {
+                      this.content.dataset.position = this.placement
+                    }
 
-                    if (this.content.dataset.position !== position) {
+                    const cityColumnTop = this.cityColumn.getBoundingClientRect().top
+                    const sidebarTop = this.sidebar.getBoundingClientRect().top
+                    const position = Math.abs(cityColumnTop - sidebarTop) < 2 ? "side" : "below"
+
+                    if (this.placement !== position) {
+                      this.placement = position
                       this.content.dataset.position = position
                     }
                   }
@@ -616,7 +627,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
                   this.resizeObserver = new ResizeObserver(this.scheduleSync)
                   this.resizeObserver.observe(this.layout)
-                  this.resizeObserver.observe(this.grid)
+                  this.resizeObserver.observe(this.cityColumn)
                   this.resizeObserver.observe(this.sidebar)
 
                   // A LiveView patch may restore the server-rendered `side` default without
@@ -1751,7 +1762,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:full_enabled, redemption_enabled?(assigns.bond, assigns.money, :full))
 
     ~H"""
-    <section id="bond-panel" class="my-3 rounded-xl border border-base-300 bg-base-200/40 p-3">
+    <section
+      id="bond-panel"
+      class="my-3 w-fit rounded-xl border border-base-300 bg-base-200/40 p-3"
+    >
       <div class="flex items-center justify-between gap-3">
         <h3 class="font-semibold">Municipal bond</h3>
         <span :if={@bond.defaulted} class="badge badge-error badge-sm">In default</span>
@@ -1794,7 +1808,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         Callable in {@bond.call_protection_remaining} servicing ticks
       </p>
 
-      <div :if={not bond_redeemed?(@bond)} class="mt-3 grid grid-cols-2 gap-2">
+      <div
+        :if={not bond_redeemed?(@bond)}
+        id="bond-redemption-actions"
+        class="mt-3 grid w-fit grid-cols-2 gap-2"
+      >
         <button
           id="redeem-bond-25"
           type="button"

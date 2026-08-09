@@ -32,6 +32,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#opening-planning", "Design before the clock starts")
       assert has_element?(view, "#begin-sim[disabled]")
       assert has_element?(view, "#bond-service-status", "Debt service begins after Begin sim")
+      assert has_element?(view, "#bond-panel.w-fit")
+      assert has_element?(view, "#bond-redemption-actions.grid.w-fit")
       assert has_element?(view, "#opening-goal-banner[data-variant=opening_goal] #opening-goal")
 
       assert has_element?(
