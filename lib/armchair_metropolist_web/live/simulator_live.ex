@@ -424,6 +424,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   `legend/1` and so could not survive a collapse — the structural reason
                   the toggle hid them. --%>
             <.metrics metrics={@metrics} />
+
+            <%!-- Hidden with the totals row it explains — and not only for tidiness. Left
+                  visible, this paragraph would hold the collapsed sidebar at its own width
+                  instead of the re-entry line's width, and collapsing would reclaim little.
+
+                  It follows Metrics rather than living inside `legend/1`, so the supporting
+                  detail comes after the two primary dashboard sections in reading order.
+
+                  `max-w-xl` is load-bearing. Its 576px cap sits just inside the compact
+                  matrix's measured 582px width instead of letting a 1054px max-content line
+                  stretch the sidebar well past the matrix. --%>
+            <p
+              :if={@legend_detail}
+              id="legend-footnote"
+              class="mt-1 max-w-xl text-xs opacity-60"
+            >
+              Totals include free capacity belonging to no type: 30 water supplied, 40 waste
+              absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
+              Labour's total also includes the park amenity; park's own row carries it. Shortfalls
+              in power, water, waste disposal and labour are bought automatically for 1 money per
+              unit while the treasury can pay; purchased units count toward supplied totals. Each
+              imported labour unit adds one traffic demand, and traffic itself cannot be bought.
+            </p>
           </div>
 
           <%!-- The hook owns only this ignored marker. It observes the surrounding layout
@@ -700,7 +723,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <%!-- "Legend" and not "Types": the toggle offers to hide the legend, the row ids
             are `legend-*`, and docs/PLAYING.md sends the player looking for a legend.
             The table's own `type` column header is caption enough for the rows. --%>
-      <h2 class="font-semibold mb-2">Legend</h2>
+      <h2 id="legend-heading" class="mb-2 font-semibold">
+        Legend:
+        <span id="legend-selection-hint" class="font-normal opacity-60">
+          tap on the name of a block type to select it
+        </span>
+      </h2>
 
       <div class="overflow-x-auto">
         <table id="block-legend" class="table table-xs w-fit [&_th]:px-1 [&_td]:px-1">
@@ -802,22 +830,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </tfoot>
         </table>
       </div>
-
-      <%!-- Hidden with the totals row it explains — and not only for tidiness. Left
-            visible, this paragraph would hold the collapsed sidebar at its own width
-            instead of the re-entry line's width, and collapsing would reclaim little.
-
-            `max-w-xl` is load-bearing. Its 576px cap sits just inside the compact matrix's
-            measured 582px width instead of letting a 1054px max-content line stretch the
-            sidebar well past the matrix. --%>
-      <p :if={@detail} id="legend-footnote" class="mt-1 max-w-xl text-xs opacity-60">
-        Totals include free capacity belonging to no type: 30 water supplied, 40 waste
-        absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
-        Labour's total also includes the park amenity; park's own row carries it. Shortfalls
-        in power, water, waste disposal and labour are bought automatically for 1 money per
-        unit while the treasury can pay; purchased units count toward supplied totals. Each
-        imported labour unit adds one traffic demand, and traffic itself cannot be bought.
-      </p>
     </div>
     """
   end
@@ -854,7 +866,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:automatic_purchases, automatic_purchases(assigns.metrics.resources))
 
     ~H"""
-    <div>
+    <div id="metrics-panel">
       <h2 class="font-semibold mb-2">Metrics</h2>
       <p id="metrics-tick">Tick: {@metrics.tick}</p>
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>

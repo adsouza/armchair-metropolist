@@ -2,6 +2,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
   use ArmchairMetropolistWeb.SimulatorLiveCase
 
   describe "legend" do
+    test "explains that tapping a block type name selects it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert view |> element("#legend-heading #legend-selection-hint") |> render() =~
+               "tap on the name of a block type to select it"
+    end
+
     test "shows each block emoji immediately before its type label", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -37,6 +44,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     test "wraps the totals footnote and reports the free baselines", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
+      assert has_element?(view, "#metrics-panel + #legend-footnote")
       assert has_element?(view, "#legend-footnote.max-w-xl")
 
       footnote = view |> element("#legend-footnote") |> render()
