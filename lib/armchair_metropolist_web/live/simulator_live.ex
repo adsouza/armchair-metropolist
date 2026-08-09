@@ -50,18 +50,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # useful read-down comparisons and summarizes hospital treatment in that row instead.
   @legend_resources [:power, :water, :waste, :traffic, :labour, :money]
 
-  # Stable layout reservations, measured in the browser against the largest ordinary
+  # Stable legend reservations, measured in the browser against the largest ordinary
   # values the bounded city can produce. A 32x32 city filled with one type has 1,024
   # blocks and six-digit row/footer totals; its expanded legend reaches 712.67px, so
   # 760 leaves 47px of rendering slack. The collapsed heading reaches 374.13px, so 384
-  # leaves 10px. Metrics has independently reached 594.45px, hence its 600px ceiling.
+  # leaves 10px. Metrics has its own fixed responsive width in `metrics/1`.
   #
   # These are layout widths, not content clamps: the table wrapper still scrolls if a
   # grandfathered snapshot exceeds the bounded game's reasonable maximum. Reserving
-  # them keeps changing counts, totals and purchase badges from moving whole sections.
+  # them keeps changing counts and totals from moving whole sections.
   @expanded_legend_width 760
   @collapsed_legend_width 384
-  @metrics_reserved_width 600
 
   # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
   # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
@@ -567,17 +566,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               {if @legend_detail, do: "Hide detail", else: "Show detail"}
             </button>
 
-            <%!-- Column is the safe first paint: Metrics must stay below the legend while the
-                sidebar is beside the city column. The colocated hook changes `data-position`
-                from the city-column width, the real flex gap and the reserved sidebar width.
-                Unlike measuring the live matrix, changing counts and totals cannot move this
-                boundary; unlike a viewport breakpoint, grid growth still can. --%>
-            <div
-              id="legend-and-metrics"
-              data-position="side"
-              data-reserved-width={sidebar_reserved_width(@legend_detail)}
-              class="flex flex-col gap-4 data-[position=below]:flex-row"
-            >
+            <%!-- Keep this column in both outer flex positions. Changing it to a row after the
+                sidebar wraps changes the sidebar's own intrinsic width, feeding the result of
+                the wrap decision back into its input. A fixed column makes the outer boundary
+                depend only on the stable legend/metrics reservations and grid growth. --%>
+            <div id="legend-and-metrics" class="flex flex-col gap-4">
               <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
               <.legend
@@ -592,84 +585,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   the toggle hid them. --%>
               <.metrics metrics={@metrics} />
             </div>
-
-            <%!-- The hook owns only this ignored marker. It observes the surrounding layout
-                and changes one data attribute on `#legend-and-metrics`; LiveView remains
-                responsible for that container's children and can patch their metrics. --%>
-            <div
-              id="sidebar-placement-observer"
-              phx-hook=".SidebarPlacement"
-              phx-update="ignore"
-            >
-            </div>
-            <script :type={Phoenix.LiveView.ColocatedHook} name=".SidebarPlacement">
-              export default {
-                mounted() {
-                  this.layout = this.el.closest("#simulator-layout")
-                  this.cityColumn = this.layout.querySelector("#city-column")
-                  this.sidebar = this.el.closest("aside")
-                  this.content = this.sidebar.querySelector("#legend-and-metrics")
-                  this.placement = this.content.dataset.position
-                  this.frame = null
-
-                  this.syncPosition = () => {
-                    this.frame = null
-
-                    // LiveView renders `side` as the safe first-paint default on every
-                    // patch. Restore the last computed placement first so an ordinary
-                    // metrics patch cannot flash a different layout for one frame.
-                    if (this.content.dataset.position !== this.placement) {
-                      this.content.dataset.position = this.placement
-                    }
-
-                    const layoutWidth = this.layout.getBoundingClientRect().width
-                    const cityColumnWidth = this.cityColumn.getBoundingClientRect().width
-                    const columnGap = parseFloat(getComputedStyle(this.layout).columnGap) || 0
-                    const reservedWidth = Number(this.content.dataset.reservedWidth)
-                    const position =
-                      cityColumnWidth + columnGap + reservedWidth <= layoutWidth
-                        ? "side"
-                        : "below"
-
-                    if (this.placement !== position) {
-                      this.placement = position
-                      this.content.dataset.position = position
-                    }
-                  }
-
-                  this.scheduleSync = () => {
-                    if (this.frame === null) {
-                      this.frame = requestAnimationFrame(this.syncPosition)
-                    }
-                  }
-
-                  this.resizeObserver = new ResizeObserver(this.scheduleSync)
-                  this.resizeObserver.observe(this.layout)
-                  this.resizeObserver.observe(this.cityColumn)
-                  this.resizeObserver.observe(this.sidebar)
-
-                  // A LiveView patch may restore the server-rendered `side` default without
-                  // changing any box size. Watching the attribute reapplies the stable state;
-                  // the width attribute also changes intentionally when detail is toggled.
-                  this.mutationObserver = new MutationObserver(this.scheduleSync)
-                  this.mutationObserver.observe(this.content, {
-                    attributes: true,
-                    attributeFilter: ["data-position", "data-reserved-width"]
-                  })
-
-                  this.scheduleSync()
-                },
-
-                destroyed() {
-                  this.resizeObserver.disconnect()
-                  this.mutationObserver.disconnect()
-
-                  if (this.frame !== null) {
-                    cancelAnimationFrame(this.frame)
-                  }
-                }
-              }
-            </script>
           </aside>
         </div>
 
@@ -1417,10 +1332,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp legend_reserved_width(true), do: @expanded_legend_width
   defp legend_reserved_width(false), do: @collapsed_legend_width
 
-  defp sidebar_reserved_width(detail) do
-    max(legend_reserved_width(detail), @metrics_reserved_width)
-  end
-
   defp planning?(metrics) do
     case metrics.bond do
       %{legacy: false, original_principal: principal} = bond when principal > 0.0 ->
@@ -1688,7 +1599,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:automatic_purchases, automatic_purchases(assigns.metrics.resources))
 
     ~H"""
-    <div id="metrics-panel">
+    <%!-- This width is deliberately independent of live values. The outer sidebar is
+          `min-w-fit`, so letting purchase badges or a longer balance set this width can
+          move the entire sidebar between flex lines. `max-w-full` still permits the panel
+          to clamp inside a narrower ancestor. --%>
+    <div id="metrics-panel" class="w-80 max-w-full shrink-0">
       <h2 class="font-semibold mb-2">Metrics</h2>
       <p id="metrics-tick">Tick: {@metrics.tick}</p>
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
@@ -1717,23 +1632,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         :if={@metrics.commercial_bond && not bond_redeemed?(@metrics.commercial_bond)}
         bond={@metrics.commercial_bond}
       />
-      <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
-        <span>
-          {if planning?(@metrics), do: "Projected purchases", else: "Automatic purchases"}: {Float.round(
-            @metrics.market_spend,
-            1
-          )}/tick
-        </span>
-        <span class="ml-1 inline-flex flex-wrap gap-1 align-middle">
-          <span
-            :for={{resource, purchased} <- @automatic_purchases}
-            data-market-resource={resource}
-            class="inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
-          >
-            {resource} +{Float.round(purchased, 1)}
+      <%!-- Reserve room for the conditional purchase summary so it does not push every
+            metric below it up and down as purchases start and stop. Chips wrap within the
+            fixed panel instead of contributing their max-content width to the sidebar. --%>
+      <div id="metrics-market-slot" class="min-h-20">
+        <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
+          <span class="block tabular-nums">
+            {if planning?(@metrics), do: "Projected purchases", else: "Automatic purchases"}: {Float.round(
+              @metrics.market_spend,
+              1
+            )}/tick
           </span>
-        </span>
-      </p>
+          <span class="mt-1 flex flex-wrap gap-1">
+            <span
+              :for={{resource, purchased} <- @automatic_purchases}
+              data-market-resource={resource}
+              class="inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              {resource} +{Float.round(purchased, 1)}
+            </span>
+          </span>
+        </p>
+      </div>
       <p :if={@metrics.imported_labour_traffic > 0.0} id="metrics-imported-labour-traffic">
         Imported-labour traffic: +{Float.round(@metrics.imported_labour_traffic, 1)}/tick
       </p>

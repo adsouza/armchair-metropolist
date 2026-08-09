@@ -301,6 +301,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert view |> element("#metrics-market") |> render() =~
                "Automatic purchases: 25.0/tick"
 
+      assert has_element?(view, "#metrics-market > span.block.tabular-nums")
+      assert has_element?(view, "#metrics-market > span.mt-1.flex.flex-wrap")
+
       assert view |> element(~s{#metrics-market [data-market-resource="power"]}) |> render() =~
                "power +20.0"
 
@@ -615,22 +618,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     # `min_by` breaks it arbitrarily — it read "Tightest: traffic 100%", which is true
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
-    # The grid grows from 256px to 768px and legacy snapshots can be wider, so viewport
-    # width alone cannot place the sidebar. The hook combines the city-column width with
-    # this reserved maximum instead of letting live matrix figures move the boundary.
-    test "metrics layout uses the reserved sidebar width", %{conn: conn} do
+    # The outer flex row already makes the content-driven placement decision. Changing the
+    # sidebar's inner layout after that decision feeds a new intrinsic width back into the
+    # outer flex row, so the stable form is one fixed column with no placement observer.
+    test "metrics layout has a stable footprint", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, ~s{#legend-and-metrics[data-position="side"].flex.flex-col})
-      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="760"]})
+      assert has_element?(view, "#legend-and-metrics.flex.flex-col")
+      assert has_element?(view, "#metrics-panel.w-80.max-w-full.shrink-0")
+      assert has_element?(view, "#metrics-market-slot.min-h-20")
+      refute has_element?(view, "#sidebar-placement-observer")
 
       layout = view |> element("#legend-and-metrics") |> render()
-      assert layout =~ "data-[position=below]:flex-row"
-
-      assert has_element?(
-               view,
-               ~s{#sidebar-placement-observer[phx-hook][phx-update="ignore"]}
-             )
+      refute layout =~ "data-position"
+      refute layout =~ "flex-row"
     end
 
     # `grow` on the aside let the sidebar stretch across the whole page whenever it was
@@ -670,14 +671,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="false"]})
       assert has_element?(view, ~s{#legend-panel[style="width: 384px;"]})
-      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="600"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Show detail"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
       assert has_element?(view, ~s{#legend-panel[style="width: 760px;"]})
-      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="760"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
 
