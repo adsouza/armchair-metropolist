@@ -91,6 +91,8 @@ and satisfaction, per tick. Water supply has a free baseline of 30, waste absorp
 traffic absorption starts at 20. Power, labour and money have no free baseline,
 deliberately — see below. When the city is short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
+Each totals cell turns orange at 10% headroom or less and red once available supply no longer
+meets demand; purchased capacity counts as available supply in that warning.
 Purchased capacity appears in the supplied total, and the Metrics panel shows the cost
 as *Automatic purchases*, broken down into one amber badge per resource. The same resource's
 totals cell shows `+N bought`, so imported capacity is visibly distinct from local supply.

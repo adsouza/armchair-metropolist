@@ -1118,7 +1118,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               <th
                 :for={resource <- @resources}
                 data-total={resource}
-                class="text-right tabular-nums leading-tight"
+                class={[
+                  "text-right tabular-nums leading-tight",
+                  totals_status(@metrics.resources, resource) == :warning &&
+                    "text-orange-700 dark:text-orange-300",
+                  totals_status(@metrics.resources, resource) == :shortfall &&
+                    "text-red-700 dark:text-red-300"
+                ]}
+                data-supply-status={totals_status(@metrics.resources, resource)}
               >
                 <% {demanded_supplied, met_this_tick, purchased} =
                   totals_cell(@metrics.resources, resource) %>
@@ -1507,6 +1514,29 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           "#{Float.round(stats.flow_satisfaction * 100, 1)}%",
           Map.get(stats, :purchased, 0.0)
         }
+    end
+  end
+
+  # Ten percent is the warning band, measured against the same flow supply printed in
+  # the cell: local capacity plus anything bought this tick. Exactly meeting demand is
+  # therefore orange rather than red; the city is still meeting its needs, but has no
+  # buffer. A resource with no demand has no threshold to approach and stays neutral.
+  defp totals_status(resources, resource) do
+    case Map.get(resources, resource) do
+      nil ->
+        :healthy
+
+      %{demanded: demanded} when demanded <= 0.0 ->
+        :healthy
+
+      stats ->
+        available = stats.supplied + Map.get(stats, :purchased, 0.0)
+
+        cond do
+          available < stats.demanded -> :shortfall
+          available <= stats.demanded * 1.1 -> :warning
+          true -> :healthy
+        end
     end
   end
 

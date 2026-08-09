@@ -209,6 +209,44 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       refute view |> element(~s{[data-total="power"]}) |> render() =~ "·"
     end
 
+    test "the totals row warns near capacity and turns red on a shortfall", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      metrics = %{
+        empty_city_metrics()
+        | resources: %{
+            power: stat(111.0, 100.0),
+            water: stat(110.0, 100.0),
+            waste: stat(100.0, 100.0),
+            traffic: stat(99.0, 100.0)
+          }
+      }
+
+      send(view.pid, {:city_metrics, metrics})
+      render(view)
+
+      healthy = view |> element(~s{[data-total="power"]}) |> render()
+      warning = view |> element(~s{[data-total="water"]}) |> render()
+      exact = view |> element(~s{[data-total="waste"]}) |> render()
+      shortfall = view |> element(~s{[data-total="traffic"]}) |> render()
+
+      assert healthy =~ ~s(data-supply-status="healthy")
+      refute healthy =~ "text-orange-700"
+      refute healthy =~ "text-red-700"
+
+      for cell <- [warning, exact] do
+        assert cell =~ ~s(data-supply-status="warning")
+        assert cell =~ "text-orange-700"
+        assert cell =~ "dark:text-orange-300"
+        refute cell =~ "text-red-700"
+      end
+
+      assert shortfall =~ ~s(data-supply-status="shortfall")
+      assert shortfall =~ "text-red-700"
+      assert shortfall =~ "dark:text-red-300"
+      refute shortfall =~ "text-orange-700"
+    end
+
     test "purchased capacity is identified by resource in totals and metrics",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
