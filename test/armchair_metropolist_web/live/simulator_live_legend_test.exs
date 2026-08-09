@@ -36,7 +36,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       table = view |> element("#block-legend") |> render()
 
-      assert has_element?(view, ~s{#legend-panel.shrink-0[style="width: 720px;"]})
+      assert has_element?(view, ~s{#legend-panel.shrink-0[style="width: 760px;"]})
       assert has_element?(view, "#block-legend.w-fit")
       assert table =~ "[&amp;_th]:px-1"
       assert table =~ "[&amp;_td]:px-1"
@@ -622,7 +622,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, ~s{#legend-and-metrics[data-position="side"].flex.flex-col})
-      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="720"]})
+      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="760"]})
 
       layout = view |> element("#legend-and-metrics") |> render()
       assert layout =~ "data-[position=below]:flex-row"
@@ -676,8 +676,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       view |> element("#toggle-legend-detail") |> render_click()
 
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
-      assert has_element?(view, ~s{#legend-panel[style="width: 720px;"]})
-      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="720"]})
+      assert has_element?(view, ~s{#legend-panel[style="width: 760px;"]})
+      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="760"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
 

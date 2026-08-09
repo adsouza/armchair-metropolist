@@ -53,13 +53,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # Stable layout reservations, measured in the browser against the largest ordinary
   # values the bounded city can produce. A 32x32 city filled with one type has 1,024
   # blocks and six-digit row/footer totals; its expanded legend reaches 712.67px, so
-  # 720 leaves 7px of rendering slack. The collapsed heading reaches 374.13px, so 384
+  # 760 leaves 47px of rendering slack. The collapsed heading reaches 374.13px, so 384
   # leaves 10px. Metrics has independently reached 594.45px, hence its 600px ceiling.
   #
   # These are layout widths, not content clamps: the table wrapper still scrolls if a
   # grandfathered snapshot exceeds the bounded game's reasonable maximum. Reserving
   # them keeps changing counts, totals and purchase badges from moving whole sections.
-  @expanded_legend_width 720
+  @expanded_legend_width 760
   @collapsed_legend_width 384
   @metrics_reserved_width 600
 
