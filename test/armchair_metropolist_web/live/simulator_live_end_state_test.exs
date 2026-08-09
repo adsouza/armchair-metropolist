@@ -2,7 +2,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
   use ArmchairMetropolistWeb.SimulatorLiveCase
 
   describe "the reset control" do
-    test "is absent while the city has living housing", %{conn: conn} do
+    test "appears once a living city has been changed", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # `select_type` first, and it is not optional. `@selected_type` defaults to
@@ -13,7 +13,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       render_click(view, "select_type", %{"type" => "residential"})
       render_click(view, "place", %{"x" => "1", "y" => "1"})
 
-      refute has_element?(view, "#reset-city")
+      assert has_element?(view, "#reset-city")
     end
 
     test "is absent on a fresh, empty city", %{conn: conn} do
@@ -99,6 +99,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#reset-city", "Reset")
+    end
+
+    test "asks for confirmation before discarding a playable city", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "select_type", %{"type" => "residential"})
+      render_click(view, "place", %{"x" => "1", "y" => "1"})
+
+      assert view |> element("#reset-city") |> render() =~
+               ~s(data-confirm="Reset this city and permanently discard all of its blocks and progress?")
     end
   end
 
@@ -211,15 +221,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :warned_city
-    test "a warned city gets no reset control, because it is still rescuable", %{conn: conn} do
-      # The warning is an invitation to fix the city, not to abandon it — and the 2026-08-06
-      # design's misclick mitigation is exactly that the button stays away from cities the
-      # player can still play. `docs/PLAYING.md` claims this in prose; this is what stops the
-      # claim going stale.
+    test "a warned city can still be reset", %{conn: conn} do
+      # Reset is an escape hatch chosen by the player, not a verdict that the city is dead.
+      # The button's confirmation prompt protects this still-rescuable city from a stray
+      # click while leaving the option available.
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#collapse-banner")
-      refute has_element?(view, "#reset-city")
+      assert has_element?(view, "#reset-city")
     end
 
     @tag :warned_city
@@ -230,16 +239,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :early_insolvent_city
-    test "an insolvent city far from trouble gets neither banner nor rescue line",
+    test "an insolvent city far from trouble gets no warning but can still be reset",
          %{conn: conn} do
       # Insolvent but past the projection horizon. This is the state the
       # guide's own opening sequence enters at its third stage, so a warning here
-      # would fire right through the tutorial.
+      # would fire right through the tutorial. Reset remains available because the player
+      # has already changed the city; its presence is not itself a warning.
       {:ok, view, _html} = live(conn, ~p"/")
 
       refute has_element?(view, "#collapse-banner")
       refute has_element?(view, "#metrics-rescue")
-      refute has_element?(view, "#reset-city")
+      assert has_element?(view, "#reset-city")
     end
 
     @tag :locked_city

@@ -419,12 +419,12 @@ counts down to losing the *fix*, not to reaching zero — you run out of options
 out of money, by however many ticks the fix's own price buys you. See "Running out of money"
 above: the escape has to be bought while there is still something to buy it with.
 
-Stalled, locked and stalled-and-broke all put a **Reset** button in the page header, beside the
-theme toggle. It clears every block, returns the treasury to the opening grant, sets the tick
-back to zero and discards the stored city. There is no confirmation and no undo.
-
-The rescue-window warning does **not** put that button on screen, and that is deliberate: a
-city you can still fix should not be offering you a one-click way to destroy it.
+Once you change a city, a **Reset** button appears in the page header beside the theme toggle.
+It is available whether the city is thriving, rescuable, stalled or locked, so an economic
+softlock never traps you in that city. Reset clears every block, returns the treasury to the
+opening grant, sets the tick back to zero and discards the stored city. The button asks for
+confirmation because there is no undo; it stays hidden only while the city is equivalent to
+the untouched opening state.
 
 ## Reference
 

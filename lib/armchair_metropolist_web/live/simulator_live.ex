@@ -299,6 +299,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           type="button"
           class="btn btn-xs btn-error text-white min-h-6"
           phx-click="wipe"
+          data-confirm="Reset this city and permanently discard all of its blocks and progress?"
           title="Clear every block and start a new city — this cannot be undone"
         >
           Reset
@@ -525,12 +526,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # anything already in there.
   #
   # Status only. It names the header's Reset button rather than rendering a second copy of it.
-  # Whenever this banner reports a state the player cannot leave — `:dead` or `:locked`, both
-  # of which are `game_over?/1` — `show_reset?/1` has that button on screen, because it now
-  # carries `game_over?/1` as an explicit disjunct. It did not always: the guarantee used to
-  # rest on `stalled` implying no living housing, and insolvency broke that implication. The
-  # `:stalled` and `:warning` variants deliberately appear *without* a Reset button, since
-  # both describe cities the player can still rescue.
+  # Every banner describes an established city, so `show_reset?/1` guarantees that button is
+  # present for all four variants. Reset is a player-controlled escape hatch now, not an
+  # end-state classifier; its confirmation prompt protects cities that are still rescuable.
   #
   # **One variant at a time, chosen by an ordered list rather than by independent `:if`s.**
   # The four states are not disjoint: a stalled city is also insolvent whenever its upkeep
@@ -661,30 +659,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     "No single block closes the gap — it will take several, from #{trunc(cost)} each."
   end
 
-  # Either the city has no living housing and the reset would change something, or the city
-  # is over — which is not the same thing, and used not to be covered.
+  # Reset is available after the player changes the city, not only after a state classifier
+  # proves that it is dead. Automatic purchases can pin a healthy city's cash flow at zero,
+  # and making the escape hatch depend on enumerating every such economic fixpoint merely
+  # creates the next unreachable reset. A confirmation prompt protects a viable city from a
+  # stray click.
   #
-  # The `node_count > 0` disjunct is not redundant. Demolishing costs 10 and clears a node, so
-  # a player can spend down to an empty grid holding 9: no nodes, so the city is not stalled
-  # and there is no banner; nothing costs 10 or less; and an empty grid earns nothing,
-  # forever. Without it that position has no affordance at all. With it, the button still
-  # stays hidden on a fresh city, where a reset is a no-op — which is the only reason the
-  # first clause is not the bare `not housing_alive`.
-  #
-  # `bankrupt` rather than a second comparison against `Node.cheapest_action_cost/0`, so
-  # the threshold has exactly one reader.
-  #
-  # `game_over?/1` is the disjunct this function was missing, and it is *not* implied by the
-  # first clause. Until insolvency existed it was: `stalled` means every block is on the
-  # floor, hence no living housing, so every game-over city already satisfied the left-hand
-  # side. An insolvent city breaks that — measured, one house at 100 health beside one park
-  # with an empty treasury can never change again by any route, and `housing_alive` is true
-  # the whole time. Adding the disjunct here rather than widening the first clause keeps the
-  # misclick mitigation the 2026-08-06 design relied on for every city that is still
-  # playable.
+  # An empty grid can still differ from a new city: demolishing every block may leave less
+  # than the opening grant, or a waste backlog may remain. Both are changes a reset repairs.
+  # The equality checks keep the control hidden on the untouched opening state even as its
+  # tick counter advances in the background.
   defp show_reset?(metrics) do
-    (not metrics.housing_alive and (metrics.node_count > 0 or metrics.bankrupt)) or
-      SimulationMetrics.game_over?(metrics)
+    metrics.node_count > 0 or metrics.money != CityMap.opening_grant() or
+      metrics.waste_stock != 0.0
   end
 
   # The resource columns are fixed and identical on every row, including where a type
