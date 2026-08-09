@@ -4,6 +4,24 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Domain.Entities.Node
 
+  @type bond_summary :: %{
+          legacy: boolean(),
+          original_principal: float(),
+          outstanding_principal: float(),
+          interest_arrears: float(),
+          principal_arrears: float(),
+          redemption_amount: float(),
+          opening_period_remaining: non_neg_integer(),
+          call_protection_remaining: non_neg_integer(),
+          callable: boolean(),
+          maturity_remaining: non_neg_integer(),
+          next_interest: float(),
+          next_principal: float(),
+          next_payment: float(),
+          defaulted: boolean(),
+          paused: boolean()
+        }
+
   @typedoc """
   Two satisfaction figures, on two different bases. `satisfaction` is computed
   over `supplied + carried + purchased` — the balance-inclusive figure that drives health
@@ -64,6 +82,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           insolvent: boolean(),
           escape: escape() | nil,
           rescue_window: non_neg_integer() | nil,
+          bond: bond_summary() | nil,
+          financing_locked: boolean(),
+          financing_escape: escape() | nil,
+          financing_rescue_window: non_neg_integer() | nil,
           stalled: boolean()
         }
 
@@ -111,7 +133,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     money_ceiling: 0.0,
     insolvent: false,
     escape: nil,
-    rescue_window: nil
+    rescue_window: nil,
+    bond: nil,
+    financing_locked: false,
+    financing_escape: nil,
+    financing_rescue_window: nil
   }
 
   defstruct tick: 0,
@@ -133,6 +159,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             insolvent: false,
             escape: nil,
             rescue_window: nil,
+            bond: nil,
+            financing_locked: false,
+            financing_escape: nil,
+            financing_rescue_window: nil,
             stalled: false
 
   @doc """
@@ -193,6 +223,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       insolvent: Map.fetch!(derived, :insolvent),
       escape: Map.fetch!(derived, :escape),
       rescue_window: Map.fetch!(derived, :rescue_window),
+      bond: Map.fetch!(derived, :bond),
+      financing_locked: Map.fetch!(derived, :financing_locked),
+      financing_escape: Map.fetch!(derived, :financing_escape),
+      financing_rescue_window: Map.fetch!(derived, :financing_rescue_window),
       stalled: Map.fetch!(derived, :stalled)
     }
   end
@@ -222,8 +256,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   `docs/PLAYING.md` both describe this state and must not be able to disagree about it.
   """
   @spec game_over?(t()) :: boolean()
-  def game_over?(%__MODULE__{stalled: stalled, insolvent: insolvent, bankrupt: bankrupt}),
-    do: bankrupt and (stalled or insolvent)
+  def game_over?(%__MODULE__{} = metrics),
+    do: metrics.bankrupt and (metrics.stalled or metrics.insolvent or metrics.financing_locked)
 
   @doc """
   Whether the city is insolvent and close enough to losing its escape to be told about it.
@@ -260,6 +294,17 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   def warning?(%__MODULE__{bankrupt: true}), do: false
   def warning?(%__MODULE__{rescue_window: nil}), do: false
   def warning?(%__MODULE__{rescue_window: window}), do: window <= @reaction_ticks
+
+  @doc "Whether callable debt is close to consuming the city's last affordable escape."
+  @spec financing_warning?(t()) :: boolean()
+  def financing_warning?(%__MODULE__{financing_locked: false}), do: false
+  def financing_warning?(%__MODULE__{stalled: true}), do: false
+  def financing_warning?(%__MODULE__{bankrupt: true}), do: false
+  def financing_warning?(%__MODULE__{bond: %{defaulted: true}}), do: false
+  def financing_warning?(%__MODULE__{financing_rescue_window: nil}), do: false
+
+  def financing_warning?(%__MODULE__{financing_rescue_window: window}),
+    do: window <= @reaction_ticks
 
   defp calculate_avg_health([]), do: 0.0
 

@@ -21,6 +21,14 @@ defmodule ArmchairMetropolist.UseCases.AdvanceCityTick do
            }}
   def execute(city_map) do
     {next_city_map, delta} = SimulationCalculator.advance_tick(city_map)
+
+    next_city_map =
+      if next_city_map.tick > city_map.tick do
+        CityMap.increment_revision(next_city_map)
+      else
+        next_city_map
+      end
+
     metrics = SimulationCalculator.metrics(next_city_map)
 
     {:ok, %{city_map: next_city_map, delta: delta, metrics: metrics}}

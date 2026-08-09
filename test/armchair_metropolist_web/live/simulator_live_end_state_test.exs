@@ -16,9 +16,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       assert has_element?(view, "#reset-city")
     end
 
+    @tag :unissued_city
     test "is absent on a fresh, empty city", %{conn: conn} do
-      # No housing alive, but nothing placed and the grant intact — a reset here is a
-      # no-op, so offering one is noise.
       {:ok, view, _html} = live(conn, ~p"/")
 
       refute has_element?(view, "#reset-city")
@@ -42,15 +41,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :stalled_city
-    test "clears the grid and starts a new city", %{conn: conn} do
+    test "clears the grid and returns to bond authorization", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
-      render_click(view, "wipe")
+      view |> element("#reset-city") |> render_click()
+      assert has_element?(view, "#reset-confirmation")
+
+      view |> element("#confirm-reset") |> render_click()
 
       html = render(view)
       refute html =~ ~s{id="0:0"}
-      assert html =~ "Treasury: #{trunc(CityMap.opening_grant())}"
+      assert has_element?(view, "#bond-issuance")
+      refute has_element?(view, "#city-grid")
       refute has_element?(view, "#reset-city")
     end
 
@@ -69,9 +72,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
-      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, CityMap.new()})
+      view |> element("#reset-city") |> render_click()
+      assert has_element?(view, "#reset-confirmation")
+
+      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, legacy_city()})
 
       refute render(view) =~ ~s{id="0:0"}
+      refute has_element?(view, "#reset-confirmation")
       assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
     end
 
@@ -101,14 +108,22 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       assert has_element?(view, "#reset-city", "Reset")
     end
 
-    test "asks for confirmation before discarding a playable city", %{conn: conn} do
+    test "asks for confirmation and can keep a playable city", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       render_click(view, "select_type", %{"type" => "residential"})
       render_click(view, "place", %{"x" => "1", "y" => "1"})
 
-      assert view |> element("#reset-city") |> render() =~
-               ~s(data-confirm="Reset this city and permanently discard all of its blocks and progress?")
+      view |> element("#reset-city") |> render_click()
+
+      assert has_element?(view, "#reset-confirmation[role='dialog']")
+      assert has_element?(view, "#cancel-reset", "Keep city")
+      assert has_element?(view, "#confirm-reset", "Discard and reset")
+
+      view |> element("#cancel-reset") |> render_click()
+
+      refute has_element?(view, "#reset-confirmation")
+      assert has_element?(view, ~s{#nodes [id="1:1"]})
     end
   end
 
@@ -156,7 +171,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       # path, and nothing else in the suite would notice.
       {:ok, _view, html} = live(conn, ~p"/")
 
-      assert length(String.split(html, ~s(phx-click="wipe"))) == 2
+      assert length(String.split(html, ~s(id="reset-city"))) == 2
     end
 
     @tag :stalled_solvent_city

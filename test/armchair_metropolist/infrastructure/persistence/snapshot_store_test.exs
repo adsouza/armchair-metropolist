@@ -6,7 +6,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
   use ArmchairMetropolist.SnapshotRepositoryContract, adapter: SnapshotStore
 
   test "load/1 does not see another city's snapshot" do
-    assert :ok = SnapshotStore.save("city-a", 5, CityMap.new(12, 12))
+    assert :ok = SnapshotStore.save("city-a", {5, 0}, at_order(CityMap.new(12, 12), 5))
 
     assert {:error, :not_found} = SnapshotStore.load("city-b")
   end
@@ -16,13 +16,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
     # FileSnapshotStore deliberately has no per-city scoping to test in the first
     # place. A delete/1 that forgot its `where: s.city_id == ^city_id` clause would
     # wipe every player's city, not just the one being reset.
-    assert :ok = SnapshotStore.save("city-a", 5, CityMap.new(12, 12))
-    assert :ok = SnapshotStore.save("city-b", 5, CityMap.new(14, 14))
+    assert :ok = SnapshotStore.save("city-a", {5, 0}, at_order(CityMap.new(12, 12), 5))
+    assert :ok = SnapshotStore.save("city-b", {5, 0}, at_order(CityMap.new(14, 14), 5))
 
     assert :ok = SnapshotStore.delete("city-a")
 
     assert {:error, :not_found} = SnapshotStore.load("city-a")
-    assert {:ok, {5, loaded}} = SnapshotStore.load("city-b")
+    assert {:ok, {{5, 0}, loaded}} = SnapshotStore.load("city-b")
     assert loaded.width == 14
   end
 
@@ -38,17 +38,18 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
     |> CitySnapshot.changeset(%{
       city_id: @city_id,
       tick: 283,
+      revision: 0,
       payload: payload,
       checksum: checksum
     })
     |> Repo.insert!()
 
-    assert {:ok, {283, city}} = SnapshotStore.load(@city_id)
+    assert {:ok, {{283, 0}, city}} = SnapshotStore.load(@city_id)
     assert city.nodes["19:12"].type == :transit_hub
   end
 
   test "detects a corrupted payload" do
-    :ok = SnapshotStore.save(@city_id, 1, sample_city())
+    :ok = SnapshotStore.save(@city_id, {1, 0}, at_order(sample_city(), 1))
 
     Repo.one(CitySnapshot)
     |> Ecto.Changeset.change(checksum: "DEADBEEF")
@@ -63,11 +64,12 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStoreTest do
     # sandbox transaction, so it is rolled back when this test ends.
     Repo.query!("DROP TABLE city_snapshots")
 
-    assert {:error, %Postgrex.Error{}} = SnapshotStore.save(@city_id, 1, sample_city())
+    assert {:error, %Postgrex.Error{}} =
+             SnapshotStore.save(@city_id, {1, 0}, at_order(sample_city(), 1))
   end
 
-  test "save/3 returns an error rather than raising when the changeset is invalid" do
-    assert {:error, %Ecto.Changeset{valid?: false}} =
-             SnapshotStore.save(@city_id, nil, sample_city())
+  test "save/3 rejects an ordering key that disagrees with the payload" do
+    assert {:error, :snapshot_order_mismatch} =
+             SnapshotStore.save(@city_id, {1, 0}, sample_city())
   end
 end

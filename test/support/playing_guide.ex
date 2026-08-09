@@ -18,11 +18,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   use Boundary, top_level?: true, check: [in: false, out: false]
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
-  alias ArmchairMetropolist.Domain.Entities.Node
-  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
-  alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.{IssueMunicipalBond, ManageInfrastructure}
 
   @resources [:power, :water, :waste, :traffic, :labour, :money]
 
@@ -31,6 +29,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   def blocks do
     %{
       "baseline" => baseline_block(),
+      "bonds" => bonds_block(),
       "production" => production_block(),
       "consumption" => consumption_block(),
       "constants" => constants_block(),
@@ -63,6 +62,21 @@ defmodule ArmchairMetropolist.PlayingGuide do
     :park
   ]
 
+  # Lean cannot carry the temporary operating insolvency of the direct order without
+  # immediately entering the warning band. The same four-block core is therefore assembled
+  # revenue-first, before a simulation tick can land; once commerce is present, adding the
+  # plant and transit leaves the city solvent while it saves for the support chain.
+  @lean_order [
+    :residential,
+    :commercial,
+    :power_plant,
+    :transit_hub,
+    :water_plant,
+    :residential,
+    :park,
+    :park
+  ]
+
   # Money is deliberately not one of these. The sequence runs a money deficit through its
   # whole middle and leans on the treasury to cover it — that is the mechanic being
   # documented, not a fault. The five below have no such backstop: a shortfall in any of
@@ -80,6 +94,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # can lose, and far longer than a failing one needs to be unmistakably dead.
   @settle_ticks 200
   @recovered 99.9
+  @recommended_issue MunicipalBond.recommended_issue()
 
   @doc """
   Each stage of the documented opening, with what it costs and what it leaves tightest.
@@ -98,8 +113,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
       city =
         @opening_order
         |> Enum.take(step)
-        |> city_from()
-        |> Map.put(:money, CityMap.opening_grant() - spent)
+        |> financed_city_from(@recommended_issue, spent)
 
       metrics = Calc.metrics(city)
       stats = metrics.resources
@@ -119,14 +133,14 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   @doc """
-  The solvency state at each stage of the documented opening, with the treasury the grant
-  actually leaves at that point.
+  The solvency state at each stage of the documented opening, with the treasury the
+  recommended bond issue actually leaves at that point.
 
   Separate from `opening_stages/0` because it needs a *treasury*, and that function's cities
   are built by `city_from/1`, which deliberately starts broke to make its own decay window
   tight. Here the balance is the whole subject: the opening sequence is briefly insolvent
   before commerce arrives at step 4, so a warning keyed off insolvency alone can still fire
-  through the tutorial. What keeps it quiet is that the grant leaves a wide rescue window.
+  through the tutorial. What keeps it quiet is that the issue leaves a wide rescue window.
   """
   @spec opening_solvency() :: [
           %{step: pos_integer(), type: Node.node_type(), metrics: SimulationMetrics.t()}
@@ -136,8 +150,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
     |> Enum.with_index(1)
     |> Enum.map_reduce(0.0, fn {type, step}, spent ->
       spent = spent + Node.construction_cost(type)
-      city = @opening_order |> Enum.take(step) |> city_from()
-      metrics = Calc.metrics(%{city | money: CityMap.opening_grant() - spent})
+      city = @opening_order |> Enum.take(step) |> financed_city_from(@recommended_issue, spent)
+      metrics = Calc.metrics(city)
 
       {%{step: step, type: type, metrics: metrics}, spent}
     end)
@@ -157,25 +171,96 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   @doc """
-  The largest gap between placements the sequence survives, straight from the grant.
+  The largest fixed gap between placements the sequence survives for an issue size.
 
   Measured through `ManageInfrastructure.place/4` rather than by putting nodes onto the
   map directly, because affordability is half of what is being asked: the treasury drains
   while the sequence is half-built, and a refused placement is exactly the failure this
   is looking for.
   """
-  @spec opening_max_gap_ticks() :: non_neg_integer()
-  def opening_max_gap_ticks do
-    Enum.find(@gap_ladder, 0, fn gap ->
+  @spec opening_max_gap_ticks(float()) :: non_neg_integer() | nil
+  def opening_max_gap_ticks(principal \\ @recommended_issue) do
+    Enum.find(@gap_ladder, fn gap ->
       # An explicit 40x30 and not `CityMap.new/0`. Every figure this module generates is
       # independent of grid size -- the simulation reads no coordinates -- and 40x30 is above
       # the growth cap, so capacity never binds and no measurement here can be perturbed by a
       # grid that grew mid-sequence. Migrating this to `new/0` would change what the guide
       # measures.
-      CityMap.new(40, 30)
+      financed_city(principal)
       |> run_sequence(@opening_order, gap)
       |> finished_healthy?()
     end)
+  end
+
+  @doc "Largest fixed gap that completes healthy without showing warning or default."
+  @spec opening_max_safe_gap_ticks(float()) :: non_neg_integer() | nil
+  def opening_max_safe_gap_ticks(principal) do
+    Enum.find(@gap_ladder, fn gap ->
+      {city, safe?} = run_sequence_checked(financed_city(principal), @opening_order, gap)
+      safe? and finished_healthy?(city)
+    end)
+  end
+
+  @doc "Whether Lean can complete the opening by reaching commerce quickly, then saving."
+  @spec lean_save_and_grow_healthy?() :: boolean()
+  def lean_save_and_grow_healthy? do
+    financed_city(250.0)
+    |> run_save_and_grow_sequence(@lean_order)
+    |> finished_healthy?()
+  end
+
+  @doc "Whether an issue's documented route avoids warning and default at every step."
+  @spec documented_route_safe?(float()) :: boolean()
+  def documented_route_safe?(250.0) do
+    {_city, safe?} = run_save_and_grow_checked(financed_city(250.0), @lean_order)
+    safe?
+  end
+
+  def documented_route_safe?(principal) when principal in [400.0, 550.0] do
+    gap = opening_max_safe_gap_ticks(principal)
+    {_city, safe?} = run_sequence_checked(financed_city(principal), @opening_order, gap)
+    safe?
+  end
+
+  @doc "Whether the finished documented city retires an issue on schedule from zero cash."
+  @spec opening_retires_issue?(float()) :: boolean()
+  def opening_retires_issue?(principal) do
+    {:ok, bond} = MunicipalBond.new(principal)
+
+    city =
+      @opening_order
+      |> city_from()
+      |> Map.merge(%{tick: 20, money: 0.0, municipal_bond: MunicipalBond.start(bond, 0)})
+      |> advance(MunicipalBond.term_ticks())
+
+    MunicipalBond.debt_free?(city.municipal_bond) and
+      not MunicipalBond.defaulted?(city.municipal_bond)
+  end
+
+  @doc "The next-tick cash-flow gain from removing debt, beside the quoted payment."
+  @spec redemption_cash_flow_gain(float()) :: {float(), float()}
+  def redemption_cash_flow_gain(principal) do
+    {:ok, bond} = MunicipalBond.new(principal)
+    bond = MunicipalBond.start(bond, 0)
+
+    bond =
+      Enum.reduce(20..39, bond, fn tick, current ->
+        MunicipalBond.service(current, tick, 10_000.0).bond
+      end)
+
+    active =
+      @opening_order
+      |> city_from()
+      |> Map.merge(%{tick: 40, money: 100.0, municipal_bond: bond})
+
+    quote = MunicipalBond.quote(bond, active.tick)
+    {:ok, redeemed_bond} = MunicipalBond.redeem(bond, active.tick, quote.redemption_amount)
+    redeemed = %{active | municipal_bond: redeemed_bond}
+
+    active_next = active |> Calc.advance_tick() |> elem(0)
+    redeemed_next = redeemed |> Calc.advance_tick() |> elem(0)
+
+    {redeemed_next.money - active_next.money, quote.next_payment}
   end
 
   @doc """
@@ -205,6 +290,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   defp opening_block do
+    lean_terms = bond_terms(250.0)
+    balanced_terms = bond_terms(400.0)
+    generous_terms = bond_terms(550.0)
+
     rows =
       for stage <- opening_stages() do
         {resource, demanded, supplied, _satisfaction} = stage.tightest
@@ -213,7 +302,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
           "| #{resource} #{num(demanded)}/#{num(supplied)} | #{signed(stage.money_flow)} |"
       end
 
-    gap = opening_max_gap_ticks()
+    lean_gap = opening_max_gap_ticks(250.0)
+    balanced_gap = opening_max_gap_ticks(400.0)
+    generous_gap = opening_max_gap_ticks(550.0)
+    balanced_safe_gap = opening_max_safe_gap_ticks(400.0)
+    generous_safe_gap = opening_max_safe_gap_ticks(550.0)
 
     Enum.join(
       [
@@ -223,24 +316,76 @@ defmodule ArmchairMetropolist.PlayingGuide do
         rows ++
         [
           "",
-          "Total #{num(opening_cost())}, against an opening grant of " <>
-            "#{num(CityMap.opening_grant())}. The finished city nets " <>
+          "Total #{num(opening_cost())}, against the recommended #{num(@recommended_issue)} " <>
+            "bond issue. The finished city nets " <>
             "#{signed(opening_income())} per tick. Every stage is fully supplied on all " <>
             "five physical resources — the `tightest resource` column is demand against " <>
             "available supply, including purchases, so step 1's `15/15` is imported power.",
           "",
-          "Measured: starting cold from the grant, this holds at full health with up to " <>
-            "**#{gap} ticks (#{num(gap * tick_ms() / 1000)} s) between placements**. " <>
-            "Slower than that and the treasury empties mid-sequence."
+          "| issue | principal | route | measured timing | first payment | total interest |",
+          "|---|---:|---|---|---:|---:|",
+          "| Lean | 250 | house → commerce → plant → transit, then save and grow | " <>
+            "#{if lean_gap, do: "fixed gap up to #{lean_gap} ticks", else: "no fixed-gap route"}; " <>
+            "save-and-grow verified | #{money2(lean_terms.first_payment)} | " <>
+            "#{money2(lean_terms.total_interest)} |",
+          "| **Balanced · recommended** | **400** | direct opening | up to **#{balanced_gap} ticks " <>
+            "(#{num(balanced_gap * tick_ms() / 1000)} s)** physically; " <>
+            "#{balanced_safe_gap} ticks warning-free | " <>
+            "**#{money2(balanced_terms.first_payment)}** | " <>
+            "**#{money2(balanced_terms.total_interest)}** |",
+          "| Generous | 550 | direct opening with more reaction time | up to **#{generous_gap} ticks " <>
+            "(#{num(generous_gap * tick_ms() / 1000)} s)** physically; " <>
+            "#{generous_safe_gap} ticks warning-free | " <>
+            "#{money2(generous_terms.first_payment)} | " <>
+            "#{money2(generous_terms.total_interest)} |",
+          "",
+          "All three issues have a 20-tick construction holiday, 100 servicing ticks, " <>
+            "level principal, and 0.5% interest per servicing tick. The Lean route is " <>
+            "different by design: assemble its four-block commercial core revenue-first, " <>
+            "before a tick lands, then pause to fund the last four blocks."
         ],
       "\n"
     )
   end
 
   defp opening_pace_block do
-    "After step 4, the transit-backed commercial core earns +6 per tick. " <>
-      "There is no extra savings target for slower play: waiting funds the remaining blocks."
+    "After step 4, the transit-backed commercial core has +6 of operating cash flow per tick. " <>
+      "Debt service is separate: the first Lean, Balanced and Generous payments are 3.75, " <>
+      "6.00 and 8.25. Lean can save at the core; Balanced initially breaks even after debt; " <>
+      "Generous should use its larger construction reserve to finish the opening before service starts."
   end
+
+  defp bonds_block do
+    rows =
+      for principal <- MunicipalBond.issues() do
+        terms = bond_terms(principal)
+
+        label =
+          if principal == MunicipalBond.recommended_issue(),
+            do: "**Balanced · recommended**",
+            else: issue_name(principal)
+
+        "| #{label} | #{num(principal)} | #{money2(terms.principal_payment)} | " <>
+          "#{money2(terms.first_interest)} | #{money2(terms.first_payment)} | " <>
+          "#{money2(terms.total_interest)} | #{money2(terms.final_payment)} |"
+      end
+
+    Enum.join(
+      [
+        "| issue | proceeds | principal/tick | first interest | first payment | total interest | final payment |",
+        "|---|---:|---:|---:|---:|---:|---:|"
+      ] ++ rows,
+      "\n"
+    )
+  end
+
+  defp bond_terms(principal) do
+    MunicipalBond.issue_terms(principal)
+  end
+
+  defp issue_name(250.0), do: "Lean"
+  defp issue_name(400.0), do: "Balanced"
+  defp issue_name(550.0), do: "Generous"
 
   # --- sequence mechanics -------------------------------------------------
 
@@ -250,8 +395,83 @@ defmodule ArmchairMetropolist.PlayingGuide do
     end)
   end
 
+  defp run_save_and_grow_sequence(city, types) do
+    remaining_cost = types |> Enum.drop(4) |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
+
+    types
+    |> Enum.with_index(1)
+    |> Enum.reduce(city, fn {type, step}, city ->
+      city = if step == 5, do: advance_until_funded(city, remaining_cost, 200), else: city
+      city = place_or_skip(city, type)
+      if step < 4, do: city, else: advance(city, 1)
+    end)
+  end
+
+  defp run_sequence_checked(city, types, gap) do
+    Enum.reduce(types, {city, true}, fn type, {city, safe?} ->
+      city = place_or_skip(city, type)
+      {city, tick_safe?} = advance_checked(city, gap)
+      {city, safe? and route_state_safe?(city) and tick_safe?}
+    end)
+  end
+
+  defp run_save_and_grow_checked(city, types) do
+    remaining_cost = types |> Enum.drop(4) |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
+
+    types
+    |> Enum.with_index(1)
+    |> Enum.reduce({city, true}, fn {type, step}, {city, safe?} ->
+      {city, waiting_safe?} =
+        if step == 5,
+          do: advance_until_funded_checked(city, remaining_cost, 200),
+          else: {city, true}
+
+      city = place_or_skip(city, type)
+      {city, tick_safe?} = if step < 4, do: {city, true}, else: advance_checked(city, 1)
+      {city, safe? and waiting_safe? and route_state_safe?(city) and tick_safe?}
+    end)
+  end
+
+  defp advance_until_funded_checked(city, amount, ticks_left) do
+    cond do
+      city.money >= amount ->
+        {city, true}
+
+      ticks_left == 0 ->
+        {city, false}
+
+      true ->
+        {next, safe?} = advance_checked(city, 1)
+        {final, rest_safe?} = advance_until_funded_checked(next, amount, ticks_left - 1)
+        {final, safe? and rest_safe?}
+    end
+  end
+
+  defp advance_checked(city, ticks) do
+    Enum.reduce(1..ticks//1, {city, true}, fn _, {city, safe?} ->
+      next = city |> Calc.advance_tick() |> elem(0)
+      {next, safe? and route_state_safe?(next)}
+    end)
+  end
+
+  defp route_state_safe?(city) do
+    metrics = Calc.metrics(city)
+
+    not (metrics.bond && metrics.bond.defaulted) and
+      not SimulationMetrics.warning?(metrics) and
+      not SimulationMetrics.financing_warning?(metrics)
+  end
+
+  defp advance_until_funded(city, amount, ticks_left) do
+    cond do
+      city.money >= amount -> city
+      ticks_left == 0 -> city
+      true -> city |> advance(1) |> advance_until_funded(amount, ticks_left - 1)
+    end
+  end
+
   # A refusal is left to show up as a missing block in `finished_healthy?/1` rather than
-  # raised here: "the grant ran out at this pace" is a result, not an error.
+  # raised here: "the issue proceeds ran out at this pace" is a result, not an error.
   #
   # The cell is searched for rather than derived from a loop index. Position has no effect
   # on the simulation (see "Position does not matter"), so any free cell is as good as any
@@ -335,6 +555,20 @@ defmodule ArmchairMetropolist.PlayingGuide do
     types |> Enum.frequencies() |> Enum.to_list() |> city_with()
   end
 
+  defp financed_city_from(types, principal, spent) do
+    {:ok, bond} = MunicipalBond.new(principal)
+
+    types
+    |> city_from()
+    |> Map.put(:money, principal - spent)
+    |> Map.put(:municipal_bond, MunicipalBond.start(bond, 0))
+  end
+
+  defp financed_city(principal) do
+    {:ok, city} = IssueMunicipalBond.execute(CityMap.new(40, 30), principal)
+    city
+  end
+
   # Typographic minus (U+2212), because this is prose (money flow, opening income) rather
   # than a table cell mirroring the screen — contrast `signed_num/2` below, which renders
   # ASCII `-` specifically to match `SimulatorLive`'s own cells.
@@ -350,7 +584,8 @@ defmodule ArmchairMetropolist.PlayingGuide do
         [
           "",
           "Demolishing anything costs #{num(Node.demolition_cost())}, whatever it was. " <>
-            "A new city starts with #{num(CityMap.opening_grant())}."
+            "A new city starts with no cash; authorize a 250, 400 or 550 municipal bond " <>
+            "issue before construction. Those proceeds are debt, not a grant."
         ],
       "\n"
     )
@@ -625,13 +860,13 @@ defmodule ArmchairMetropolist.PlayingGuide do
         end)
       end)
 
-    # Not the 150.0 grant. Over the 120-tick window a city whose income falls one
-    # short of its upkeep drains the grant at 1/tick and survives all 120 ticks —
+    # Not bond proceeds. Over the 120-tick window a city whose income falls one
+    # short of its upkeep drains a treasury at 1/tick and survives all 120 ticks —
     # so the guide would certify a city that goes bankrupt on tick 151. A smaller
-    # grant makes this trap tighter rather than looser: even at 150 a 1/tick
+    # treasury makes this trap tighter rather than looser: even at 150 a 1/tick
     # shortfall still outlasts the window. Starting broke measures the
     # steady-state economy: income must cover upkeep every tick.
-    %{city | money: 0.0}
+    %{city | money: 0.0, municipal_bond: MunicipalBond.legacy()}
   end
 
   defp health_of(city) do
@@ -672,4 +907,6 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   defp num(value), do: to_string(value)
+
+  defp money2(value), do: :erlang.float_to_binary(value * 1.0, decimals: 2)
 end

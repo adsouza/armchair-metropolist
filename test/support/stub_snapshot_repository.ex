@@ -19,7 +19,7 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   @doc "Seed what load/1 will return."
   def set_initial(result), do: Agent.update(__MODULE__, &%{&1 | initial: result})
 
-  @doc "Every {city_id, tick, city_map} passed to save/3, newest first."
+  @doc "Every {city_id, order, city_map} passed to save/3, newest first."
   def saves, do: Agent.get(__MODULE__, & &1.saves)
 
   @doc """
@@ -28,8 +28,8 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   Only the engine's handling of a refusal needs this; the real adapters' own refusal
   logic is covered by the shared contract.
   """
-  def refuse_saves_as_stale(stored_tick) do
-    Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_tick))
+  def refuse_saves_as_stale(stored_order) do
+    Agent.update(__MODULE__, &Map.put(&1, :stale_at, stored_order))
   end
 
   @doc "Make load/1 return the most recent save/3, as a real adapter would."
@@ -39,14 +39,14 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
   def load(city_id) do
     Agent.get(__MODULE__, fn state ->
       case state do
-        %{echo: true, saves: [{^city_id, tick, city_map} | _]} -> {:ok, {tick, city_map}}
+        %{echo: true, saves: [{^city_id, order, city_map} | _]} -> {:ok, {order, city_map}}
         _ -> state.initial
       end
     end)
   end
 
   @impl true
-  def save(city_id, tick, city_map) do
+  def save(city_id, order, city_map) do
     # get_and_update/2 rather than a separate get then update: the flag has to be
     # both read and cleared in one step, or a second save between the two calls
     # could see a `:stale_at` that a concurrent caller had already consumed.
@@ -56,8 +56,8 @@ defmodule ArmchairMetropolist.StubSnapshotRepository do
           {:ok,
            %{
              state
-             | saves: [{city_id, tick, city_map} | state.saves],
-               calls: [{:save, city_id, tick} | state.calls]
+             | saves: [{city_id, order, city_map} | state.saves],
+               calls: [{:save, city_id, order} | state.calls]
            }}
 
         stored_tick ->

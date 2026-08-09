@@ -18,8 +18,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
   end
 
   test "deletes a city past the window and keeps a fresh one" do
-    :ok = SnapshotStore.save("stale", 1, CityMap.new(10, 10))
-    :ok = SnapshotStore.save("fresh", 1, CityMap.new(10, 10))
+    :ok = SnapshotStore.save("stale", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
+    :ok = SnapshotStore.save("fresh", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
     age("stale", 91)
 
     assert {:ok, 1} = SnapshotReaper.sweep()
@@ -36,7 +36,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
   # be flaky rather than a real test, so this is deliberately a day short instead
   # of exactly at it.
   test "keeps a city comfortably inside the window, one day short of the cutoff" do
-    :ok = SnapshotStore.save("edge", 1, CityMap.new(10, 10))
+    :ok = SnapshotStore.save("edge", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
     age("edge", 89)
 
     assert {:ok, 0} = SnapshotReaper.sweep()
@@ -44,7 +44,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
   end
 
   test "does not delete a city it has just seen" do
-    :ok = SnapshotStore.save("new", 1, CityMap.new(10, 10))
+    :ok = SnapshotStore.save("new", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
 
     assert {:ok, 0} = SnapshotReaper.sweep()
     assert {:ok, _} = SnapshotStore.load("new")
@@ -62,7 +62,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
   test "a zero-day window still spares a city saved this instant" do
     Application.put_env(:armchair_metropolist, :snapshot_retention_days, 0)
     on_exit(fn -> Application.delete_env(:armchair_metropolist, :snapshot_retention_days) end)
-    :ok = SnapshotStore.save("now", 1, CityMap.new(10, 10))
+    :ok = SnapshotStore.save("now", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
 
     assert {:ok, 0} = SnapshotReaper.sweep()
   end
@@ -79,7 +79,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
   # the boot sweep (success or failure) has actually happened.
   describe "the GenServer lifecycle" do
     test "sweeps once on boot, without anyone calling sweep/0" do
-      :ok = SnapshotStore.save("boot-stale", 1, CityMap.new(10, 10))
+      :ok = SnapshotStore.save("boot-stale", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
       age("boot-stale", 91)
 
       pid = start_supervised!(SnapshotReaper)
@@ -100,7 +100,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
       # a checkpoint before the row below exists.
       :sys.get_state(pid)
 
-      :ok = SnapshotStore.save("late-stale", 1, CityMap.new(10, 10))
+      :ok = SnapshotStore.save("late-stale", {0, 1}, %{CityMap.new(10, 10) | revision: 1})
       age("late-stale", 91)
 
       # No sys call can wait on a future timer message the way it waits on a
@@ -165,7 +165,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotReaperTest do
       # the reschedule, rather than just the sweep call), this would time out.
       Application.put_env(:armchair_metropolist, :snapshot_retention_days, 90)
 
-      :ok = SnapshotStore.save("recovers-after-failure", 1, CityMap.new(10, 10))
+      :ok =
+        SnapshotStore.save(
+          "recovers-after-failure",
+          {0, 1},
+          %{CityMap.new(10, 10) | revision: 1}
+        )
+
       age("recovers-after-failure", 91)
 
       wait_until(fn ->

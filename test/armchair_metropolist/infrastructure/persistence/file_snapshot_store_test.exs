@@ -2,6 +2,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   use ExUnit.Case, async: false
 
   alias ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore
+  alias ArmchairMetropolist.Domain.Entities.MunicipalBond
 
   setup do
     dir = Path.join(System.tmp_dir!(), "acm_test_#{System.unique_integer([:positive])}")
@@ -29,22 +30,25 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
       File.chmod!(dir, 0o500)
       on_exit(fn -> File.chmod!(dir, 0o700) end)
 
-      assert {:error, reason} = FileSnapshotStore.save_current(1, sample_city())
+      assert {:error, reason} =
+               FileSnapshotStore.save_current({1, 0}, at_order(sample_city(), 1))
+
       assert reason == :eacces
     end
 
     test "an unwritable directory does not damage the snapshot already stored",
          %{dir: dir} do
-      :ok = FileSnapshotStore.save_current(4, sample_city())
+      :ok = FileSnapshotStore.save_current({4, 0}, at_order(sample_city(), 4))
 
       File.chmod!(dir, 0o500)
       on_exit(fn -> File.chmod!(dir, 0o700) end)
 
-      assert {:error, :eacces} = FileSnapshotStore.save_current(5, CityMap.new(12, 12))
+      assert {:error, :eacces} =
+               FileSnapshotStore.save_current({5, 0}, at_order(CityMap.new(12, 12), 5))
 
       File.chmod!(dir, 0o700)
-      assert {:ok, {4, recovered}} = FileSnapshotStore.load_current()
-      assert recovered == sample_city()
+      assert {:ok, {{4, 0}, recovered}} = FileSnapshotStore.load_current()
+      assert recovered == at_order(sample_city(), 4)
     end
   end
 
@@ -66,27 +70,27 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
 
     File.write!(Path.join(dir, "snapshot.bin"), :erlang.term_to_binary(envelope))
 
-    assert {:ok, {283, city}} = FileSnapshotStore.load_current()
+    assert {:ok, {{283, 0}, city}} = FileSnapshotStore.load_current()
     assert city.nodes["19:12"].type == :transit_hub
   end
 
   test "load_current/0 prefers the backup when it holds the higher tick", %{dir: dir} do
     # Reachable whenever a save lands out of order, and the reason load_current/0
     # cannot simply trust the primary.
-    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
-    :ok = FileSnapshotStore.save_current(3, CityMap.new(13, 13))
+    :ok = FileSnapshotStore.save_current({2, 0}, at_order(CityMap.new(12, 12), 2))
+    :ok = FileSnapshotStore.save_current({3, 0}, at_order(CityMap.new(13, 13), 3))
     # Demote by hand: swap the two files, so the primary now holds the older tick.
     swap(Path.join(dir, "snapshot.bin"), Path.join(dir, "snapshot.bak"))
 
-    assert {:ok, {3, loaded}} = FileSnapshotStore.load_current()
+    assert {:ok, {{3, 0}, loaded}} = FileSnapshotStore.load_current()
     assert loaded.width == 13
   end
 
   test "re-saving the same tick overwrites in place", %{dir: dir} do
-    :ok = FileSnapshotStore.save_current(5, CityMap.new(12, 12))
-    :ok = FileSnapshotStore.save_current(5, CityMap.new(14, 14))
+    :ok = FileSnapshotStore.save_current({5, 0}, at_order(CityMap.new(12, 12), 5))
+    :ok = FileSnapshotStore.save_current({5, 0}, at_order(CityMap.new(14, 14), 5))
 
-    assert {:ok, {5, loaded}} = FileSnapshotStore.load_current()
+    assert {:ok, {{5, 0}, loaded}} = FileSnapshotStore.load_current()
     assert loaded.width == 14
     assert File.exists?(Path.join(dir, "snapshot.bak"))
   end
@@ -104,24 +108,24 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   end
 
   test "leaves no temp file behind after a successful save", %{dir: dir} do
-    :ok = FileSnapshotStore.save_current(1, sample_city())
+    :ok = FileSnapshotStore.save_current({1, 0}, at_order(sample_city(), 1))
     refute File.exists?(Path.join(dir, "snapshot.tmp"))
     assert File.exists?(Path.join(dir, "snapshot.bin"))
   end
 
   test "falls back to the backup when the primary is corrupt", %{dir: dir} do
-    :ok = FileSnapshotStore.save_current(1, sample_city())
-    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current({1, 0}, at_order(sample_city(), 1))
+    :ok = FileSnapshotStore.save_current({2, 0}, at_order(CityMap.new(12, 12), 2))
 
     File.write!(Path.join(dir, "snapshot.bin"), "garbage")
 
-    assert {:ok, {1, recovered}} = FileSnapshotStore.load_current()
-    assert recovered == sample_city()
+    assert {:ok, {{1, 0}, recovered}} = FileSnapshotStore.load_current()
+    assert recovered == at_order(sample_city(), 1)
   end
 
   test "returns :not_found when both files are unusable", %{dir: dir} do
-    :ok = FileSnapshotStore.save_current(1, sample_city())
-    :ok = FileSnapshotStore.save_current(2, CityMap.new(12, 12))
+    :ok = FileSnapshotStore.save_current({1, 0}, at_order(sample_city(), 1))
+    :ok = FileSnapshotStore.save_current({2, 0}, at_order(CityMap.new(12, 12), 2))
     File.write!(Path.join(dir, "snapshot.bin"), "garbage")
     File.write!(Path.join(dir, "snapshot.bak"), "also garbage")
 
@@ -143,7 +147,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
   @tag :cold_vm
   test "a saved city survives being loaded by a cold VM", %{dir: dir} do
     city = maximal_city()
-    :ok = FileSnapshotStore.save_current(city.tick, city)
+    :ok = FileSnapshotStore.save_current({city.tick, city.revision}, city)
 
     {output, status} =
       System.cmd("elixir", ["-e", cold_load_script(dir)],
@@ -158,7 +162,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     refute output =~ "VACUOUS",
            "the entity modules were already loaded, so this test proves nothing:\n#{output}"
 
-    assert output == "OK tick=137 nodes=7 w=17 h=11",
+    assert output == "OK tick=137 revision=9 nodes=7 w=17 h=11",
            "cold-VM load lost the city: #{output}"
   end
 
@@ -185,7 +189,18 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
         CityMap.put_node(acc, node)
       end)
 
-    %{city | tick: 137}
+    %{
+      city
+      | tick: 137,
+        revision: 9,
+        municipal_bond: %MunicipalBond{
+          original_principal: 400.0,
+          outstanding_principal: 321.0,
+          interest_arrears: 4.25,
+          principal_arrears: 8.0,
+          started_at_tick: 2
+        }
+    }
   end
 
   # Runs in a fresh VM. It must never mention a node type, a status, or any other
@@ -197,6 +212,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
 
     entities = [
       ArmchairMetropolist.Domain.Entities.CityMap,
+      ArmchairMetropolist.Domain.Entities.MunicipalBond,
       ArmchairMetropolist.Domain.Entities.Node
     ]
 
@@ -206,8 +222,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
       IO.puts("VACUOUS \#{inspect(already_loaded)}")
     else
       case ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore.load_current() do
-        {:ok, {tick, city}} ->
-          IO.puts("OK tick=\#{tick} nodes=\#{map_size(city.nodes)} w=\#{city.width} h=\#{city.height}")
+        {:ok, {{tick, revision}, city}} ->
+          IO.puts("OK tick=\#{tick} revision=\#{revision} nodes=\#{map_size(city.nodes)} w=\#{city.width} h=\#{city.height}")
 
         other ->
           IO.puts("FAIL \#{inspect(other)}")

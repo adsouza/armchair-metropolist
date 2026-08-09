@@ -28,7 +28,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       assert SimulatorLive.cell_size(20, 40) == 24
     end
 
-    # Tagged, deliberately. `@tag treasury:` seeds an explicit `CityMap.new(40, 30)`, which
+    # Tagged, deliberately. `@tag treasury:` seeds an explicit `legacy_city(40, 30)`, which
     # is what this test's name claims it is testing. Untagged it would ride the fresh-city
     # path, and Task 6 makes that a 2x2 and adds a test asserting 256px on the same path —
     # the two would contradict each other and one would have to be deleted.
@@ -67,13 +67,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       # explicit re-stream this node keeps `width: 128px` on a 96px grid.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      broadcast({:city_grew, CityMap.new(6, 6)})
+      broadcast({:city_grew, legacy_city(6, 6)})
       broadcast({:city_node_placed, Node.new(1, 1, :park)})
       html = rendered_node(render(view), "1:1")
       assert html =~ "width: 128px"
       assert html =~ "font-size: 96px"
 
-      eight = %{CityMap.put_node(CityMap.new(6, 6), Node.new(1, 1, :park)) | width: 8, height: 8}
+      eight = %{CityMap.put_node(legacy_city(6, 6), Node.new(1, 1, :park)) | width: 8, height: 8}
       broadcast({:city_grew, eight})
 
       html = rendered_node(render(view), "1:1")
@@ -86,7 +86,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
     test "the background grid and the banner follow too", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      broadcast({:city_grew, CityMap.new(4, 4)})
+      broadcast({:city_grew, legacy_city(4, 4)})
 
       # 16 cells, so :grid_cells was recomputed and not merely :width reassigned.
       assert cell_count(render(view)) == 16
@@ -101,7 +101,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       # not 1024: there is no 6x6 step here, so :cell_size never held 128.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      broadcast({:city_grew, %{CityMap.new(8, 8) | nodes: stalled_city(0.0).nodes}})
+      broadcast({:city_grew, %{legacy_city(8, 8) | nodes: stalled_city(0.0).nodes}})
 
       assert has_element?(view, ~s{#collapse-banner[style*="width: 768px"]})
     end
@@ -119,10 +119,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
     test "a reset takes the grid back to 2x2", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      broadcast({:city_grew, CityMap.new(12, 12)})
+      broadcast({:city_grew, legacy_city(12, 12)})
       assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
 
-      broadcast({:city_reset, CityMap.new()})
+      broadcast({:city_reset, legacy_city()})
 
       # 2 * 128. Before this change the reset handler cleared the stream and left the grid
       # assigns alone, which was correct only while a reset preserved its grid.

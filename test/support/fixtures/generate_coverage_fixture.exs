@@ -10,7 +10,7 @@
 # A *rename* needs no regeneration: the companion test compares the fixture
 # after `SnapshotVocabulary.modernize/1`, so a correct `@node_type_renames`
 # entry keeps it green while the old binary keeps guarding the retired atom.
-alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
 
 # One node per type, healths cycling so all three statuses appear.
 healths = [100.0, 40.0, 5.0]
@@ -24,6 +24,15 @@ city =
     CityMap.put_node(map, node)
   end)
 
+{:ok, bond} = MunicipalBond.new(400.0)
+
+bond = %{
+  MunicipalBond.start(bond, 0)
+  | interest_arrears: 2.25,
+    principal_arrears: 4.0
+}
+
 path = "test/support/fixtures/city_snapshot_vocabulary_coverage.bin"
-File.write!(path, :erlang.term_to_binary(%{city | tick: 1}, [:compressed]))
+payload = %{city | tick: 21, revision: 7, municipal_bond: bond}
+File.write!(path, :erlang.term_to_binary(payload, [:compressed]))
 IO.puts("wrote #{path}")

@@ -46,56 +46,70 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
         |> CityMap.put_node(%Node{Node.new(2, 2, :residential) | health: 42.5, status: :degraded})
       end
 
+      defp at_order(city, tick, revision \\ 0) do
+        %{city | tick: tick, revision: revision}
+      end
+
       test "returns :not_found when nothing is stored" do
         assert {:error, :not_found} = @adapter.load(@city_id)
       end
 
       test "round-trips a city map" do
-        city = sample_city()
-        assert :ok = @adapter.save(@city_id, 7, city)
-        assert {:ok, {7, loaded}} = @adapter.load(@city_id)
+        city = at_order(sample_city(), 7)
+        assert :ok = @adapter.save(@city_id, {7, 0}, city)
+        assert {:ok, {{7, 0}, loaded}} = @adapter.load(@city_id)
         assert loaded == city
       end
 
       test "returns the most recent snapshot" do
-        assert :ok = @adapter.save(@city_id, 1, sample_city())
-        assert :ok = @adapter.save(@city_id, 9, CityMap.new(10, 10))
-        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
+        assert :ok = @adapter.save(@city_id, {1, 0}, at_order(sample_city(), 1))
+        assert :ok = @adapter.save(@city_id, {9, 0}, at_order(CityMap.new(10, 10), 9))
+        assert {:ok, {{9, 0}, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 10
       end
 
       test "save/3 returns bare :ok, not {:ok, id}" do
-        assert :ok === @adapter.save(@city_id, 3, sample_city())
+        assert :ok === @adapter.save(@city_id, {3, 0}, at_order(sample_city(), 3))
       end
 
       test "save/3 refuses an older tick and says so" do
-        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
+        assert :ok = @adapter.save(@city_id, {9, 0}, at_order(CityMap.new(19, 19), 9))
 
-        assert {:stale, 9} = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+        assert {:stale, {9, 0}} =
+                 @adapter.save(@city_id, {1, 0}, at_order(CityMap.new(11, 11), 1))
 
-        assert {:ok, {9, loaded}} = @adapter.load(@city_id)
+        assert {:ok, {{9, 0}, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
       end
 
       test "save/3 refuses an equal tick, so a replay cannot rewrite a stored tick" do
-        assert :ok = @adapter.save(@city_id, 5, CityMap.new(19, 19))
+        assert :ok = @adapter.save(@city_id, {5, 2}, at_order(CityMap.new(19, 19), 5, 2))
 
-        assert {:stale, 5} = @adapter.save(@city_id, 5, CityMap.new(11, 11))
+        assert {:stale, {5, 2}} =
+                 @adapter.save(@city_id, {5, 2}, at_order(CityMap.new(11, 11), 5, 2))
 
-        assert {:ok, {5, loaded}} = @adapter.load(@city_id)
+        assert {:ok, {{5, 2}, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 19
       end
 
-      test "save/3 advances the same city rather than accumulating rows" do
-        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
-        assert :ok = @adapter.save(@city_id, 2, CityMap.new(12, 12))
+      test "save/3 accepts a higher revision at the same tick" do
+        assert :ok = @adapter.save(@city_id, {5, 1}, at_order(CityMap.new(19, 19), 5, 1))
+        assert :ok = @adapter.save(@city_id, {5, 2}, at_order(CityMap.new(11, 11), 5, 2))
 
-        assert {:ok, {2, loaded}} = @adapter.load(@city_id)
+        assert {:ok, {{5, 2}, loaded}} = @adapter.load(@city_id)
+        assert loaded.width == 11
+      end
+
+      test "save/3 advances the same city rather than accumulating rows" do
+        assert :ok = @adapter.save(@city_id, {1, 0}, at_order(CityMap.new(11, 11), 1))
+        assert :ok = @adapter.save(@city_id, {2, 0}, at_order(CityMap.new(12, 12), 2))
+
+        assert {:ok, {{2, 0}, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 12
       end
 
       test "delete/1 removes the stored city" do
-        assert :ok = @adapter.save(@city_id, 7, sample_city())
+        assert :ok = @adapter.save(@city_id, {7, 0}, at_order(sample_city(), 7))
         assert :ok = @adapter.delete(@city_id)
         assert {:error, :not_found} = @adapter.load(@city_id)
       end
@@ -117,15 +131,17 @@ defmodule ArmchairMetropolist.SnapshotRepositoryContract do
         # very next load — this is a shared property, not a file-adapter wrinkle,
         # since the same two-writes-then-delete sequence is what a real reset does
         # on either adapter.
-        assert :ok = @adapter.save(@city_id, 8, CityMap.new(18, 18))
-        assert :ok = @adapter.save(@city_id, 9, CityMap.new(19, 19))
-        assert {:stale, 9} = @adapter.save(@city_id, 1, CityMap.new(11, 11))
+        assert :ok = @adapter.save(@city_id, {8, 0}, at_order(CityMap.new(18, 18), 8))
+        assert :ok = @adapter.save(@city_id, {9, 0}, at_order(CityMap.new(19, 19), 9))
+
+        assert {:stale, {9, 0}} =
+                 @adapter.save(@city_id, {1, 0}, at_order(CityMap.new(11, 11), 1))
 
         assert :ok = @adapter.delete(@city_id)
         assert {:error, :not_found} = @adapter.load(@city_id)
 
-        assert :ok = @adapter.save(@city_id, 1, CityMap.new(11, 11))
-        assert {:ok, {1, loaded}} = @adapter.load(@city_id)
+        assert :ok = @adapter.save(@city_id, {1, 0}, at_order(CityMap.new(11, 11), 1))
+        assert {:ok, {{1, 0}, loaded}} = @adapter.load(@city_id)
         assert loaded.width == 11
       end
     end

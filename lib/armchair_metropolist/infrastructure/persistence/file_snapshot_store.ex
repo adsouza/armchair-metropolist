@@ -5,22 +5,22 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   Two snapshots are kept — a primary and a backup — so a write interrupted
   mid-flight cannot leave the desktop target with no readable city at all.
 
-  ## Ordering: highest tick wins
+  ## Ordering: highest tick and revision wins
 
   `load_current/0` reads *both* files and returns whichever holds the **higher
-  tick**, not whichever was written most recently. This matches the port's
-  intent: `save/3` takes the tick precisely so storage can order by it.
+  `{tick, revision}` pair**, not whichever was written most recently. This matches
+  the port's intent: `save/3` takes the pair precisely so storage can order by it.
 
   `save/3` honours the port's staleness guarantee at that level: it consults
   `load_current/0` first and returns `{:stale, stored}` without touching disk when
-  a tick at least as high is already stored, rather than writing and letting a
+  a pair at least as high is already stored, rather than writing and letting a
   stale snapshot sit unread. `save_current/2` — the renamed original body, called
   only once `save/3` has decided the write is not stale — keeps its own,
-  narrower guard: a tick *older* than the primary's is accepted and reported `:ok`
+  narrower guard: a pair *older* than the primary's is accepted and reported `:ok`
   without replacing the primary or rotating the backup. The two guards cannot
-  disagree, because the backup can never hold a tick higher than a readable
+  disagree, because the backup can never hold an order higher than a readable
   primary — `save_current/2` only ever rotates a primary out once a strictly
-  newer or equal tick has been accepted, so `load_current/0`'s max is always the
+  newer or equal pair has been accepted, so `load_current/0`'s max is always the
   primary's.
 
   Without the older-tick refusal above, one transient load miss was permanently
@@ -28,12 +28,12 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   write it, the real city would be demoted to the backup, and the next launch
   would overwrite the backup too.
 
-  That older-tick refusal is `save/3`'s and, one level down, `save_current/2`'s.
-  The *equal*-tick case differs between them: `save/3` refuses an equal tick just
+  That older-order refusal is `save/3`'s and, one level down, `save_current/2`'s.
+  The *equal*-order case differs between them: `save/3` refuses an equal pair just
   as it refuses a lower one, per the port's guarantee. `save_current/2` itself,
   called directly rather than through the port, has the narrower rule its own
-  "re-saving the same tick overwrites in place" test exercises: equal ticks *do*
-  overwrite there, so a direct re-save at the current tick behaves as a plain
+  "re-saving the same order overwrites in place" test exercises: equal pairs *do*
+  overwrite there, so a direct re-save at the current order behaves as a plain
   update rather than being silently dropped.
 
   ## Failures are returned, never raised
@@ -46,6 +46,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
 
   @behaviour ArmchairMetropolist.Domain.Ports.SnapshotRepository
 
+  alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary
 
   @primary_filename "snapshot.bin"
@@ -64,10 +65,16 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   # Observably identical through `load/1`, and strictly better on disk: refusing the
   # write also leaves the backup in place instead of rotating a newer snapshot out of it.
   @impl true
-  def save(_city_id, tick, city_map) do
-    case load_current() do
-      {:ok, {stored, _city_map}} when stored >= tick -> {:stale, stored}
-      _ -> save_current(tick, city_map)
+  def save(_city_id, order, city_map) do
+    cond do
+      CityMap.snapshot_order(city_map) != order ->
+        {:error, :snapshot_order_mismatch}
+
+      true ->
+        case load_current() do
+          {:ok, {stored, _city_map}} when stored >= order -> {:stale, stored}
+          _ -> save_current(order, city_map)
+        end
     end
   end
 
@@ -114,17 +121,32 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
 
     case readable do
       [] -> {:error, :not_found}
-      snapshots -> {:ok, Enum.max_by(snapshots, fn {tick, _city_map} -> tick end)}
+      snapshots -> {:ok, Enum.max_by(snapshots, fn {order, _city_map} -> order end)}
     end
   end
 
-  def save_current(tick, city_map) do
-    if stale?(tick) do
+  def save_current({tick, revision} = order, city_map) do
+    if CityMap.snapshot_order(city_map) != order do
+      {:error, :snapshot_order_mismatch}
+    else
+      save_current_validated(order, tick, revision, city_map)
+    end
+  end
+
+  defp save_current_validated(order, tick, revision, city_map) do
+    if stale?(order) do
       # A strictly newer city is already stored. See "Ordering" above.
       :ok
     else
       payload = :erlang.term_to_binary(city_map, [:compressed])
-      envelope = %{version: 1, tick: tick, checksum: checksum(payload), payload: payload}
+
+      envelope = %{
+        version: 2,
+        tick: tick,
+        revision: revision,
+        checksum: checksum(payload),
+        payload: payload
+      }
 
       write_snapshot(:erlang.term_to_binary(envelope))
     end
@@ -157,9 +179,9 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   # Only the primary is consulted. The backup is by construction the primary's
   # predecessor, so it cannot hold a higher tick than a readable primary; and an
   # *unreadable* primary must not be allowed to block writes forever.
-  defp stale?(tick) do
-    case stored_tick(primary_path()) do
-      {:ok, stored_tick} -> stored_tick > tick
+  defp stale?(order) do
+    case stored_order(primary_path()) do
+      {:ok, stored_order} -> stored_order > order
       :error -> false
     end
   end
@@ -167,12 +189,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   # The envelope's tick, without decoding the compressed city payload. A snapshot
   # that fails its checksum has no trustworthy tick to compare against.
   # sobelow_skip ["Traversal.FileModule"]
-  defp stored_tick(path) do
+  defp stored_order(path) do
     with {:ok, encoded} <- File.read(path),
-         {:ok, %{tick: tick, checksum: checksum, payload: payload}} <-
-           safe_binary_to_term(encoded),
+         {:ok, envelope} <- safe_binary_to_term(encoded),
+         {:ok, order} <- envelope_order(envelope),
+         %{checksum: checksum, payload: payload} <- envelope,
          true <- checksum(payload) == checksum do
-      {:ok, tick}
+      {:ok, order}
     else
       _unusable -> :error
     end
@@ -182,10 +205,23 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStore do
   defp read_snapshot(path) do
     with {:ok, encoded} <- File.read(path),
          {:ok, envelope} <- safe_binary_to_term(encoded),
-         {:ok, city_map} <- decode(envelope) do
-      {:ok, {envelope.tick, city_map}}
+         {:ok, order} <- envelope_order(envelope),
+         {:ok, city_map} <- decode(envelope),
+         true <- CityMap.snapshot_order(city_map) == order do
+      {:ok, {order, city_map}}
+    else
+      false -> {:error, :snapshot_order_mismatch}
+      error -> error
     end
   end
+
+  defp envelope_order(%{version: 1, tick: tick}) when is_integer(tick), do: {:ok, {tick, 0}}
+
+  defp envelope_order(%{version: 2, tick: tick, revision: revision})
+       when is_integer(tick) and is_integer(revision),
+       do: {:ok, {tick, revision}}
+
+  defp envelope_order(_envelope), do: {:error, :malformed}
 
   # sobelow_skip ["Misc.BinToTerm"]
   # Sobelow flags every `binary_to_term`, `:safe` or not, and it is right to: `:safe`

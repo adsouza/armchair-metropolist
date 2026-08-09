@@ -14,7 +14,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
   """
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
+  alias ArmchairMetropolist.Domain.Entities.MunicipalBond
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.PlayingGuide
@@ -165,14 +165,35 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
                "tutorial test above only means something while some stage is insolvent"
     end
 
-    test "the opening grant covers the whole sequence" do
-      # Nothing earns through the middle of this sequence, so the grant is the only
-      # thing paying for it. Fails if the grant drops back towards 150, which cannot
-      # reach the power plant.
-      assert PlayingGuide.opening_cost() <= CityMap.opening_grant(),
-             "the opening costs #{PlayingGuide.opening_cost()} but the grant is " <>
-               "#{CityMap.opening_grant()} — a player following the guide would be " <>
-               "refused part-way through it"
+    test "all three bond choices retain their promised opening role" do
+      assert MunicipalBond.issues() == [250.0, 400.0, 550.0]
+      assert PlayingGuide.lean_save_and_grow_healthy?()
+
+      balanced_gap = PlayingGuide.opening_max_gap_ticks(400.0)
+      generous_gap = PlayingGuide.opening_max_gap_ticks(550.0)
+
+      assert is_integer(balanced_gap) and balanced_gap >= 2,
+             "Balanced no longer supports a deliberate direct opening"
+
+      assert is_integer(generous_gap) and generous_gap > balanced_gap,
+             "Generous no longer buys more measured reaction time than Balanced"
+    end
+
+    test "every documented route stays out of warning and default" do
+      for principal <- MunicipalBond.issues() do
+        assert PlayingGuide.documented_route_safe?(principal),
+               "the documented #{principal} route now warns or defaults before completion"
+      end
+    end
+
+    test "the finished opening retires every issue and redemption removes exactly its payment" do
+      for principal <- MunicipalBond.issues() do
+        assert PlayingGuide.opening_retires_issue?(principal),
+               "the finished opening cannot retire the #{principal} issue"
+
+        {cash_flow_gain, quoted_payment} = PlayingGuide.redemption_cash_flow_gain(principal)
+        assert_in_delta cash_flow_gain, quoted_payment, 1.0e-9
+      end
     end
 
     test "the city the sequence builds pays for itself" do
@@ -198,11 +219,12 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
       end
     end
 
-    test "the slower route needs no savings ladder after commerce arrives" do
+    test "the pace note separates operating cash flow from debt service" do
       pace = PlayingGuide.blocks()["opening_pace"]
 
-      assert pace =~ "earns +6 per tick"
-      assert pace =~ "no extra savings target"
+      assert pace =~ "+6 of operating cash flow"
+      assert pace =~ "Debt service is separate"
+      assert pace =~ "Lean can save at the core"
     end
   end
 

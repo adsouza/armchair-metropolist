@@ -8,7 +8,7 @@ defmodule ArmchairMetropolist.CityGenerators do
   import StreamData
   import ExUnitProperties, only: [gen: 2]
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
 
   def node_type, do: member_of(Node.types())
 
@@ -24,9 +24,11 @@ defmodule ArmchairMetropolist.CityGenerators do
           types <- list_of(node_type(), length: length(coords)),
           healths <- list_of(health(), length: length(coords))
         ) do
+      city = %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy()}
+
       [coords, types, healths]
       |> Enum.zip()
-      |> Enum.reduce(CityMap.new(width, height), fn {{x, y}, type, h}, acc ->
+      |> Enum.reduce(city, fn {{x, y}, type, h}, acc ->
         node = %Node{Node.new(x, y, type) | health: h, status: Node.status_for(h)}
         CityMap.put_node(acc, node)
       end)

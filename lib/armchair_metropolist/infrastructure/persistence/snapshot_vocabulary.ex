@@ -49,6 +49,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
 
   @modules [
     ArmchairMetropolist.Domain.Entities.CityMap,
+    ArmchairMetropolist.Domain.Entities.MunicipalBond,
     ArmchairMetropolist.Domain.Entities.Node
   ]
 
@@ -73,7 +74,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
   # that bridge release is exactly what happened for `:waste_stock`, and rolling a
   # binary back past the commit that added it is unrecoverable either way — see
   # docs/deploying.md, "The third trap: rolling back past a new CityMap field".
-  @added_fields [:waste_stock]
+  @added_fields [:waste_stock, :revision, :municipal_bond]
 
   @doc "The modules whose atoms a persisted city can contain."
   def modules, do: @modules
@@ -118,6 +119,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     # hydrate.
     city_map
     |> Map.put_new(:waste_stock, 0.0)
+    |> Map.put_new(:revision, 0)
+    |> Map.put_new(
+      :municipal_bond,
+      ArmchairMetropolist.Domain.Entities.MunicipalBond.legacy()
+    )
     |> Map.put(:nodes, Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end))
   end
 

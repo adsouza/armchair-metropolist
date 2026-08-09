@@ -6,7 +6,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        capacity for `r`, plus whatever balance `r` carried over from the
-       previous tick (only money and waste carry anything; see step 11 for
+       previous tick (only money and waste carry anything; see step 12 for
        waste's balance, which is negated). Labour is then
        multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
        both sides health-weighted — so parks raise the workforce their housing
@@ -15,28 +15,29 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
-    3. Power, water, waste disposal and labour shortfalls are bought from the
+    3. Node upkeep is reserved, then scheduled municipal-bond service is paid
+       from the remaining balance. Current-tick income can service debt.
+    4. Power, water, waste disposal and labour shortfalls are bought from the
        external market for one money per unit. Only treasury carried into the
-       tick is spendable, after reserving any net upkeep. If it cannot cover
+       tick is spendable, after reserving upkeep and debt service. If it cannot cover
        every shortfall, the same fraction of each is bought; traffic is never
        purchasable. Each unit of imported labour adds one unit of commuter
        traffic demand for that tick.
-    4. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
+    5. `satisfaction(r)` is `min(1.0, available / demand)`, or `1.0` when
        nothing demands the resource, where `available` is supply plus the
        carried balance and purchases. **Not** floored at zero: a large enough
        unfunded backlog drives this negative.
-    5. Each node looks at the satisfaction of only the resources it consumes
+    6. Each node looks at the satisfaction of only the resources it consumes
        and takes the worst of them.
-    6. A fully supplied node regenerates `+1.0` health; a starved one loses
+    7. A fully supplied node regenerates `+1.0` health; a starved one loses
        `(1 - worst) * 6.0`.
-    7. Health is clamped to `0.0..100.0` and status is re-derived from it.
-    8. The tick counter advances by one.
-    9. The returned delta holds only those nodes whose display signature
+    8. Health is clamped to `0.0..100.0` and status is re-derived from it.
+    9. The tick counter advances by one.
+   10. The returned delta holds only those nodes whose display signature
        (`{round(health), status}`) actually changed, so sub-pixel health
        movement does not push a full-grid diff to consumers.
-   10. Money's surplus persists after market spending: the city map's `money`
-       balance becomes `max(0.0, supplied + carried - demanded - purchases)`.
-   11. Waste's *deficit* persists, as the mirror of that: the `waste_stock`
+   11. Money's surplus persists after debt service and market spending.
+   12. Waste's *deficit* persists, as the mirror of that: the `waste_stock`
        balance becomes the tick's waste `deficit`, so unprocessed waste adds to
        the next tick's load and drains at `capacity - emissions`. Because the
        stock enters through `carried/2` negated, a backlog drives `satisfaction`
@@ -49,6 +50,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   """
 
   alias ArmchairMetropolist.Domain.Entities.CityMap
+  alias ArmchairMetropolist.Domain.Entities.MunicipalBond
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
 
@@ -145,7 +147,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   capacity is reported separately as `purchased`.
   """
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
-  def resource_stats(city_map) do
+  def resource_stats(city_map), do: tick_plan(city_map).resources
+
+  defp tick_plan(city_map) do
     nodes = CityMap.nodes(city_map)
     supply = total_supply(nodes)
     demand = total_demand(nodes)
@@ -171,27 +175,39 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
          }}
       end)
 
-    # Imports are bought from the treasury already on hand. This tick's income reaches
-    # the treasury at the boundary and can fund the next tick; it does not get spent
-    # before it has arrived. Net upkeep is reserved first, so imports can never make a
-    # city miss an otherwise-affordable bill.
-    purchase_budget = min(city_map.money, raw_stats |> Map.fetch!(:money) |> new_balance())
+    cash_after_upkeep = raw_stats |> Map.fetch!(:money) |> new_balance()
+    service = MunicipalBond.service(city_map.municipal_bond, city_map.tick, cash_after_upkeep)
+    cash_after_upkeep_and_bond = max(0.0, cash_after_upkeep - service.payment)
+
+    # Current-tick income can service the bond, but only treasury carried into the tick
+    # can fund imports. The second bound reserves both node upkeep and debt first.
+    purchase_budget = min(city_map.money, cash_after_upkeep_and_bond)
     purchases = market_purchases(raw_stats, purchase_budget)
     raw_stats = add_imported_labour_traffic(raw_stats, purchases)
 
-    Map.new(raw_stats, fn {resource, stats} ->
-      purchased = Map.get(purchases, resource, 0.0)
-      available = stats.supplied + stats.carried + purchased
+    resources =
+      Map.new(raw_stats, fn {resource, stats} ->
+        purchased = Map.get(purchases, resource, 0.0)
+        available = stats.supplied + stats.carried + purchased
 
-      {resource,
-       %{
-         stats
-         | purchased: purchased,
-           deficit: max(0.0, stats.demanded - available),
-           satisfaction: satisfaction(available, stats.demanded),
-           flow_satisfaction: satisfaction(stats.supplied + purchased, stats.demanded)
-       }}
-    end)
+        {resource,
+         %{
+           stats
+           | purchased: purchased,
+             deficit: max(0.0, stats.demanded - available),
+             satisfaction: satisfaction(available, stats.demanded),
+             flow_satisfaction: satisfaction(stats.supplied + purchased, stats.demanded)
+         }}
+      end)
+
+    %{
+      resources: resources,
+      next_bond: service.bond,
+      bond_quote: MunicipalBond.quote(city_map.municipal_bond, city_map.tick),
+      bond_payment: service.payment,
+      cash_after_upkeep_and_bond: cash_after_upkeep_and_bond,
+      market_spend: market_spend(resources)
+    }
   end
 
   @doc """
@@ -201,12 +217,23 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   signature changed.
   """
   @spec advance_tick(CityMap.t()) :: {CityMap.t(), delta()}
-  def advance_tick(city_map), do: advance_tick(city_map, resource_stats(city_map))
+  def advance_tick(city_map) do
+    plan = tick_plan(city_map)
+    nodes = CityMap.nodes(city_map)
+
+    if clock_paused?(city_map) or stalled?(nodes, plan.resources, city_map.waste_stock) do
+      {city_map, %{}}
+    else
+      advance_tick(city_map, plan)
+    end
+  end
 
   # Split from `advance_tick/1` so the projection in `rescue_window/3` can compute
   # `resource_stats/1` once per step and spend it twice — on the stall check and on the
   # advance — rather than paying for it twice per projected tick.
-  defp advance_tick(city_map, stats) do
+  defp advance_tick(city_map, plan) do
+    stats = plan.resources
+
     {nodes, delta} =
       Enum.reduce(city_map.nodes, {%{}, %{}}, fn {key, node}, {nodes, delta} ->
         advanced = advance_node(node, stats)
@@ -221,15 +248,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         {Map.put(nodes, key, advanced), delta}
       end)
 
-    money = max(0.0, new_balance(Map.fetch!(stats, :money)) - market_spend(stats))
+    money = max(0.0, plan.cash_after_upkeep_and_bond - plan.market_spend)
 
     # The stock *is* the deficit — see `carried/2`. Read from the same pre-tick
     # `stats` every node saw, so the landfill and the health decay it caused
     # cannot disagree about the same tick.
     waste_stock = Map.fetch!(stats, :waste).deficit
 
-    {%{city_map | nodes: nodes, tick: city_map.tick + 1, money: money, waste_stock: waste_stock},
-     delta}
+    {%{
+       city_map
+       | nodes: nodes,
+         tick: city_map.tick + 1,
+         money: money,
+         waste_stock: waste_stock,
+         municipal_bond: plan.next_bond
+     }, delta}
   end
 
   @doc """
@@ -238,20 +271,26 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec metrics(CityMap.t()) :: SimulationMetrics.t()
   def metrics(city_map) do
     nodes = CityMap.nodes(city_map)
-    stats = resource_stats(city_map)
+    plan = tick_plan(city_map)
+    stats = plan.resources
     stalled = stalled?(nodes, stats, city_map.waste_stock)
+    operating = solvency(city_map, nodes, stats, stalled)
+    financing = financing(city_map, nodes, plan.bond_quote, stalled)
+    bond = if plan.bond_quote, do: Map.put(plan.bond_quote, :paused, stalled), else: nil
 
     derived =
       %{
         amenity: labour_multiplier(nodes),
         amenity_marginal_labour: marginal_amenity_labour(nodes),
         amenity_labour: placed_amenity_labour(nodes),
-        market_spend: market_spend(stats),
+        market_spend: plan.market_spend,
         imported_labour_traffic:
           Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
-        stalled: stalled
+        stalled: stalled,
+        bond: bond
       }
-      |> Map.merge(solvency(city_map, nodes, stats, stalled))
+      |> Map.merge(operating)
+      |> Map.merge(financing)
 
     SimulationMetrics.build(city_map, stats, derived)
   end
@@ -286,6 +325,130 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     else
       %{money_ceiling: ceiling, insolvent: false, escape: nil, rescue_window: nil}
     end
+  end
+
+  defp financing(city_map, nodes, bond_quote, stalled) do
+    locked = financing_locked?(city_map.money, nodes, bond_quote)
+
+    if locked do
+      escape = financing_escape(city_map, nodes, bond_quote)
+
+      %{
+        financing_locked: true,
+        financing_escape: escape,
+        financing_rescue_window: financing_rescue_window(city_map, escape_price(escape), stalled)
+      }
+    else
+      %{
+        financing_locked: false,
+        financing_escape: nil,
+        financing_rescue_window: nil
+      }
+    end
+  end
+
+  defp financing_locked?(_money, _nodes, nil), do: false
+
+  defp financing_locked?(money, nodes, bond_quote) do
+    if bond_quote.callable and bond_quote.redemption_amount > 0.0 do
+      {interest_arrears, principal} = optimistic_redemption(money, bond_quote)
+      surplus = rated_money_surplus(nodes)
+      debt_remains? = interest_arrears > 0.0 or principal > 0.0
+
+      debt_remains? and surplus <= MunicipalBond.interest_rate() * principal
+    else
+      false
+    end
+  end
+
+  defp optimistic_redemption(money, bond_quote) do
+    money = max(0.0, money)
+    interest_paid = min(money, bond_quote.interest_arrears)
+    after_interest = money - interest_paid
+
+    {
+      max(0.0, bond_quote.interest_arrears - interest_paid),
+      max(0.0, bond_quote.outstanding_principal - after_interest)
+    }
+  end
+
+  defp rated_money_surplus(nodes) do
+    demand = Enum.reduce(nodes, 0.0, &(&2 + Map.get(Node.load(&1.type), :money, 0.0)))
+    max(0.0, rated_money_capacity(nodes) - demand)
+  end
+
+  defp financing_escape(city_map, nodes, bond_quote) do
+    placement_candidates =
+      if not bond_quote.defaulted and length(nodes) < city_map.width * city_map.height do
+        for type <- Node.types(),
+            cost = Node.construction_cost(type),
+            city_map.money >= cost,
+            candidate_recovers?(
+              city_map.money - cost,
+              [Node.new(0, 0, type) | nodes],
+              bond_quote
+            ),
+            do: {:place, type, cost}
+      else
+        []
+      end
+
+    demolition_candidates =
+      nodes
+      |> Enum.map(& &1.type)
+      |> Enum.uniq()
+      |> Enum.filter(fn type ->
+        cost = Node.demolition_cost()
+
+        city_map.money >= cost and
+          candidate_recovers?(
+            city_map.money - cost,
+            remove_first_type(nodes, type),
+            bond_quote
+          )
+      end)
+      |> Enum.map(&{:demolish, &1, Node.demolition_cost()})
+
+    case Enum.min_by(placement_candidates ++ demolition_candidates, &elem(&1, 2), fn -> nil end) do
+      nil -> {:multiple, Node.cheapest_action_cost()}
+      candidate -> candidate
+    end
+  end
+
+  defp candidate_recovers?(money, nodes, bond_quote) do
+    not financing_locked?(money, nodes, bond_quote)
+  end
+
+  defp remove_first_type(nodes, type) do
+    {before, rest} = Enum.split_while(nodes, &(&1.type != type))
+
+    case rest do
+      [_removed | after_removed] -> before ++ after_removed
+      [] -> nodes
+    end
+  end
+
+  defp financing_rescue_window(_city_map, _price, true = _stalled), do: nil
+
+  defp financing_rescue_window(city_map, price, _stalled) do
+    Enum.reduce_while(0..@runway_horizon, city_map, fn elapsed, projected ->
+      nodes = CityMap.nodes(projected)
+      quote = MunicipalBond.quote(projected.municipal_bond, projected.tick)
+
+      cond do
+        projected.money < price ->
+          {:halt, elapsed}
+
+        not financing_locked?(projected.money, nodes, quote) ->
+          {:halt, nil}
+
+        elapsed == @runway_horizon or projected_stall?(projected) ->
+          {:halt, nil}
+
+        true ->
+          {:cont, elem(advance_tick(projected), 0)}
+      end
+    end)
   end
 
   defp escape_price({:multiple, cost}), do: cost
@@ -326,7 +489,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
           {:halt, nil}
 
         true ->
-          {:cont, elem(advance_tick(projected, resource_stats(projected)), 0)}
+          {:cont, elem(advance_tick(projected), 0)}
       end
     end)
   end
@@ -338,7 +501,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     # on the floor, and computing `resource_stats/1` to discover otherwise would double the
     # cost of every projected tick in the common case.
     Enum.all?(nodes, &(&1.health == @min_health)) and
-      stalled?(nodes, resource_stats(city_map), city_map.waste_stock)
+      stalled?(nodes, tick_plan(city_map).resources, city_map.waste_stock)
+  end
+
+  defp clock_paused?(%CityMap{municipal_bond: nil}), do: true
+
+  defp clock_paused?(%CityMap{municipal_bond: bond}) do
+    MunicipalBond.issued?(bond) and is_nil(bond.started_at_tick)
   end
 
   # Rated rather than effective: `Node.capacity/1`, not `Node.effective_capacity/1`.
@@ -544,8 +713,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   defp carried_balance(city_map, :money), do: city_map.money
   defp carried_balance(city_map, :waste), do: -city_map.waste_stock
 
-  # Floors at zero: debt is not modelled. An upkeep that cannot be paid shows up
-  # as satisfaction below 1.0, which the existing decay path already handles.
+  # Floors the operating balance at zero before the separate bond-service step. An upkeep
+  # that cannot be paid shows up as satisfaction below 1.0, while any remaining cash is
+  # passed to `MunicipalBond.service/3` by `tick_plan/1`.
   defp new_balance(%{supplied: supplied, carried: carried, demanded: demanded}) do
     max(0.0, supplied + carried - demanded)
   end

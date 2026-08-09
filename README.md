@@ -174,12 +174,13 @@ release rather than merely labelling it.
 
 Your first city will almost certainly find the quiet way to lose: there is no free power,
 so even the first residential block buys 15 power per tick. It earns only 1, and therefore
-stays healthy by quietly draining the opening treasury until you build generation. A power
+stays healthy by quietly draining the bond-funded treasury until you build generation. A power
 plant stops those imports but has its own recurring operating cost of 5 per tick.
 
 The slow one is insolvency. Water has a free baseline of 30, waste disposal has 40, while
 traffic starts at 20; power, labour and money have none, and a city opens with a one-off
-400 in the treasury. A support set
+choice of a 250, 400 or 550 municipal bond issue. The proceeds arrive immediately, then level
+principal and interest are serviced over a fixed term after the construction holiday. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
 the whole game while every other resource reads 100% satisfied — commercial is part
 of the ratio, not an optional extra.

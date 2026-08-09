@@ -97,11 +97,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # abnormal exit, so a genuine crash keeps today's recovery behaviour.
   use GenServer, shutdown: 10_000, restart: :transient
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond}
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
+  alias ArmchairMetropolist.UseCases.IssueMunicipalBond
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.RedeemMunicipalBond
   alias ArmchairMetropolist.UseCases.ResetCity
   alias ArmchairMetropolist.UseCases.SummarizeCity
 
@@ -151,8 +153,20 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   """
   @spec place(String.t(), integer(), integer(), atom()) ::
           {:ok, ArmchairMetropolist.Domain.Entities.Node.t()}
-          | {:error, :out_of_bounds | :occupied | :unknown_type | :insufficient_funds}
+          | {:error,
+             :out_of_bounds
+             | :occupied
+             | :unknown_type
+             | :financing_required
+             | :bond_default
+             | :insufficient_funds}
   def place(city_id, x, y, type), do: call(city_id, {:place, x, y, type})
+
+  @doc "Authorize the city's one municipal bond issue."
+  def issue_municipal_bond(city_id, principal), do: call(city_id, {:issue_bond, principal})
+
+  @doc "Redeem 25 or the full callable municipal bond balance."
+  def redeem_municipal_bond(city_id, action), do: call(city_id, {:redeem_bond, action})
 
   @doc """
   Remove the node at `(x, y)`.
@@ -333,6 +347,32 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
+  def handle_call({:issue_bond, principal}, _from, state) do
+    case IssueMunicipalBond.execute(state.city_map, principal) do
+      {:ok, city_map} ->
+        metrics = summarize(city_map)
+        save(state.city_id, city_map)
+        broadcast(state.city_id, {:city_metrics, metrics})
+        {:reply, :ok, %{state | city_map: city_map, metrics: metrics}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:redeem_bond, action}, _from, state) do
+    case RedeemMunicipalBond.execute(state.city_map, action) do
+      {:ok, city_map} ->
+        metrics = summarize(city_map)
+        save(state.city_id, city_map)
+        broadcast(state.city_id, {:city_metrics, metrics})
+        {:reply, :ok, %{state | city_map: city_map, metrics: metrics}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call(:reset, _from, state) do
     {:ok, %{city_map: city_map, metrics: metrics}} = ResetCity.execute(state.city_map)
 
@@ -389,6 +429,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # stalled city loads stalled and stays frozen — the same reasoning that keeps `critical?`
   # derived rather than stored.
   @impl true
+  def handle_info({:tick, _clock_pulse}, %{city_map: %{municipal_bond: nil}} = state) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:tick, _clock_pulse},
+        %{city_map: %{municipal_bond: %{original_principal: principal, started_at_tick: nil}}} =
+          state
+      )
+      when principal > 0.0 do
+    {:noreply, state}
+  end
+
   def handle_info({:tick, _clock_pulse}, %{metrics: %{stalled: true}} = state) do
     {:noreply, state}
   end
@@ -470,7 +523,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   defp load_city_map(city_id) do
     case snapshot_repository().load(city_id) do
-      {:ok, {_stored_tick, city_map}} ->
+      {:ok, {_stored_order, city_map}} ->
         # The stored tick is only the repository's ordering key, and it is
         # written from city_map.tick; the map itself carries the authority.
         normalize_city_map(city_map)
@@ -490,13 +543,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # defaulted, and the first read raises KeyError long after the load succeeded.
   # Merging onto a fresh struct fills new fields and leaves stored ones alone.
   def normalize_city_map(stored) when is_map(stored) do
-    Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
+    had_bond_key? = Map.has_key?(stored, :municipal_bond)
+    normalized = Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
+
+    if had_bond_key? do
+      normalized
+    else
+      %{normalized | municipal_bond: MunicipalBond.legacy()}
+    end
   end
 
   # `CityMap.new/0` rather than config values. The starting grid is a domain decision --
   # growth, the cap and the starting size are one rule, stated once in `CityMap` -- and a
-  # config key here would be a second place to state it. That is the drift the
-  # `@opening_grant` comment in `city_map.ex` was written about.
+  # config key here would be a second place to state it.
   defp new_city_map, do: CityMap.new()
 
   defp maybe_checkpoint(city_id, city_map) do
@@ -532,7 +591,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # the checkpoints are `checkpoint_every_ticks` apart, such a restart loop never
   # trips `max_restarts` — it just quietly discards work forever.
   defp save(city_id, city_map) do
-    case snapshot_repository().save(city_id, city_map.tick, city_map) do
+    order = CityMap.snapshot_order(city_map)
+
+    case snapshot_repository().save(city_id, order, city_map) do
       :ok ->
         :ok
 
@@ -550,10 +611,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
       # noise, though: for crash-and-replay this warning is the only evidence a replay
       # happened, and for a failed-delete reset it corroborates the error delete/1
       # already logged.
-      {:stale, stored_tick} ->
+      {:stale, stored_order} ->
         Logger.warning(
-          "declined to persist city #{city_id} at tick #{city_map.tick}: " <>
-            "a newer snapshot at tick #{stored_tick} is already stored"
+          "declined to persist city #{city_id} at order #{inspect(order)}: " <>
+            "a newer snapshot at order #{inspect(stored_order)} is already stored"
         )
 
       {:error, reason} ->
