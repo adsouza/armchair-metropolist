@@ -36,6 +36,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       table = view |> element("#block-legend") |> render()
 
+      assert has_element?(view, ~s{#legend-panel.shrink-0[style="width: 720px;"]})
       assert has_element?(view, "#block-legend.w-fit")
       assert table =~ "[&amp;_th]:px-1"
       assert table =~ "[&amp;_td]:px-1"
@@ -615,13 +616,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
     # The grid grows from 256px to 768px and legacy snapshots can be wider, so viewport
-    # width cannot tell this inner container whether the outer flex row wrapped. The hook
-    # compares the city column and sidebar, the two direct flex items, and drives this data
-    # variant instead. Comparing the grid itself is wrong whenever a goal banner sits above it.
-    test "metrics layout follows the sidebar's measured position", %{conn: conn} do
+    # width alone cannot place the sidebar. The hook combines the city-column width with
+    # this reserved maximum instead of letting live matrix figures move the boundary.
+    test "metrics layout uses the reserved sidebar width", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, ~s{#legend-and-metrics[data-position="side"].flex.flex-col})
+      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="720"]})
 
       layout = view |> element("#legend-and-metrics") |> render()
       assert layout =~ "data-[position=below]:flex-row"
@@ -668,11 +669,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       view |> element("#toggle-legend-detail") |> render_click()
 
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="false"]})
+      assert has_element?(view, ~s{#legend-panel[style="width: 384px;"]})
+      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="600"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Show detail"
 
       view |> element("#toggle-legend-detail") |> render_click()
 
       assert has_element?(view, ~s{#toggle-legend-detail[aria-expanded="true"]})
+      assert has_element?(view, ~s{#legend-panel[style="width: 720px;"]})
+      assert has_element?(view, ~s{#legend-and-metrics[data-reserved-width="720"]})
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
 

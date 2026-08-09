@@ -50,6 +50,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # useful read-down comparisons and summarizes hospital treatment in that row instead.
   @legend_resources [:power, :water, :waste, :traffic, :labour, :money]
 
+  # Stable layout reservations, measured in the browser against the largest ordinary
+  # values the bounded city can produce. A 32x32 city filled with one type has 1,024
+  # blocks and six-digit row/footer totals; its expanded legend reaches 712.67px, so
+  # 720 leaves 7px of rendering slack. The collapsed heading reaches 374.13px, so 384
+  # leaves 10px. Metrics has independently reached 594.45px, hence its 600px ceiling.
+  #
+  # These are layout widths, not content clamps: the table wrapper still scrolls if a
+  # grandfathered snapshot exceeds the bounded game's reasonable maximum. Reserving
+  # them keeps changing counts, totals and purchase badges from moving whole sections.
+  @expanded_legend_width 720
+  @collapsed_legend_width 384
+  @metrics_reserved_width 600
+
   # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
   # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
   # and 768px while cells shrink to @min_cell at the 32x32 cap.
@@ -556,12 +569,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
             <%!-- Column is the safe first paint: Metrics must stay below the legend while the
                 sidebar is beside the city column. The colocated hook changes `data-position`
-                only after comparing the two direct flex items' tops; unlike a viewport
-                breakpoint, that remains correct while the grid grows, while a goal banner sits
-                above it, and for wider legacy snapshots. --%>
+                from the city-column width, the real flex gap and the reserved sidebar width.
+                Unlike measuring the live matrix, changing counts and totals cannot move this
+                boundary; unlike a viewport breakpoint, grid growth still can. --%>
             <div
               id="legend-and-metrics"
               data-position="side"
+              data-reserved-width={sidebar_reserved_width(@legend_detail)}
               class="flex flex-col gap-4 data-[position=below]:flex-row"
             >
               <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
@@ -602,16 +616,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                     this.frame = null
 
                     // LiveView renders `side` as the safe first-paint default on every
-                    // patch. Restore the last measured placement before reading geometry;
-                    // otherwise that transient column layout can make the sidebar fit
-                    // beside the grid and turn the reset into a self-fulfilling reflow.
+                    // patch. Restore the last computed placement first so an ordinary
+                    // metrics patch cannot flash a different layout for one frame.
                     if (this.content.dataset.position !== this.placement) {
                       this.content.dataset.position = this.placement
                     }
 
-                    const cityColumnTop = this.cityColumn.getBoundingClientRect().top
-                    const sidebarTop = this.sidebar.getBoundingClientRect().top
-                    const position = Math.abs(cityColumnTop - sidebarTop) < 2 ? "side" : "below"
+                    const layoutWidth = this.layout.getBoundingClientRect().width
+                    const cityColumnWidth = this.cityColumn.getBoundingClientRect().width
+                    const columnGap = parseFloat(getComputedStyle(this.layout).columnGap) || 0
+                    const reservedWidth = Number(this.content.dataset.reservedWidth)
+                    const position =
+                      cityColumnWidth + columnGap + reservedWidth <= layoutWidth
+                        ? "side"
+                        : "below"
 
                     if (this.placement !== position) {
                       this.placement = position
@@ -631,12 +649,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   this.resizeObserver.observe(this.sidebar)
 
                   // A LiveView patch may restore the server-rendered `side` default without
-                  // changing any box size. Watching the attribute makes the measured state
-                  // self-healing in that case too.
+                  // changing any box size. Watching the attribute reapplies the stable state;
+                  // the width attribute also changes intentionally when detail is toggled.
                   this.mutationObserver = new MutationObserver(this.scheduleSync)
                   this.mutationObserver.observe(this.content, {
                     attributes: true,
-                    attributeFilter: ["data-position"]
+                    attributeFilter: ["data-position", "data-reserved-width"]
                   })
 
                   this.scheduleSync()
@@ -1396,6 +1414,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end)
   end
 
+  defp legend_reserved_width(true), do: @expanded_legend_width
+  defp legend_reserved_width(false), do: @collapsed_legend_width
+
+  defp sidebar_reserved_width(detail) do
+    max(legend_reserved_width(detail), @metrics_reserved_width)
+  end
+
   defp planning?(metrics) do
     case metrics.bond do
       %{legacy: false, original_principal: principal} = bond when principal > 0.0 ->
@@ -1479,15 +1504,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :detail, :boolean, required: true
 
   defp legend(assigns) do
-    assigns = assign(assigns, :resources, @legend_resources)
+    assigns =
+      assigns
+      |> assign(:resources, @legend_resources)
+      |> assign(:reserved_width, legend_reserved_width(assigns.detail))
 
     ~H"""
-    <%!-- No width classes here on purpose. The shrink-to-scroll behaviour lives on
-          `<aside>` in `render/1`, the direct flex item of the row layout; this div is
-          an ordinary block child of that aside, so `min-w-0` would be inert and
-          `w-full`/`w-auto` would each resolve to the width it already takes. The
-          duplicate class list only read as though it were doing the work. --%>
-    <div>
+    <%!-- Reserve the measured reasonable maximum so changing figures cannot push Metrics
+          sideways. `shrink-0` is load-bearing when the sidebar is below the city and this
+          panel shares a row with Metrics. The table remains `w-fit` inside the reservation,
+          and its overflow wrapper handles a grandfathered snapshot wider than the bound. --%>
+    <div id="legend-panel" class="shrink-0" style={"width: #{@reserved_width}px;"}>
       <%!-- "Legend" and not "Types": the toggle offers to hide the legend, the row ids
             are `legend-*`, and docs/PLAYING.md sends the player looking for a legend.
             The table's own `type` column header is caption enough for the rows. --%>
