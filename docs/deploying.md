@@ -205,6 +205,28 @@ loses access to whichever ring of itself grew while a newer release was running.
 Rolling back to `89e4a7a` or later is safe for a city that has grown a negative ring.
 Rolling back past it reproduces this on top of the small-grid trap already described.
 
+## The fifth trap: rolling back past municipal-bond snapshots
+
+`e060100` is the minimum rollback target for the municipal-bond writer. It is the first
+commit that understands both `CityMap.revision` and `CityMap.municipal_bond`, the
+`MunicipalBond` persisted struct, lexicographic `{tick, revision}` ordering, and version-2
+desktop envelopes. Every snapshot written by that commit contains the new fields, including
+grandfathered debt-free cities; an active issue additionally carries the new struct and its
+field atoms.
+
+Rolling a server or desktop binary behind `e060100` is unsupported once the writer has saved
+a city. In the ordinary case the older release's `:safe` decode cannot intern the new atoms
+and hydration fails. Merely interning those atoms early would not make such a rollback safe:
+an older calculator would read bond proceeds as ordinary treasury cash and silently stop
+interest, serial maturities, arrears, and construction-on-default enforcement. That semantic
+failure is why the writer itself, rather than an atom-only bridge, is the floor.
+
+The same deployment adds
+`20260809105747_add_revision_to_city_snapshots.exs`. Apply it with the release migration
+command at the top of this document immediately after the writer deploys; the binary reads
+and writes the non-null `revision` column. The migration is additive, but leaving the column
+behind does not make an older binary a safe rollback target for snapshots already written.
+
 ## Deploying the server
 
 ```bash

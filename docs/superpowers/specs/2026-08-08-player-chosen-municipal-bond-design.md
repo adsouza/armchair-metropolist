@@ -1,7 +1,7 @@
 # A player-chosen municipal bond issue: runway now, fixed-term debt service — design
 
 **Date:** 2026-08-08
-**Status:** designed, not yet implemented
+**Status:** implemented in `e060100`
 **Supersedes:** the fixed 400 opening grant in `Domain.Entities.CityMap` and every generated
 playing-guide claim derived from it. Existing saved cities are grandfathered debt-free; this
 design does not assign a liability retroactively.
@@ -202,7 +202,8 @@ It must be in its own file. `CityMap` aliases it; no file contains two modules.
 
 * `issues/0`, `recommended_issue/0`, `opening_period_ticks/0`,
   `call_protection_ticks/0`, `term_ticks/0` and `interest_rate/0`;
-* `new/1`, accepting only an exact authorized issue size;
+* `new/1`, accepting only an exact authorized issue size, and `issue_terms/1`, deriving the
+  comparison figures from the same on-time schedule;
 * `legacy/0`;
 * `issued?/1`, `legacy?/1`, `debt_free?/1`, `defaulted?/1`, `callable?/2` and
   `redemption_amount/1`;
