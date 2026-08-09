@@ -20,7 +20,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
-  alias ArmchairMetropolist.UseCases.{IssueMunicipalBond, ManageInfrastructure}
+  alias ArmchairMetropolist.UseCases.{BeginSimulation, IssueMunicipalBond, ManageInfrastructure}
 
   @resources Node.resources()
 
@@ -29,6 +29,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   def blocks do
     %{
       "baseline" => baseline_block(),
+      "balanced_growth" => balanced_growth_block(),
       "bonds" => bonds_block(),
       "production" => production_block(),
       "consumption" => consumption_block(),
@@ -43,9 +44,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
 
   # --- the opening sequence -----------------------------------------------
 
-  # With no free power, the city imports the first house's 15 power for one interval and
-  # then builds the power plant immediately. The lower traffic baseline puts transit next;
-  # commerce can then arrive early and finance the remaining support chain.
+  # One balanced plan, not a mandatory click order. Opening planning now freezes the clock
+  # and refunds every undo, so the player can assemble these blocks in any order. The rows
+  # still need a stable order so the guide can explain what each addition contributes.
   #
   # Written down rather than searched for. A search over orderings belongs in a scratch
   # script, not in a test-suite helper — but `opening_stages/0` measures the consequences
@@ -62,10 +63,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
     :park
   ]
 
-  # Lean cannot carry the temporary operating insolvency of the direct order without
-  # immediately entering the warning band. The same four-block core is therefore assembled
-  # revenue-first, before a simulation tick can land; once commerce is present, adding the
-  # plant and transit leaves the city solvent while it saves for the support chain.
+  # Lean cannot afford the full eight-block plan before beginning. It assembles the same
+  # four-block earning core during planning, begins the simulation, then saves for the
+  # remaining support chain.
   @lean_order [
     :residential,
     :commercial,
@@ -77,6 +77,19 @@ defmodule ArmchairMetropolist.PlayingGuide do
     :park
   ]
 
+  # The construction-only continuation for the recommended issue. It deliberately keeps
+  # both opening parks: removing a beneficial amenity to survive the tutorial is legible as
+  # a rescue tactic, not as the intended route. These five blocks turn the opening into a
+  # hospital-protected city whose operating surplus can amortize the 400 issue.
+  @balanced_no_demolition_expansion [
+    :hospital,
+    :commercial,
+    :power_plant,
+    :water_plant,
+    :industrial
+  ]
+  @balanced_expansion_reserve 100.0
+
   # Money is deliberately not one of these. The sequence runs a money deficit through its
   # whole middle and leans on the treasury to cover it — that is the mechanic being
   # documented, not a fault. The five below have no such backstop: a shortfall in any of
@@ -86,9 +99,6 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # The first four blocks form the earner. Derived from `@opening_order` so the expansion
   # wall and the documented route cannot drift apart.
   @earner_detour Enum.take(@opening_order, 4)
-
-  # Descending, so `Enum.find/3` returns the largest interval that survives.
-  @gap_ladder [30, 25, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1]
 
   # Long enough for a working sequence to climb back to 100 from the couple of points it
   # can lose, and far longer than a failing one needs to be unmistakably dead.
@@ -170,35 +180,14 @@ defmodule ArmchairMetropolist.PlayingGuide do
     @opening_order |> city_from() |> Calc.resource_stats() |> money_flow()
   end
 
-  @doc """
-  The largest fixed gap between placements the sequence survives for an issue size.
-
-  Measured through `ManageInfrastructure.place/4` rather than by putting nodes onto the
-  map directly, because affordability is half of what is being asked: the treasury drains
-  while the sequence is half-built, and a refused placement is exactly the failure this
-  is looking for.
-  """
-  @spec opening_max_gap_ticks(float()) :: non_neg_integer() | nil
-  def opening_max_gap_ticks(principal \\ @recommended_issue) do
-    Enum.find(@gap_ladder, fn gap ->
-      # An explicit 40x30 and not `CityMap.new/0`. Every figure this module generates is
-      # independent of grid size -- the simulation reads no coordinates -- and 40x30 is above
-      # the growth cap, so capacity never binds and no measurement here can be perturbed by a
-      # grid that grew mid-sequence. Migrating this to `new/0` would change what the guide
-      # measures.
-      financed_city(principal)
-      |> run_sequence(@opening_order, gap)
-      |> finished_healthy?()
-    end)
-  end
-
-  @doc "Largest fixed gap that completes healthy without showing warning or default."
-  @spec opening_max_safe_gap_ticks(float()) :: non_neg_integer() | nil
-  def opening_max_safe_gap_ticks(principal) do
-    Enum.find(@gap_ladder, fn gap ->
-      {city, safe?} = run_sequence_checked(financed_city(principal), @opening_order, gap)
-      safe? and finished_healthy?(city)
-    end)
+  @doc "Whether an issue can plan the complete opening before starting and remain healthy."
+  @spec direct_planning_healthy?(float()) :: boolean()
+  def direct_planning_healthy?(principal) when principal in [400.0, 550.0] do
+    principal
+    |> financed_city()
+    |> place_all(@opening_order)
+    |> begin_or_keep()
+    |> finished_healthy?()
   end
 
   @doc "Whether Lean can complete the opening by reaching commerce quickly, then saving."
@@ -217,9 +206,44 @@ defmodule ArmchairMetropolist.PlayingGuide do
   end
 
   def documented_route_safe?(principal) when principal in [400.0, 550.0] do
-    gap = opening_max_safe_gap_ticks(principal)
-    {_city, safe?} = run_sequence_checked(financed_city(principal), @opening_order, gap)
+    {_city, safe?} = run_direct_planning_checked(financed_city(principal), @opening_order)
     safe?
+  end
+
+  @doc "Measured construction-only continuation for the recommended issue."
+  @spec balanced_no_demolition_route() :: map()
+  def balanced_no_demolition_route do
+    expansion_cost = construction_cost(@balanced_no_demolition_expansion)
+    construction_budget = expansion_cost + @balanced_expansion_reserve
+
+    opening =
+      financed_city(@recommended_issue)
+      |> place_all(@opening_order)
+      |> begin_or_keep()
+
+    {funded, wait_safe?} = advance_until_funded_checked(opening, construction_budget, 60)
+    expanded = place_all(funded, @balanced_no_demolition_expansion)
+    expanded_metrics = Calc.metrics(expanded)
+    operating_flow = money_flow(expanded_metrics.resources) - expanded_metrics.market_spend
+    {settled, settle_safe?} = advance_checked(expanded, 160)
+    nodes = CityMap.nodes(settled)
+
+    %{
+      expansion: @balanced_no_demolition_expansion,
+      expansion_cost: expansion_cost,
+      reserve_after_expansion: funded.money - expansion_cost,
+      funded_tick: funded.tick,
+      funded_treasury: funded.money,
+      operating_flow: operating_flow,
+      traffic_demand: expanded_metrics.resources.traffic.demanded,
+      traffic_supply: expanded_metrics.resources.traffic.supplied,
+      stable?:
+        wait_safe? and settle_safe? and
+          length(nodes) == length(@opening_order) + length(@balanced_no_demolition_expansion) and
+          Enum.all?(nodes, &(&1.health >= @recovered)) and
+          MunicipalBond.debt_free?(settled.municipal_bond) and
+          not MunicipalBond.defaulted?(settled.municipal_bond)
+    }
   end
 
   @doc "Whether the finished documented city retires an issue on schedule from zero cash."
@@ -302,15 +326,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
           "| #{resource} #{num(demanded)}/#{num(supplied)} | #{signed(stage.money_flow)} |"
       end
 
-    lean_gap = opening_max_gap_ticks(250.0)
-    balanced_gap = opening_max_gap_ticks(400.0)
-    generous_gap = opening_max_gap_ticks(550.0)
-    balanced_safe_gap = opening_max_safe_gap_ticks(400.0)
-    generous_safe_gap = opening_max_safe_gap_ticks(550.0)
+    lean_core_cost =
+      @lean_order |> Enum.take(4) |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
 
     Enum.join(
       [
-        "| # | place | cost | spent so far | tightest resource | money |",
+        "| # | place | cost | spent so far | tightest resource | projected money/tick |",
         "|---|---|---|---|---|---|"
       ] ++
         rows ++
@@ -322,37 +343,47 @@ defmodule ArmchairMetropolist.PlayingGuide do
             "seven physical resources — the `tightest resource` column is demand against " <>
             "available supply, including purchases, so step 1's `15/15` is imported power.",
           "",
-          "| issue | principal | route | measured timing | first payment | total interest |",
+          "| issue | principal | opening plan | reserve when sim begins | first payment | total interest |",
           "|---|---:|---|---|---:|---:|",
-          "| Lean | 250 | house → commerce → plant → transit, then save and grow | " <>
-            "#{if lean_gap, do: "fixed gap up to #{lean_gap} ticks", else: "no fixed-gap route"}; " <>
-            "save-and-grow verified | #{money2(lean_terms.first_payment)} | " <>
+          "| Lean | 250 | plan the four-block earning core, begin, then save and grow | " <>
+            "#{num(250.0 - lean_core_cost)} | #{money2(lean_terms.first_payment)} | " <>
             "#{money2(lean_terms.total_interest)} |",
-          "| **Balanced · recommended** | **400** | direct opening | up to **#{balanced_gap} ticks " <>
-            "(#{num(balanced_gap * tick_ms() / 1000)} s)** physically; " <>
-            "#{balanced_safe_gap} ticks warning-free | " <>
+          "| **Balanced · recommended** | **400** | plan all eight blocks, then begin | " <>
+            "**#{num(400.0 - opening_cost())}** | " <>
             "**#{money2(balanced_terms.first_payment)}** | " <>
             "**#{money2(balanced_terms.total_interest)}** |",
-          "| Generous | 550 | direct opening with more reaction time | up to **#{generous_gap} ticks " <>
-            "(#{num(generous_gap * tick_ms() / 1000)} s)** physically; " <>
-            "#{generous_safe_gap} ticks warning-free | " <>
+          "| Generous | 550 | plan all eight blocks, then begin | " <>
+            "#{num(550.0 - opening_cost())} | " <>
             "#{money2(generous_terms.first_payment)} | " <>
             "#{money2(generous_terms.total_interest)} |",
           "",
-          "All three issues have a 20-tick construction holiday, 100 servicing ticks, " <>
-            "level principal, and 0.5% interest per servicing tick. The Lean route is " <>
-            "different by design: assemble its four-block commercial core revenue-first, " <>
-            "before a tick lands, then pause to fund the last four blocks."
+          "All three issues include an untimed opening-planning phase with full-refund undo. " <>
+            "Begin sim starts both the city clock and a 20-tick debt-service grace period; " <>
+            "the bond then has 100 servicing ticks, level principal, and 0.5% interest per tick."
         ],
       "\n"
     )
   end
 
   defp opening_pace_block do
-    "After step 4, the transit-backed commercial core has +6 of operating cash flow per tick. " <>
-      "Debt service is separate: the first Lean, Balanced and Generous payments are 3.75, " <>
-      "6.00 and 8.25. Lean can save at the core; Balanced initially breaks even after debt; " <>
-      "Generous should use its larger construction reserve to finish the opening before service starts."
+    "The four-block commercial core has +6 of operating cash flow per tick. " <>
+      "Debt service is separate: Lean can begin at the core, save through its 20-tick grace " <>
+      "period, and then cover a first payment of 3.75. Balanced and Generous can plan all eight " <>
+      "blocks before beginning; the finished opening's +12 flow covers their first payments of " <>
+      "6.00 and 8.25."
+  end
+
+  defp balanced_growth_block do
+    route = balanced_no_demolition_route()
+    additions = Enum.map_join(route.expansion, ", ", &"`#{&1}`")
+
+    "Keep every opening block. Let the finished Balanced opening save until tick " <>
+      "#{route.funded_tick}, when its treasury reaches #{num(route.funded_treasury)}, then add " <>
+      "#{additions} for #{num(route.expansion_cost)} total. No demolition is required. " <>
+      "That leaves a #{num(route.reserve_after_expansion)} operating reserve. " <>
+      "The expanded city has #{signed(route.operating_flow)} of operating cash flow before " <>
+      "debt service and traffic #{num(route.traffic_demand)}/#{num(route.traffic_supply)}; its " <>
+      "hospital clears the periodic health burden while that surplus retires the bond."
   end
 
   defp bonds_block do
@@ -387,13 +418,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
   defp issue_name(400.0), do: "Balanced"
   defp issue_name(550.0), do: "Generous"
 
-  # --- sequence mechanics -------------------------------------------------
+  defp construction_cost(types), do: types |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
 
-  defp run_sequence(city, types, gap) do
-    Enum.reduce(types, city, fn type, city ->
-      city |> place_or_skip(type) |> advance(gap)
-    end)
-  end
+  # --- sequence mechanics -------------------------------------------------
 
   defp run_save_and_grow_sequence(city, types) do
     remaining_cost = types |> Enum.drop(4) |> Enum.map(&Node.construction_cost/1) |> Enum.sum()
@@ -403,15 +430,26 @@ defmodule ArmchairMetropolist.PlayingGuide do
     |> Enum.reduce(city, fn {type, step}, city ->
       city = if step == 5, do: advance_until_funded(city, remaining_cost, 200), else: city
       city = place_or_skip(city, type)
+      city = if step == 4, do: begin_or_keep(city), else: city
       if step < 4, do: city, else: advance(city, 1)
     end)
   end
 
-  defp run_sequence_checked(city, types, gap) do
-    Enum.reduce(types, {city, true}, fn type, {city, safe?} ->
+  defp run_direct_planning_checked(city, types) do
+    {city, safe?} =
+      Enum.reduce(types, {city, true}, fn type, {city, safe?} ->
+        city = place_or_skip(city, type)
+        {city, safe? and route_state_safe?(city)}
+      end)
+
+    city = begin_or_keep(city)
+    {city, safe? and route_state_safe?(city)}
+  end
+
+  defp place_all(city, types) do
+    Enum.reduce(types, city, fn type, city ->
       city = place_or_skip(city, type)
-      {city, tick_safe?} = advance_checked(city, gap)
-      {city, safe? and route_state_safe?(city) and tick_safe?}
+      city
     end)
   end
 
@@ -427,9 +465,17 @@ defmodule ArmchairMetropolist.PlayingGuide do
           else: {city, true}
 
       city = place_or_skip(city, type)
+      city = if step == 4, do: begin_or_keep(city), else: city
       {city, tick_safe?} = if step < 4, do: {city, true}, else: advance_checked(city, 1)
       {city, safe? and waiting_safe? and route_state_safe?(city) and tick_safe?}
     end)
+  end
+
+  defp begin_or_keep(city) do
+    case BeginSimulation.execute(city) do
+      {:ok, started} -> started
+      {:error, _reason} -> city
+    end
   end
 
   defp advance_until_funded_checked(city, amount, ticks_left) do

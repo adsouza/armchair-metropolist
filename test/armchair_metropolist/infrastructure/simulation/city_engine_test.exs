@@ -262,6 +262,35 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert saved.municipal_bond.original_principal == 400.0
     end
 
+    test "planning stays at tick zero, refunds undo, and Begin sim starts and persists the clocks",
+         %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.issue_municipal_bond(city_id, 400.0)
+      assert {:ok, _park} = CityEngine.place(city_id, 0, 0, :park)
+      assert {:ok, "0:0"} = CityEngine.demolish(city_id, 0, 0)
+      assert {:ok, _house} = CityEngine.place(city_id, 0, 0, :residential)
+
+      broadcast_tick(1)
+
+      assert {:ok, %{city_map: planning}} = CityEngine.snapshot(city_id)
+      assert planning.tick == 0
+      assert planning.money == 385.0
+      assert planning.municipal_bond.started_at_tick == nil
+
+      assert :ok = CityEngine.begin_simulation(city_id)
+      assert_receive {:city_metrics, %{bond: %{started: true}}}
+
+      assert [{^city_id, {0, 5}, saved} | _earlier] = StubSnapshotRepository.saves()
+      assert saved.municipal_bond.started_at_tick == 0
+
+      broadcast_tick(2)
+      assert {:ok, %{city_map: running}} = CityEngine.snapshot(city_id)
+      assert running.tick == 1
+    end
+
     test "optional redemption is persisted at a higher same-tick revision", %{city_id: city_id} do
       city = callable_bond_city()
       StubSnapshotRepository.set_initial({:ok, {CityMap.snapshot_order(city), city}})
@@ -650,6 +679,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         pid = start_supervised!({CityEngine, city_id: city_id})
         :ok = CityEngine.issue_municipal_bond(city_id, 400.0)
         {:ok, node} = CityEngine.place(city_id, 1, 1, :power_plant)
+        :ok = CityEngine.begin_simulation(city_id)
 
         # The shutdown is inside the capture too: terminate/2 saves as well, and
         # its failure would otherwise leak past the test into `mix check`'s output.
@@ -1420,6 +1450,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert :ok = CityEngine.reset(city_id)
       assert :ok = CityEngine.issue_municipal_bond(city_id, 250.0)
       assert {:ok, _node} = CityEngine.place(city_id, 0, 0, :park)
+      assert :ok = CityEngine.begin_simulation(city_id)
 
       broadcast_tick(1)
 
@@ -1441,7 +1472,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # of the moduledoc's "three byte-identical notifications" story: there the flag was
       # too eager, here a leftover flag would be too quiet.
       #
-      # Five commercial blocks draw 45 traffic against the baseline's 20. Traffic is the
+      # Five commercial blocks draw 45 traffic against the baseline's 30. Traffic is the
       # one shortfall the external market cannot buy away, so this remains a real deficit
       # despite the reset city's newly authorized bond proceeds.
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
@@ -1453,6 +1484,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       for {x, y} <- [{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}] do
         {:ok, _node} = CityEngine.place(city_id, x, y, :commercial)
       end
+
+      assert :ok = CityEngine.begin_simulation(city_id)
 
       broadcast_tick(1)
 

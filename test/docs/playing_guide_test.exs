@@ -17,6 +17,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
   alias ArmchairMetropolist.Domain.Entities.MunicipalBond
   alias ArmchairMetropolist.Domain.Entities.Node
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+  alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
   alias ArmchairMetropolist.PlayingGuide
 
   @guide Path.expand("../../docs/PLAYING.md", __DIR__)
@@ -168,15 +169,28 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
     test "all three bond choices retain their promised opening role" do
       assert MunicipalBond.issues() == [250.0, 400.0, 550.0]
       assert PlayingGuide.lean_save_and_grow_healthy?()
+      assert PlayingGuide.direct_planning_healthy?(400.0)
+      assert PlayingGuide.direct_planning_healthy?(550.0)
+    end
 
-      balanced_gap = PlayingGuide.opening_max_gap_ticks(400.0)
-      generous_gap = PlayingGuide.opening_max_gap_ticks(550.0)
+    test "the recommended issue has a stable construction-only continuation" do
+      route = PlayingGuide.balanced_no_demolition_route()
 
-      assert is_integer(balanced_gap) and balanced_gap >= 2,
-             "Balanced no longer supports a deliberate direct opening"
+      assert route.stable?,
+             "the Balanced continuation can no longer retire its bond at full health without demolition"
 
-      assert is_integer(generous_gap) and generous_gap > balanced_gap,
-             "Generous no longer buys more measured reaction time than Balanced"
+      assert route.expansion == [
+               :hospital,
+               :commercial,
+               :power_plant,
+               :water_plant,
+               :industrial
+             ]
+
+      assert route.operating_flow >= 6.0
+      assert route.traffic_demand <= route.traffic_supply * Calc.healthy_traffic_ratio()
+      assert route.funded_tick < Calc.disease_outbreak_interval()
+      assert route.reserve_after_expansion >= 100.0
     end
 
     test "every documented route stays out of warning and default" do
@@ -224,7 +238,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
 
       assert pace =~ "+6 of operating cash flow"
       assert pace =~ "Debt service is separate"
-      assert pace =~ "Lean can save at the core"
+      assert pace =~ "Lean can begin at the core"
     end
   end
 

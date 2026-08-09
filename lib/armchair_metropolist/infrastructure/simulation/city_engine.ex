@@ -101,6 +101,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
+  alias ArmchairMetropolist.UseCases.BeginSimulation
   alias ArmchairMetropolist.UseCases.IssueCommercialBond
   alias ArmchairMetropolist.UseCases.IssueMunicipalBond
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
@@ -165,6 +166,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   @doc "Authorize the city's one opening municipal bond issue."
   def issue_municipal_bond(city_id, principal), do: call(city_id, {:issue_bond, principal})
+
+  @doc "Finish opening planning and start the simulation and bond clocks."
+  def begin_simulation(city_id), do: call(city_id, :begin_simulation)
 
   @doc "Issue the city's one-time quoted commercial bridge bond."
   def issue_commercial_bond(city_id), do: call(city_id, :issue_commercial_bond)
@@ -353,6 +357,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   def handle_call({:issue_bond, principal}, _from, state) do
     case IssueMunicipalBond.execute(state.city_map, principal) do
+      {:ok, city_map} ->
+        metrics = summarize(city_map)
+        save(state.city_id, city_map)
+        broadcast(state.city_id, {:city_metrics, metrics})
+        {:reply, :ok, %{state | city_map: city_map, metrics: metrics}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:begin_simulation, _from, state) do
+    case BeginSimulation.execute(state.city_map) do
       {:ok, city_map} ->
         metrics = summarize(city_map)
         save(state.city_id, city_map)

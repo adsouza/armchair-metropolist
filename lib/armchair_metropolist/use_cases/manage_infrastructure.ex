@@ -61,7 +61,6 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           # including fixtures that build a city of a chosen size, and there would then be
           # no way to build one at all.
           |> CityMap.grow_if_crowded()
-          |> start_bond(city_map.tick)
           |> CityMap.increment_revision()
 
         {:ok, {city_map, node}}
@@ -69,7 +68,9 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   end
 
   @doc """
-  Remove the node at `(x, y)` from `city_map`, charging the flat demolition cost.
+  Remove the node at `(x, y)` from `city_map`. During opening planning this refunds the
+  node's full construction cost; after the simulation begins it charges the flat
+  demolition cost.
 
   Reports `:empty` before `:insufficient_funds`, for the same reason `place/4` reports
   occupancy first.
@@ -77,27 +78,30 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   @spec demolish(CityMap.t(), integer(), integer()) ::
           {:ok, {CityMap.t(), String.t()}} | {:error, :empty | :insufficient_funds}
   def demolish(city_map, x, y) do
+    node = CityMap.get_node(city_map, x, y)
+
     cond do
-      is_nil(CityMap.get_node(city_map, x, y)) ->
+      is_nil(node) ->
         {:error, :empty}
 
-      city_map.money < Node.demolition_cost() ->
+      not MunicipalBond.planning?(city_map.municipal_bond) and
+          city_map.money < Node.demolition_cost() ->
         {:error, :insufficient_funds}
 
       true ->
-        node = CityMap.get_node(city_map, x, y)
-
         city_map =
           city_map
           |> CityMap.delete_node(x, y)
-          |> CityMap.debit(Node.demolition_cost())
+          |> settle_demolition(node)
           |> CityMap.increment_revision()
 
         {:ok, {city_map, node.id}}
     end
   end
 
-  defp start_bond(%CityMap{municipal_bond: bond} = city_map, tick) do
-    %{city_map | municipal_bond: MunicipalBond.start(bond, tick)}
+  defp settle_demolition(%CityMap{municipal_bond: bond} = city_map, node) do
+    if MunicipalBond.planning?(bond),
+      do: CityMap.credit(city_map, Node.construction_cost(node.type)),
+      else: CityMap.debit(city_map, Node.demolition_cost())
   end
 end

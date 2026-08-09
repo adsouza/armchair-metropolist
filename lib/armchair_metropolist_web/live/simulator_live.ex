@@ -191,6 +191,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
+  def handle_event("begin_sim", _params, socket) do
+    case CityEngine.begin_simulation(socket.assigns.city_id) do
+      :ok -> {:noreply, socket}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
+    end
+  end
+
   def handle_event("redeem_bond_25", _params, socket) do
     redeem_bond(socket, :minimum)
   end
@@ -431,6 +438,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <div :if={not is_nil(@metrics.bond)} id="financed-simulator">
         <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
 
+        <.planning_panel
+          :if={planning?(@metrics)}
+          metrics={@metrics}
+          commands_enabled?={@commands_enabled?}
+        />
+
         <.commercial_bond_offer
           :if={@metrics.commercial_bond_offer}
           offer={@metrics.commercial_bond_offer}
@@ -448,31 +461,34 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             inside the sidebar. Any replacement constant would drift when the grid,
             resources or type names changed; content-driven wrapping cannot. --%>
         <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
-          <div
-            id="city-grid"
-            class="relative shrink-0 border border-base-300"
-            style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
-          >
-            <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
+          <div id="city-column" class="shrink-0">
+            <.opening_goal_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+
+            <div
+              id="city-grid"
+              class="relative shrink-0 border border-base-300"
+              style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
+            >
+              <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
                 coordinate the server places at — while `cell_style/3` is given
                 `x - @min_x`/`y - @min_y`, a grid *index* counting from the window's
                 visible corner. Conflating the two is what would re-key nodes: pixels
                 need "how many cells from the left edge", the click needs "which cell
                 this actually is", and after a growth those are no longer the same
                 number. --%>
-            <div
-              :for={{x, y} <- @grid_cells}
-              class="absolute border border-base-200 cursor-pointer"
-              style={cell_style(x - @min_x, y - @min_y, @cell_size)}
-              phx-click="place"
-              phx-value-x={x}
-              phx-value-y={y}
-              title={"place #{@selected_type}"}
-            >
-            </div>
+              <div
+                :for={{x, y} <- @grid_cells}
+                class="absolute border border-base-200 cursor-pointer"
+                style={cell_style(x - @min_x, y - @min_y, @cell_size)}
+                phx-click="place"
+                phx-value-x={x}
+                phx-value-y={y}
+                title={"place #{@selected_type}"}
+              >
+              </div>
 
-            <div id="nodes" phx-update="stream">
-              <%!-- No coordinate in this title, and not only because the tooltip never
+              <div id="nodes" phx-update="stream">
+                <%!-- No coordinate in this title, and not only because the tooltip never
                   needed one to do its job — that job is disambiguating place-from-demolish,
                   which the verb already carries. With coordinates in the *background
                   cell's* title too, `assert render(view) =~ "2:3"` used to pass whether or
@@ -480,20 +496,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   the cell's own tooltip that shipped once and was only caught in review.
                   Dropping the coordinate from both titles makes that class of vacuous
                   assertion impossible rather than merely unlikely. --%>
-              <div
-                :for={{dom_id, node} <- @streams.nodes}
-                id={dom_id}
-                class={[
-                  "absolute flex cursor-pointer items-center justify-center",
-                  status_class(node.status)
-                ]}
-                style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
-                phx-click="demolish"
-                phx-value-x={node.x}
-                phx-value-y={node.y}
-                title={"#{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
-              >
-                {block_emoji(node.type)}
+                <div
+                  :for={{dom_id, node} <- @streams.nodes}
+                  id={dom_id}
+                  class={[
+                    "absolute flex cursor-pointer items-center justify-center",
+                    status_class(node.status)
+                  ]}
+                  style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
+                  phx-click="demolish"
+                  phx-value-x={node.x}
+                  phx-value-y={node.y}
+                  title={demolition_title(node, @metrics)}
+                >
+                  {block_emoji(node.type)}
+                </div>
               </div>
             </div>
           </div>
@@ -511,10 +528,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               pushing Metrics off the end.
 
               daisyUI also styles `.table` as `width: 100%`. The matrix overrides that
-              with `w-fit` below: expanded, the totals footnote is wider than the matrix,
-              and allowing the footnote to set every matrix column's width wastes the
-              space the stacked totals row reclaimed. The aside remains sized by its
-              widest child; only the table stops stretching to match that child. --%>
+              with `w-fit` below so it keeps its compact intrinsic width instead of
+              stretching to whichever other sidebar child happens to be widest. --%>
           <aside class="min-w-fit">
             <button
               id="toggle-legend-detail"
@@ -548,33 +563,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   `legend/1` and so could not survive a collapse — the structural reason
                   the toggle hid them. --%>
               <.metrics metrics={@metrics} />
-
-              <%!-- Hidden with the totals row it explains — and not only for tidiness. Left
-                  visible, this paragraph would hold the collapsed sidebar at its own width
-                  instead of the re-entry line's width, and collapsing would reclaim little.
-
-                  It follows Metrics rather than living inside `legend/1`, so the supporting
-                  detail comes after the two primary dashboard sections in reading order.
-
-                  `max-w-xl` is load-bearing. Its 576px cap sits just inside the compact
-                  matrix's measured 582px width instead of letting a 1054px max-content line
-                  stretch the sidebar well past the matrix. --%>
-              <p
-                :if={@legend_detail}
-                id="legend-footnote"
-                class="mt-1 max-w-xl text-xs opacity-60"
-              >
-                Totals include free capacity belonging to no type: 30 water supplied, 40 waste
-                absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
-                Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
-                the hospital row shows its treatment rate. Traffic above 80% of capacity creates
-                injuries, and every 30 ticks a residential-scaled disease outbreak occurs. Labour's
-                total includes park amenity and the health-burden penalty; park's own row carries its
-                amenity. Shortfalls in power, water, waste disposal and labour are bought automatically
-                for 1 money per unit while the treasury can pay; purchased units count toward supplied
-                totals. Each imported labour unit adds one traffic demand, and traffic itself cannot be
-                bought.
-              </p>
             </div>
 
             <%!-- The hook owns only this ignored marker. It observes the surrounding layout
@@ -668,8 +656,79 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             </div>
           </aside>
         </div>
+
+        <%!-- Supporting detail belongs after the entire interactive layout, not inside the
+              responsive legend/metrics row. Inside that row it became a third column beside
+              Metrics whenever the sidebar wrapped below the grid, and its long copy dictated
+              the sidebar's width. Kept conditional with the detailed totals it explains. --%>
+        <p
+          :if={@legend_detail}
+          id="legend-footnote"
+          class="mt-4 max-w-5xl text-xs leading-relaxed opacity-60"
+        >
+          Totals include free capacity belonging to no type: 30 water supplied, 40 waste
+          absorbed and 30 traffic absorbed. Power, labour and money have no free baseline.
+          Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
+          the hospital row shows its treatment rate. Traffic above 90% of capacity creates
+          injuries, and every 45 ticks a residential-scaled disease outbreak occurs. Labour's
+          total includes park amenity and the health-burden penalty; park's own row carries its
+          amenity. Shortfalls in power, water, waste disposal and labour are bought automatically
+          for 1 money per unit while the treasury can pay; purchased units count toward supplied
+          totals. Each imported labour unit adds one traffic demand, and traffic itself cannot be
+          bought.
+        </p>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :metrics, :map, required: true
+  attr :commands_enabled?, :boolean, required: true
+
+  defp planning_panel(assigns) do
+    ~H"""
+    <section
+      id="opening-planning"
+      class="mb-4 overflow-hidden rounded-2xl border border-primary/35 bg-primary/5 shadow-sm"
+    >
+      <div class="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div class="flex max-w-3xl items-start gap-4">
+          <div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <.icon name="hero-building-office-2" class="size-6" />
+          </div>
+          <div>
+            <p class="text-xs font-bold uppercase tracking-[0.2em] text-primary">
+              Opening planning
+            </p>
+            <h2 class="mt-1 text-xl font-semibold tracking-tight">Design before the clock starts</h2>
+            <p class="mt-2 text-sm leading-relaxed opacity-75">
+              Place blocks in any order and click any placed block to undo it for a full refund.
+              Ticks, upkeep, imports, health changes, and debt service remain paused until you begin.
+            </p>
+          </div>
+        </div>
+
+        <div class="shrink-0 sm:text-right">
+          <button
+            id="begin-sim"
+            type="button"
+            class="btn btn-primary min-h-11 w-full px-6 shadow-md transition hover:-translate-y-0.5 hover:shadow-lg sm:w-auto"
+            phx-click="begin_sim"
+            disabled={not @commands_enabled? or @metrics.node_count == 0}
+            title={
+              if @metrics.node_count == 0,
+                do: "Place at least one block before beginning",
+                else: "Start simulation ticks and the 20-tick debt grace period"
+            }
+          >
+            <.icon name="hero-play" class="size-4" /> Begin sim
+          </button>
+          <p :if={@metrics.node_count == 0} class="mt-2 text-xs opacity-60">
+            Place at least one block first.
+          </p>
+        </div>
+      </div>
+    </section>
     """
   end
 
@@ -688,10 +747,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         <p class="text-xs font-bold uppercase tracking-[0.24em] text-primary">Municipal financing</p>
         <h2 class="mt-2 text-3xl font-semibold tracking-tight">Authorize your city’s bond issue</h2>
         <p class="mt-3 leading-relaxed opacity-75">
-          Authorize a municipal bond issue to fund the city. No debt service is due for the first
-          20 ticks after construction begins. Then serial principal and 0.5% interest are due each
-          tick, with final maturity 100 servicing ticks later. Optional redemption opens after the
-          first 20 servicing ticks.
+          Authorize a municipal bond issue to fund the city, then plan with a paused clock and
+          full-refund undo. Begin sim starts a 20-tick debt-service grace period. Then serial
+          principal and 0.5% interest are due each tick, with final maturity 100 servicing ticks
+          later. Optional redemption opens after the first 20 servicing ticks.
         </p>
       </div>
 
@@ -811,13 +870,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # the wrap thresholds documented in `render/1`, and this block's prose is far wider than
   # anything already in there.
   #
-  # Status only. It names the header's Reset button rather than rendering a second copy of it.
-  # Every banner describes an established city, so `show_reset?/1` guarantees that button is
-  # present for all four variants. Reset is a player-controlled escape hatch now, not an
-  # end-state classifier; its confirmation prompt protects cities that are still rescuable.
+  # Status only. Terminal variants name the header's Reset button rather than rendering a
+  # second copy of it. Opening goals use the separate component below so they can sit inside
+  # the grid column without moving urgent status above or below the planning controls.
   #
   # **One variant at a time, chosen by an ordered list rather than by independent `:if`s.**
-  # The four states are not disjoint: a stalled city is also insolvent whenever its upkeep
+  # The status states are not disjoint: a stalled city is also insolvent whenever its upkeep
   # outruns its ceiling, so `stalled` and `game_over?` and `warning?` can all be true of the
   # same city. Independent conditions rendered two headlines at once. `banner_variant/1`
   # below is the precedence, in one place.
@@ -836,6 +894,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     <div
       :if={@variant}
       id="collapse-banner"
+      data-variant={@variant}
       class={[
         "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
         if(@variant in [:dead, :locked, :financing_locked, :bond_default],
@@ -853,7 +912,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@variant == :dead} class="font-semibold">
         Game over — this city is dead.
       </p>
-      <%!-- Width-constrained. This is the widest of the four headlines (417px at
+      <%!-- Width-constrained. This is the widest of the terminal headlines (417px at
             max-content, measured 2026-08-08 at 16px/600 in ui-sans-serif) and it is what
             sets `@max_cell 128`: the banner shares the grid's width, a 2x2 grid is 256px,
             and this line needs a 245px banner to wrap to two lines rather than three.
@@ -931,7 +990,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     """
   end
 
-  # The precedence between the four banners, in one place because the states overlap.
+  # The precedence between banners, in one place because the states overlap.
   #
   # `:dead` before `:locked`: both are `game_over?/1`, and a city with every block on the
   # floor genuinely is dead, which is the more specific truth. `:stalled` before `:warning`:
@@ -951,6 +1010,200 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       true -> nil
     end
   end
+
+  attr :metrics, :map, required: true
+  attr :width, :integer, required: true
+  attr :cell_size, :integer, required: true
+
+  defp opening_goal_banner(assigns) do
+    assigns = assign(assigns, :goal, opening_goal(assigns.metrics))
+
+    ~H"""
+    <div
+      :if={@goal}
+      id="opening-goal-banner"
+      data-variant="opening_goal"
+      class="mb-3 box-border max-w-full rounded-lg border border-l-4 border-primary bg-primary/5 px-4 py-3"
+      style={"width: #{@width * @cell_size}px"}
+    >
+      <div id="opening-goal">
+        <p class="text-xs font-bold uppercase tracking-[0.18em] text-primary">
+          Suggested goal {@goal.step} of 4
+        </p>
+        <p class="mt-0.5 font-semibold">{@goal.title}</p>
+        <p class="mt-1 text-xs leading-relaxed opacity-80">{@goal.body}</p>
+      </div>
+    </div>
+    """
+  end
+
+  # Advisory goals are limited to a new issue's opening grace period. Grandfathered cities,
+  # later-game cities and a city with a bridge offer keep the old banner behaviour unchanged.
+  # Each milestone is derived from outcomes rather than node types, so the player can solve it
+  # with any layout the economy supports.
+  defp opening_goal(%{bond: bond} = metrics) do
+    if opening_guidance?(metrics, bond) do
+      power = Map.fetch!(metrics.resources, :power)
+      labour = Map.fetch!(metrics.resources, :labour)
+      money = Map.fetch!(metrics.resources, :money)
+      operating_margin = money.supplied - money.demanded - metrics.market_spend
+
+      cond do
+        metrics.node_count == 0 or power.supplied < power.demanded ->
+          %{
+            step: 1,
+            title: "Cover power locally",
+            body: power_goal_body(metrics.node_count, power.supplied, power.demanded)
+          }
+
+        money.supplied <= money.demanded ->
+          %{
+            step: 2,
+            title: "Establish positive operating income",
+            body:
+              "The plan earns #{whole(money.supplied)} per tick against #{whole(money.demanded)} of upkeep. Add earning capacity; commercial blocks are the strongest early source."
+          }
+
+        labour.supplied < labour.demanded and
+            (metrics.by_type.residential.count == 0 or
+               residential_improves_operating_margin?(metrics)) ->
+          imported_labour = labour.demanded - labour.supplied
+
+          %{
+            step: 3,
+            title: "Establish a local workforce",
+            body:
+              "The plan still relies on #{whole(imported_labour)} imported workers per tick, adding the same amount of traffic. Add residential capacity; parks can amplify the workforce once housing exists."
+          }
+
+        tightest_unmet = tightest_unmet_essential(metrics.resources) ->
+          {resource, stats} = tightest_unmet
+
+          %{
+            step: 3,
+            title: "Make the plan self-funding",
+            body:
+              "#{humanize(resource)} is only #{max(0, round(stats.satisfaction * 100))}% supplied. Add support or reduce demand so the city can remain healthy after it begins."
+          }
+
+        operating_margin <= 0.0 ->
+          %{
+            step: 3,
+            title: "Make the plan self-funding",
+            body:
+              "Income is #{whole(money.supplied)} per tick, with #{whole(money.demanded)} upkeep and #{whole(metrics.market_spend)} of projected purchases. Revise until that total leaves a surplus."
+          }
+
+        planning?(metrics) ->
+          %{
+            step: 4,
+            title: "Review the plan, then begin",
+            body:
+              "The current layout covers its essentials and projects a #{signed_whole(operating_margin)} operating margin. You can keep revising it or click Begin sim when ready."
+          }
+
+        true ->
+          %{
+            step: 4,
+            title: "Use the grace period to build a reserve",
+            body: reserve_goal_body(metrics, bond, operating_margin)
+          }
+      end
+    end
+  end
+
+  defp opening_goal(_metrics), do: nil
+
+  # Local labour is not automatically cheaper labour. A new house also adds power, water,
+  # waste and traffic loads plus one unit of income. Recommend it only when those recurring
+  # effects improve the projected operating margin; otherwise a small labour import is the
+  # more economical plan and should not block readiness.
+  defp residential_improves_operating_margin?(metrics) do
+    money = Map.fetch!(metrics.resources, :money)
+    current_margin = money.supplied - money.demanded - metrics.market_spend
+    projected_margin = projected_residential_margin(metrics)
+
+    projected_margin > current_margin
+  end
+
+  defp projected_residential_margin(metrics) do
+    capacity = Node.capacity(:residential)
+    load = Node.load(:residential)
+    money = Map.fetch!(metrics.resources, :money)
+
+    projected_market_spend =
+      Enum.reduce([:power, :water, :waste, :labour], 0.0, fn resource, total ->
+        stats = Map.fetch!(metrics.resources, resource)
+        demanded = stats.demanded + Map.get(load, resource, 0.0)
+
+        supplied =
+          if resource == :labour,
+            do: projected_residential_labour(metrics, stats.supplied),
+            else: stats.supplied + Map.get(capacity, resource, 0.0)
+
+        # Every opening-market resource currently costs one per unit. Keeping the sum here
+        # beside the goal makes the comparison include unfunded shortages as well as the
+        # purchases the current treasury can afford.
+        total + max(0.0, demanded - supplied - stats.carried)
+      end)
+
+    projected_income = money.supplied + Map.get(capacity, :money, 0.0)
+    projected_upkeep = money.demanded + Map.get(load, :money, 0.0)
+    projected_income - projected_upkeep - projected_market_spend
+  end
+
+  defp projected_residential_labour(metrics, current_labour) do
+    base_labour = Map.fetch!(Node.capacity(:residential), :labour)
+    housing = metrics.by_type.residential.count + 1
+    parks = metrics.by_type.park.count
+    new_amenity = 1.0 + min(parks / housing, 1.0)
+    unboosted_current = current_labour / metrics.amenity
+
+    (unboosted_current + base_labour * metrics.health_labour_multiplier) * new_amenity
+  end
+
+  defp power_goal_body(0, _supplied, _demanded) do
+    "Start with enough local generation to support the first blocks you plan to add."
+  end
+
+  defp power_goal_body(_node_count, supplied, demanded) do
+    "Local generation supplies #{whole(supplied)} of #{whole(demanded)} demand. Add enough generation to stop relying on imported electricity."
+  end
+
+  defp reserve_goal_body(metrics, %{original_principal: 400.0} = bond, operating_margin) do
+    if metrics.by_type.park.count >= 2 do
+      "Keep both parks and save toward 450 before the next expansion. That funds health care, income and supporting utilities while preserving a 100 reserve. The city projects a #{signed_whole(operating_margin)} operating margin with #{bond.opening_period_remaining} debt-free ticks remaining."
+    else
+      generic_reserve_goal_body(bond, operating_margin)
+    end
+  end
+
+  defp reserve_goal_body(_metrics, bond, operating_margin) do
+    generic_reserve_goal_body(bond, operating_margin)
+  end
+
+  defp generic_reserve_goal_body(bond, operating_margin) do
+    "The city projects a #{signed_whole(operating_margin)} operating margin with #{bond.opening_period_remaining} debt-free ticks remaining. Keep the surplus positive before payments begin."
+  end
+
+  defp opening_guidance?(metrics, bond) do
+    match?(%{legacy: false, defaulted: false}, bond) and
+      Map.get(bond, :opening_period_remaining, 0) > 0 and
+      is_nil(metrics.commercial_bond_offer)
+  end
+
+  defp tightest_unmet_essential(resources) do
+    [:power, :water, :waste, :traffic, :labour]
+    |> Enum.map(&{&1, Map.fetch!(resources, &1)})
+    |> Enum.filter(fn {_resource, stats} -> stats.satisfaction < 1.0 end)
+    |> Enum.min_by(fn {_resource, stats} -> stats.satisfaction end, fn -> nil end)
+  end
+
+  defp humanize(resource), do: resource |> Atom.to_string() |> String.capitalize()
+  defp whole(value), do: value |> Float.round() |> trunc()
+
+  defp signed_whole(value) when value >= 0.0, do: "+#{whole(value)}"
+  defp signed_whole(value), do: "#{whole(value)}"
 
   # Names the escape and prices it. The price is the load-bearing half: "demolish a park"
   # without the 10 does not tell the player whether they can still afford it, and affording
@@ -1027,10 +1280,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end)
   end
 
+  defp planning?(metrics) do
+    case metrics.bond do
+      %{legacy: false, original_principal: principal} = bond when principal > 0.0 ->
+        not Map.get(bond, :started, true)
+
+      _other ->
+        false
+    end
+  end
+
   defp bond_service_status(bond) do
     cond do
       bond_redeemed?(bond) ->
         "Bond redeemed"
+
+      not Map.get(bond, :started, true) ->
+        "Debt service begins after Begin sim"
 
       bond.paused ->
         "Payments paused while the city is stalled"
@@ -1070,6 +1336,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp financing_error(:invalid_issue), do: "Choose one of the three offered bond issues."
   defp financing_error(:not_pristine), do: "This city can no longer authorize an opening issue."
   defp financing_error(:already_financed), do: "This city has already authorized its bond issue."
+  defp financing_error(:already_started), do: "This simulation has already begun."
+
+  defp financing_error(:empty_city),
+    do: "Place at least one block before beginning the simulation."
+
   defp financing_error(:bond_not_issued), do: "No municipal bond has been issued."
   defp financing_error(:legacy_bond), do: "Legacy cities have no redeemable bond."
   defp financing_error(:bond_redeemed), do: "This bond has already been redeemed."
@@ -1285,7 +1556,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             build is refused. Because every construction cost is a whole number,
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
-      <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
+      <p
+        id="metrics-treasury"
+        data-depleting={to_string(@metrics.treasury_delta < 0.0)}
+        class={[
+          @metrics.treasury_delta < 0.0 && "font-semibold text-red-700 dark:text-red-300"
+        ]}
+      >
+        Treasury: {trunc(@metrics.money)}
+      </p>
       <.bond_panel
         :if={@metrics.bond && not @metrics.bond.legacy && not bond_redeemed?(@metrics.bond)}
         bond={@metrics.bond}
@@ -1296,7 +1575,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         bond={@metrics.commercial_bond}
       />
       <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
-        <span>Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick</span>
+        <span>
+          {if planning?(@metrics), do: "Projected purchases", else: "Automatic purchases"}: {Float.round(
+            @metrics.market_spend,
+            1
+          )}/tick
+        </span>
         <span class="ml-1 inline-flex flex-wrap gap-1 align-middle">
           <span
             :for={{resource, purchased} <- @automatic_purchases}
@@ -1738,6 +2022,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp unaffordable_demolition(money) do
     "Not enough money: demolishing costs #{trunc(Node.demolition_cost())}, " <>
       "treasury holds #{trunc(money)}."
+  end
+
+  defp demolition_title(node, metrics) do
+    action =
+      if planning?(metrics),
+        do: "click to undo for a full #{trunc(Node.construction_cost(node.type))} refund",
+        else: "click to demolish"
+
+    "#{node.type} · #{node.status} (#{round(node.health)}%) — #{action}"
   end
 
   defp cell_style(x, y, cell_size) do

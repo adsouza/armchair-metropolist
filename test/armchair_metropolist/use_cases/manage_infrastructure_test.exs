@@ -203,6 +203,21 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert map.money == 0.0
     end
 
+    test "planning undo refunds the full construction cost without requiring cash" do
+      {:ok, bond} = MunicipalBond.new(400.0)
+      planning = %{CityMap.new(40, 30) | municipal_bond: bond, money: 20.0}
+
+      assert {:ok, {placed, _node}} =
+               ManageInfrastructure.place(planning, 1, 1, :park)
+
+      assert placed.money == 0.0
+      assert MunicipalBond.planning?(placed.municipal_bond)
+
+      assert {:ok, {restored, _id}} = ManageInfrastructure.demolish(placed, 1, 1)
+      assert restored.money == 20.0
+      assert restored.nodes == planning.nodes
+    end
+
     test "reports an empty cell before affordability" do
       broke = %{legacy_city(40, 30) | money: 0.0}
 

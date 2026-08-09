@@ -34,8 +34,14 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBondTest do
       refute MunicipalBond.issued?(legacy)
 
       assert MunicipalBond.issued?(issued)
+      assert MunicipalBond.planning?(issued)
       refute MunicipalBond.debt_free?(issued)
       refute MunicipalBond.defaulted?(issued)
+
+      started = MunicipalBond.start(issued, 0)
+      refute MunicipalBond.planning?(started)
+      refute MunicipalBond.quote(issued, 0).started
+      assert MunicipalBond.quote(started, 0).started
 
       assert MunicipalBond.defaulted?(defaulted)
       assert MunicipalBond.debt_free?(redeemed)

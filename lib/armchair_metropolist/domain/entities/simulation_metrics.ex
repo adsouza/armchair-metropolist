@@ -10,6 +10,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           outstanding_principal: float(),
           interest_arrears: float(),
           principal_arrears: float(),
+          started: boolean(),
           redemption_amount: float(),
           opening_period_remaining: non_neg_integer(),
           call_protection_remaining: non_neg_integer(),
@@ -80,6 +81,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           injury_stock: float(),
           disease_stock: float(),
           market_spend: float(),
+          treasury_delta: float(),
           imported_labour_traffic: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
@@ -140,6 +142,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     amenity_labour: 0.0,
     health_labour_multiplier: 1.0,
     market_spend: 0.0,
+    treasury_delta: 0.0,
     imported_labour_traffic: 0.0,
     stalled: false,
     money_ceiling: 0.0,
@@ -165,6 +168,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             injury_stock: 0.0,
             disease_stock: 0.0,
             market_spend: 0.0,
+            treasury_delta: 0.0,
             imported_labour_traffic: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
@@ -202,12 +206,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   travel this way rather than being derived here even though the first two look local: it is
   computed by projecting the city forward with `advance_tick/2`.
 
-  `:market_spend` is the money those automatic purchases consume this tick, and
+  `:market_spend` is the money those automatic purchases consume this tick,
+  `:treasury_delta` is the exact balance movement the next live tick will apply, and
   `:imported_labour_traffic` is the commuter demand created by the labour portion.
   `:commercial_bond` is the live bridge-series quote, while
   `:commercial_bond_offer` is the one-time rescue quote when the city qualifies.
 
-  All seventeen are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  All eighteen are computed by `Domain.Services.SimulationCalculator`, which this module cannot
   call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
   here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
@@ -230,6 +235,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       injury_stock: city_map.injury_stock,
       disease_stock: city_map.disease_stock,
       market_spend: Map.fetch!(derived, :market_spend),
+      treasury_delta: Map.fetch!(derived, :treasury_delta),
       imported_labour_traffic: Map.fetch!(derived, :imported_labour_traffic),
       amenity: Map.fetch!(derived, :amenity),
       amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
@@ -287,7 +293,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   @spec game_over?(t()) :: boolean()
   def game_over?(%__MODULE__{} = metrics),
     do:
-      metrics.bankrupt and is_nil(metrics.commercial_bond_offer) and
+      not opening_planning?(metrics) and metrics.bankrupt and
+        is_nil(metrics.commercial_bond_offer) and
         (metrics.stalled or metrics.insolvent or metrics.financing_locked)
 
   @doc """
@@ -336,6 +343,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   def financing_warning?(%__MODULE__{financing_rescue_window: window}),
     do: window <= @reaction_ticks
+
+  defp opening_planning?(%__MODULE__{bond: bond}),
+    do: match?(%{legacy: false, started: false}, bond)
 
   defp calculate_avg_health([]), do: 0.0
 

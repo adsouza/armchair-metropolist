@@ -174,6 +174,12 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
     %{map | money: max(0.0, map.money - amount)}
   end
 
+  @doc "Add `amount` to the city's treasury."
+  @spec credit(t(), float()) :: t()
+  def credit(map, amount) do
+    %{map | money: map.money + amount}
+  end
+
   @doc "Increment the persistence ordering revision for one completed command or tick."
   @spec increment_revision(t()) :: t()
   def increment_revision(map), do: %{map | revision: map.revision + 1}

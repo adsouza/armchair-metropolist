@@ -161,6 +161,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "credit/2" do
+    test "adds to the treasury" do
+      map = %{CityMap.new(40, 30) | money: 70.0}
+
+      assert CityMap.credit(map, 30.0).money == 100.0
+    end
+  end
+
   describe "reset/1" do
     test "starts a new city on a fresh 2x2 grid, discarding everything else" do
       city =

@@ -39,7 +39,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   #   power    supply 120*0.900 = 108.0        demand 25 + 15 = 40.0        -> 1.0
   #   water    supply 30 + 100*0.517 =  81.7   demand 20 + 3*18 + 12 = 86.0 -> 0.95
   #   waste    supply 40 + 3*8       =  64.0   demand 12 + 6 + 10 = 28.0    -> 1.0
-  #   traffic  supply 20             =  20.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
+  #   traffic  supply 30             =  30.0   demand 3 + 2 + 6 + 6 = 17.0  -> 1.0
   #   labour   supply 1*5.0 * 2.0    =  10.0   demand 1 + 1 + 3*1 = 5.0     -> 1.0
   #
   # The ×2.0 on labour is the park amenity at its cap: 3 parks to 1 residential is a ratio
@@ -90,7 +90,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
                power: 0.0,
                water: 30.0,
                waste: 40.0,
-               traffic: 20.0,
+               traffic: 30.0,
                injuries: 0.0,
                disease: 0.0,
                labour: 0.0,
@@ -318,8 +318,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       # The 80 imported workers add 80 commuter trips to the blocks' own 90 traffic.
       assert stats.traffic.demanded == 170.0
-      assert stats.traffic.deficit == 150.0
-      assert_in_delta stats.traffic.satisfaction, 20.0 / 170.0, 0.001
+      assert stats.traffic.deficit == 140.0
+      assert_in_delta stats.traffic.satisfaction, 30.0 / 170.0, 0.001
       assert Calc.metrics(city).market_spend == 450.0
 
       {next, _delta} = Calc.advance_tick(city)
@@ -386,18 +386,18 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   describe "injuries, disease and hospitals" do
     test "traffic creates injuries only above the healthy capacity threshold" do
       safe = map_with(for(x <- 0..1, do: Node.new(x, 0, :residential)))
-      busy = map_with(for(x <- 0..3, do: Node.new(x, 0, :residential)))
+      busy = map_with(for(x <- 0..4, do: Node.new(x, 0, :residential)))
 
-      assert Calc.healthy_traffic_ratio() == 0.8
+      assert Calc.healthy_traffic_ratio() == 0.9
       assert Calc.resource_stats(safe).injuries.demanded == 0.0
 
       busy_stats = Calc.resource_stats(busy)
-      assert busy_stats.traffic.supplied == 20.0
-      assert busy_stats.traffic.demanded == 24.0
-      assert_in_delta busy_stats.injuries.demanded, 0.8, 0.001
+      assert busy_stats.traffic.supplied == 30.0
+      assert busy_stats.traffic.demanded == 30.0
+      assert_in_delta busy_stats.injuries.demanded, 0.3, 0.001
 
       {next, _delta} = Calc.advance_tick(busy)
-      assert_in_delta next.injury_stock, 0.8, 0.001
+      assert_in_delta next.injury_stock, 0.3, 0.001
     end
 
     test "injuries and disease combine to reduce residential labour" do
@@ -416,17 +416,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta metrics.by_type.residential.actual_capacity.labour, 5.0, 0.001
     end
 
-    test "disease outbreaks recur every thirty ticks and scale with housing" do
+    test "disease outbreaks recur every forty-five ticks and scale with housing" do
       city = map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
 
-      assert Calc.disease_outbreak_interval() == 30
-      assert Calc.resource_stats(%{city | tick: 28}).disease.demanded == 0.0
+      assert Calc.disease_outbreak_interval() == 45
+      assert Calc.resource_stats(%{city | tick: 43}).disease.demanded == 0.0
 
-      outbreak_city = %{city | tick: 29}
+      outbreak_city = %{city | tick: 44}
       assert Calc.resource_stats(outbreak_city).disease.demanded == 4.0
 
       {next, _delta} = Calc.advance_tick(outbreak_city)
-      assert next.tick == 30
+      assert next.tick == 45
       assert next.disease_stock == 4.0
     end
 
@@ -1030,6 +1030,23 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       refute Calc.metrics(damaged).commercial_bond_offer
     end
+
+    test "does not offer the bridge or lock the city during opening planning" do
+      {:ok, bond} = MunicipalBond.new(400.0)
+
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          Node.new(1, 0, :power_plant),
+          Node.new(2, 0, :water_plant)
+        ])
+        |> Map.merge(%{money: 0.0, municipal_bond: bond})
+
+      metrics = Calc.metrics(city)
+
+      refute metrics.commercial_bond_offer
+      refute SimulationMetrics.game_over?(metrics)
+    end
   end
 
   describe "escape" do
@@ -1407,6 +1424,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {next, _delta} = Calc.advance_tick(city)
 
       assert_in_delta metrics.commercial_bond.next_payment, 1.41, 1.0e-9
+      assert_in_delta metrics.treasury_delta, -1.41, 1.0e-9
       assert_in_delta next.money, 98.59, 1.0e-9
       assert_in_delta next.commercial_bond.outstanding_principal, 93.06, 1.0e-9
     end
@@ -1418,6 +1436,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       assert Calc.advance_tick(unissued) == {unissued, %{}}
       assert Calc.advance_tick(unstarted) == {unstarted, %{}}
+      assert Calc.metrics(unissued).treasury_delta == 0.0
+      assert Calc.metrics(unstarted).treasury_delta == 0.0
     end
 
     test "a documented finished city clears a recoverable default" do

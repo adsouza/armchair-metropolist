@@ -28,6 +28,7 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
           outstanding_principal: float(),
           interest_arrears: float(),
           principal_arrears: float(),
+          started: boolean(),
           redemption_amount: float(),
           opening_period_remaining: non_neg_integer(),
           call_protection_remaining: non_neg_integer(),
@@ -64,7 +65,7 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
     |> start(tick)
   end
 
-  @doc "Ticks after first construction before debt service begins."
+  @doc "Ticks after an issue's clock starts before debt service begins."
   @spec opening_period_ticks() :: pos_integer()
   def opening_period_ticks, do: @opening_period_ticks
 
@@ -129,6 +130,11 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
   def issued?(%__MODULE__{original_principal: principal}), do: principal > 0.0
   def issued?(nil), do: false
 
+  @doc "Whether an issued opening bond is still waiting for the player to begin the simulation."
+  @spec planning?(t() | nil) :: boolean()
+  def planning?(%__MODULE__{} = bond), do: issued?(bond) and is_nil(bond.started_at_tick)
+  def planning?(nil), do: false
+
   @spec legacy?(t() | nil) :: boolean()
   def legacy?(%__MODULE__{original_principal: principal}), do: principal == 0.0
   def legacy?(_bond), do: false
@@ -152,7 +158,7 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
     bond.interest_arrears + bond.outstanding_principal
   end
 
-  @doc "Record the first successful construction tick exactly once."
+  @doc "Record when an issue's clock starts, exactly once."
   @spec start(t(), non_neg_integer()) :: t()
   def start(%__MODULE__{started_at_tick: nil} = bond, tick)
       when is_integer(tick) and tick >= 0 do
@@ -185,6 +191,7 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
       outstanding_principal: bond.outstanding_principal,
       interest_arrears: bond.interest_arrears,
       principal_arrears: bond.principal_arrears,
+      started: not is_nil(bond.started_at_tick),
       redemption_amount: redemption_amount(bond),
       opening_period_remaining: opening_period_remaining(bond, tick),
       call_protection_remaining: max(0, @call_protection_ticks - elapsed),

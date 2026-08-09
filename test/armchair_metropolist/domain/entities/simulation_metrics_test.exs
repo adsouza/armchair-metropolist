@@ -74,6 +74,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         amenity_labour: 15.0,
         health_labour_multiplier: 0.6,
         market_spend: 12.0,
+        treasury_delta: -7.5,
         imported_labour_traffic: 7.0,
         stalled: true,
         money_ceiling: 31.0,
@@ -93,6 +94,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity_labour == 15.0
     assert metrics.health_labour_multiplier == 0.6
     assert metrics.market_spend == 12.0
+    assert metrics.treasury_delta == -7.5
     assert metrics.imported_labour_traffic == 7.0
 
     # Every value here is deliberately *not* the struct default — `true` rather than
@@ -142,6 +144,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
           amenity_marginal_labour: 5.0,
           health_labour_multiplier: 0.6,
           market_spend: 0.0,
+          treasury_delta: 0.0,
           imported_labour_traffic: 0.0,
           stalled: false
         )
@@ -321,6 +324,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
                  construction_cost: 40.0,
                  runway_ticks: 6
                }
+             })
+    end
+
+    test "false during recoverable opening planning" do
+      refute SimulationMetrics.game_over?(%SimulationMetrics{
+               insolvent: true,
+               bankrupt: true,
+               financing_locked: true,
+               bond: %{legacy: false, started: false}
              })
     end
   end

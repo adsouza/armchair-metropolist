@@ -29,9 +29,105 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
 
       assert has_element?(view, "#city-grid")
       assert has_element?(view, "#metrics-treasury", "Treasury: 400")
-      assert has_element?(view, "#bond-service-status", "Debt service begins in 20 ticks")
+      assert has_element?(view, "#opening-planning", "Design before the clock starts")
+      assert has_element?(view, "#begin-sim[disabled]")
+      assert has_element?(view, "#bond-service-status", "Debt service begins after Begin sim")
+      assert has_element?(view, "#opening-goal-banner[data-variant=opening_goal] #opening-goal")
+
+      assert has_element?(
+               view,
+               "#opening-planning ~ #simulator-layout #city-column > #opening-goal-banner + #city-grid"
+             )
+
+      assert has_element?(view, "#opening-goal", "Suggested goal 1 of 4")
+      assert has_element?(view, "#opening-goal", "Cover power locally")
       assert has_element?(view, "#reset-city")
       refute has_element?(view, "#bond-issuance")
+    end
+
+    @tag :unissued_city
+    test "opening suggestions advance from power to income, viability, and readiness", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#issue-bond-400") |> render_click()
+
+      place(view, :power_plant, 0, 0)
+      assert has_element?(view, "#opening-goal", "Suggested goal 2 of 4")
+      assert has_element?(view, "#opening-goal", "Establish positive operating income")
+
+      place(view, :commercial, 1, 0)
+      assert has_element?(view, "#opening-goal", "Suggested goal 3 of 4")
+      assert has_element?(view, "#opening-goal", "Establish a local workforce")
+      assert has_element?(view, "#opening-goal", "9 imported workers")
+
+      place(view, :residential, 0, 1)
+      assert has_element?(view, "#opening-goal", "Suggested goal 4 of 4")
+      assert has_element?(view, "#opening-goal", "Review the plan, then begin")
+
+      place(view, :residential, -1, 0)
+      assert has_element?(view, "#opening-goal", "Suggested goal 3 of 4")
+      assert has_element?(view, "#opening-goal", "Make the plan self-funding")
+
+      place(view, :water_plant, -1, 1)
+      assert has_element?(view, "#opening-goal", "Suggested goal 4 of 4")
+      assert has_element?(view, "#opening-goal", "Review the plan, then begin")
+
+      view |> element("#begin-sim") |> render_click()
+      assert has_element?(view, "#opening-goal", "Use the grace period to build a reserve")
+    end
+
+    @tag :unissued_city
+    test "the Balanced opening recommends saving without removing its parks", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#issue-bond-400") |> render_click()
+
+      for {type, x, y} <- [
+            {:residential, 0, 0},
+            {:power_plant, 1, 0},
+            {:transit_hub, 0, 1},
+            {:commercial, 1, 1},
+            {:water_plant, 2, 0},
+            {:residential, 2, 1},
+            {:park, -1, 0},
+            {:park, -1, 1}
+          ] do
+        place(view, type, x, y)
+      end
+
+      view |> element("#begin-sim") |> render_click()
+
+      assert has_element?(view, "#opening-goal", "Keep both parks")
+      assert has_element?(view, "#opening-goal", "save toward 450")
+      assert has_element?(view, "#opening-goal", "preserving a 100 reserve")
+    end
+
+    @tag :unissued_city
+    test "goal 3 keeps a cheap labour import when another house would cost more", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#issue-bond-400") |> render_click()
+
+      for {type, x, y} <- [
+            {:power_plant, 0, 0},
+            {:commercial, 1, 0},
+            {:residential, 0, 1},
+            {:park, -1, 0},
+            {:water_plant, -1, 1}
+          ] do
+        place(view, type, x, y)
+      end
+
+      # This layout imports one worker. Another house would eliminate that purchase but
+      # overrun waste capacity by four, lowering operating margin despite its one income.
+      assert has_element?(
+               view,
+               ~s{#metrics-market [data-market-resource="labour"]},
+               "labour +1.0"
+             )
+
+      assert has_element?(view, "#opening-goal", "Suggested goal 4 of 4")
+      assert has_element?(view, "#opening-goal", "Review the plan, then begin")
+      refute has_element?(view, "#opening-goal", "Establish a local workforce")
     end
 
     @tag :unissued_city
@@ -48,13 +144,40 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
     end
 
     @tag :unissued_city
-    test "the first successful placement starts but does not consume the holiday", %{conn: conn} do
+    test "planning supports repeated full-refund undo and Begin sim starts the holiday", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, ~p"/")
       view |> element("#issue-bond-400") |> render_click()
 
+      for _attempt <- 1..2 do
+        place(view, :park, 0, 0)
+
+        assert has_element?(view, "#metrics-treasury", "Treasury: 380")
+        assert has_element?(view, "#begin-sim:not([disabled])")
+
+        planned_node = view |> element(~s{[phx-click="demolish"][phx-value-x="0"]}) |> render()
+        assert planned_node =~ "full 20 refund"
+
+        view
+        |> element(~s{[phx-click="demolish"][phx-value-x="0"][phx-value-y="0"]})
+        |> render_click()
+
+        assert has_element?(view, "#metrics-treasury", "Treasury: 400")
+        assert has_element?(view, "#begin-sim[disabled]")
+      end
+
       place(view, :residential, 0, 0)
 
+      assert has_element?(view, "#opening-planning")
+      assert has_element?(view, "#bond-service-status", "Debt service begins after Begin sim")
+
+      view |> element("#begin-sim") |> render_click()
+
       assert has_element?(view, "#bond-service-status", "Debt service begins in 20 ticks")
+      refute has_element?(view, "#opening-planning")
+      assert has_element?(view, "#opening-goal", "Cover power locally")
+
       assert {:ok, %{city_map: city}} = CityEngine.snapshot(CityEngine.default_city_id())
       assert city.tick == 0
       assert city.municipal_bond.started_at_tick == 0

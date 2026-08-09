@@ -46,8 +46,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        stock enters through `carried/2` negated, a backlog drives `satisfaction`
        below zero and health decay past `@decay_per_tick` — which is therefore a
        coefficient, not a maximum.
-   13. Traffic above 80% of the city's traffic capacity adds injuries. Every
-       thirtieth tick adds a disease outbreak proportional to the number of
+   13. Traffic above 90% of the city's traffic capacity adds injuries. Every
+       forty-fifth tick adds a disease outbreak proportional to the number of
        residential blocks. The untreated remainder after health-scaled hospital
        capacity becomes the next tick's injury and disease stocks.
 
@@ -72,7 +72,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     power: 0.0,
     water: 30.0,
     waste: 40.0,
-    traffic: 20.0,
+    traffic: 30.0,
     injuries: 0.0,
     disease: 0.0,
     labour: 0.0,
@@ -97,14 +97,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # the unit legible and roughly matches housing's 6 traffic for 5 local workers.
   @imported_labour_traffic_per_unit 1.0
 
-  # Congestion becomes unsafe before the transport network is completely saturated.
-  # Every ten trips above this 80% line add one injury to the stock for treatment.
-  @healthy_traffic_ratio 0.8
+  # Congestion becomes unsafe just before the transport network is completely saturated.
+  # Every ten trips above this 90% line add one injury to the stock for treatment.
+  @healthy_traffic_ratio 0.9
   @injuries_per_excess_traffic 0.1
 
   # Outbreaks are deterministic so a saved city resumes the same simulation and tests
   # can reason about exact ticks. Each residential block contributes two cases.
-  @disease_outbreak_interval 30
+  @disease_outbreak_interval 45
   @disease_per_residential 2.0
 
   # Ten untreated cases across one effective residential block suppress all five of
@@ -359,6 +359,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
 
+    treasury_delta =
+      if stalled or clock_paused?(city_map) do
+        0.0
+      else
+        max(0.0, plan.cash_after_upkeep_and_bond - plan.market_spend) - city_map.money
+      end
+
     derived =
       %{
         amenity: labour_multiplier(nodes),
@@ -366,6 +373,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         amenity_labour: placed_amenity_labour(nodes, health_labour_multiplier),
         health_labour_multiplier: health_labour_multiplier,
         market_spend: plan.market_spend,
+        # The exact movement the next clock pulse will apply. Keeping this beside the
+        # tick plan means the UI does not have to reconstruct debt priority, purchase
+        # limits, or the two conditions that freeze the clock.
+        treasury_delta: treasury_delta,
         imported_labour_traffic:
           Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
         stalled: stalled,
@@ -389,6 +400,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     eligible? =
       is_nil(city_map.commercial_bond) and not is_nil(city_map.municipal_bond) and
+        not MunicipalBond.planning?(city_map.municipal_bond) and
         not MunicipalBond.defaulted?(city_map.municipal_bond) and not stalled and nodes != [] and
         city_map.money < commercial_cost and operating.insolvent and
         operating.escape == {:place, :commercial, commercial_cost} and
@@ -634,9 +646,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   defp clock_paused?(%CityMap{municipal_bond: nil}), do: true
 
-  defp clock_paused?(%CityMap{municipal_bond: bond}) do
-    MunicipalBond.issued?(bond) and is_nil(bond.started_at_tick)
-  end
+  defp clock_paused?(%CityMap{municipal_bond: bond}), do: MunicipalBond.planning?(bond)
 
   # Rated rather than effective: `Node.capacity/1`, not `Node.effective_capacity/1`.
   defp rated_money_capacity(nodes) do

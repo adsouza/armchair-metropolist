@@ -7,18 +7,21 @@ the rules — see [TESTING.md](../TESTING.md).
 
 ## The controls
 
-There are three things to click, and the last two are the same gesture on the same
+There are four things to click, and the middle two are the same gesture on the same
 square — worth knowing, because nothing on screen separates them:
 
 * **click a type in the legend** — selects it for placing;
 * **click an empty cell** — places the currently selected type;
-* **click a placed block** — demolishes it.
+* **click a placed block** — undoes it for a full refund during opening planning, then
+  demolishes it after the simulation begins;
+* **click Begin sim** — ends opening planning and starts the city and bond clocks.
 
-Both of those last two spend money. Placing charges the block's price and is refused
+Placing charges the block's price and is refused
 outright if the treasury will not cover it — the legend dims the rows you cannot afford,
-and a refused click says what it wanted and what you have. Demolishing charges a flat
-fee, which is less than the cheapest block but is not nothing: a city with an empty
-treasury cannot tear anything down either.
+and a refused click says what it wanted and what you have. Before Begin sim, removing a
+planned block restores its entire construction price and can be repeated without limit.
+After Begin sim, demolition charges a flat fee, which is less than the cheapest block but
+is not nothing: a city with an empty treasury cannot tear anything down either.
 
 ## Choose the bond before you build
 
@@ -35,10 +38,19 @@ narrow one-time commercial bridge can become available later; it is described be
 | Generous | 550 | 5.50 | 2.75 | 8.25 | 138.88 | 5.53 |
 <!-- /generated:bonds -->
 
-The first successful placement starts a **20-tick construction-period holiday**. Refused
-placements do not start it. The transitions to ticks 1 through 20 have no debt service;
-the transition to tick 21 takes the first payment. Authorizing the issue does not start
-the clock, so reading the grid is free.
+Authorizing an issue enters **opening planning**. The clock is stopped: there is no upkeep,
+market spending, health change or debt service, and planned blocks can be removed for full
+refunds. Place at least one block, revise the plan as often as needed, then click **Begin
+sim**. That click starts both the simulation and a **20-tick debt-service grace period**.
+The transitions to ticks 1 through 20 have no debt service; the transition to tick 21 takes
+the first payment.
+
+The goal box directly above the city grid acts as an opening coach during this period. Its suggested goals are
+outcomes, not mandatory construction steps: first cover power locally, then establish income,
+then establish an initial local workforce and expand it only when doing so improves operating margin,
+and make sure essential resources and projected purchases leave a positive operating margin.
+Once those checks pass it suggests reviewing the layout and beginning the simulation. A warning,
+default or terminal condition always replaces the suggestion.
 
 After the holiday, each tick reserves operating upkeep first, then bond debt service, then
 automatic imports. The legend's *money* column remains operating income minus upkeep: bond
@@ -73,9 +85,9 @@ arrears before the current principal maturity. Optional redemption at par opens 
 servicing ticks, clears interest arrears first, and then reduces principal. Redeem 25 is a
 convenient partial action, while Redeem all uses the exact current balance.
 
-The simulation clock is the bond clock. A stalled city, an issued city whose first block has
-not been placed, and a city with no viewer advancing it accrue nothing. Closing the page does
-not create offline interest, and missed payments never extend the fixed maturity.
+The simulation clock is the bond clock. A stalled city, a city still in opening planning,
+and a city with no viewer advancing it accrue nothing. Closing the page does not create
+offline interest, and missed payments never extend the fixed maturity.
 
 ### The map grows with the city
 
@@ -92,8 +104,9 @@ The cells themselves shrink as the grid grows, so the whole map stays a comforta
 on screen rather than running off the edge: it reaches close to its full width at 6×6
 and stays around there from then on.
 
-Hover either grid square and the tooltip names the action it will perform — though either
-may name one you cannot afford: a placement when the balance is under that type's cost, a
+Hover either grid square and the tooltip names the action it will perform — full-refund undo
+during opening planning, demolition afterwards. Either ordinary action may name one you
+cannot afford: a placement when the balance is under that type's cost, or a post-start
 demolition when it is under the flat fee. The dimmed legend row and the refused click are
 what tell you. Demolishing
 matters more than it looks: it is the only way to reduce demand, so it is how you get out
@@ -109,7 +122,7 @@ worsens: a decaying `industrial` reads `-90 → -45`, which is less waste remove
 more of the problem. A dash means the type does not touch that resource at all,
 which is different from netting to zero. The totals row gives city-wide demand, supply
 and satisfaction, per tick. Water supply has a free baseline of 30, waste absorption has 40;
-traffic absorption starts at 20. Power, labour and money have no free baseline, deliberately —
+traffic absorption starts at 30. Power, labour and money have no free baseline, deliberately —
 see below. Injuries and disease are persistent stocks shown outside this matrix. When the city is
 short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
@@ -127,27 +140,25 @@ width. Collapsing never takes away the type list, so you can still choose what t
 and it never hides the metrics. The satisfaction figures go with the resource columns, so
 while collapsed the metrics carry a *Tightest* line naming the resource in shortest supply.
 
-### Build a house first
+### Choose an opening approach
 
 **Every block needs staff except the homes the staff live in.** Power plants, water
 plants, transit hubs, hospitals, parks, industry and commerce all draw labour; `residential` is the
 only thing that produces it locally. Imported labour can bridge the gap while the treasury
 lasts, but housing is the cheaper durable source and imported workers add commuter traffic.
 
-Place one residential block before anything else. It supplies the workers the next block
-will need, but with no free power it immediately imports 15 units. Its 1 income offsets
-only one unit of that repeating bill, so build a power plant next rather than waiting.
+Opening planning removes the need for a single click order. A housing-first plan supplies
+workers locally but needs power. A utility-first plan establishes generation but initially
+imports its staff. A commercial-first plan imports 22 power and 8 labour against 30 income,
+so it holds its operating balance level during the grace period while you add local support.
+The baseline 30 traffic can absorb that shop's 9 ordinary trips plus 8 commuters.
 
-This qualifies the "build producers first" rule below rather than replacing it: demand
-still arrives instantly and in full, so a consumer placed before its support still does
-damage. The order is **one house, then producers, then the rest.**
-
-Money gives the same advice for a different reason. `residential` is the cheapest block at
-15 and earns without consuming any money. It does not support itself indefinitely anymore:
-the bond proceeds are buying its power until generation arrives. `commercial` earns thirty
-times as much per tick, but placed by itself it has neither power nor workforce and decays
-while it earns, so its income stops. Spend the whole issue on things that cannot earn and
-the city has no way back — see "Running out of money" below.
+The tradeoffs begin only after Begin sim. Before clicking it, use the projected resource and
+market figures to decide whether the current plan has enough runway to correct its shortages.
+Housing remains the cheapest durable workforce, producers replace recurring imports, and
+commerce supplies the income that makes either approach sustainable. Spend the whole issue
+on things that cannot earn and the city still has no way back — see "Running out of money"
+below.
 
 ### Position does not matter
 
@@ -173,7 +184,7 @@ and takes this section with it.
 
 **The first residential block starts importing power.**
 
-The city starts with free baseline capacity of 30 water, 40 waste disposal and 20 traffic,
+The city starts with free baseline capacity of 30 water, 40 waste disposal and 30 traffic,
 but **zero power**. The market keeps an unsupported house at 100% satisfaction by buying
 all 15 power it needs.
 
@@ -181,8 +192,8 @@ Waste, injuries and disease keep score. Whatever waste you emit past absorption
 stays in the ground as a **Landfill**, shown in the metrics panel, and is added to
 the next tick's load. Injuries and disease likewise persist until hospital capacity
 treats them. Traffic itself still clears at the tick boundary, but it creates injuries
-whenever demand rises above 80% of current traffic capacity; every ten excess trips
-add one injury. Every 30 ticks, an outbreak adds two disease cases per residential
+whenever demand rises above 90% of current traffic capacity; every ten excess trips
+add one injury. Every 45 ticks, an outbreak adds two disease cases per residential
 block. The Metrics panel shows both untreated stocks.
 
 Injuries and disease are not separate legend columns because only hospitals directly change
@@ -200,8 +211,9 @@ pay the market. One residential block draws `power 15` and earns 1, for a net tr
 drain of 14 per tick. Two draw 30 and earn 2, draining 28. Satisfaction still reads 100%
 while those imports are affordable; once the treasury is gone, health begins to fall.
 
-Larger unsupported neighbourhoods exhaust the treasury faster, and four houses already
-exceed the unpurchasable traffic baseline. Imports buy time and can make a deliberately
+Larger unsupported neighbourhoods exhaust the treasury faster. Five houses fill the
+unpurchasable traffic baseline and already cross its healthy 90% threshold, creating
+injuries; a sixth exceeds capacity outright. Imports buy time and can make a deliberately
 import-dependent city viable, but they do not make capacity planning optional.
 
 ## The one rule
@@ -226,7 +238,7 @@ line reports, so it stays on screen with the legend collapsed.
 The useful four-block earner is one house, one power plant, one transit hub and one
 commercial block, 175 in all. The plant supplies power, while the market supplies ten water
 and six missing workers. Those commuters raise traffic demand from 18 to 24, but transit
-raises capacity from 20 to 80. Income 31 minus 5 plant upkeep, 4 transit upkeep, 10 water
+raises capacity from 30 to 90. Income 31 minus 5 plant upkeep, 4 transit upkeep, 10 water
 imports and 6 labour imports leaves **+6 per tick**. It is a good place to pause and save.
 
 Without imports, every possible fourth block needs some additional local capacity:
@@ -246,11 +258,13 @@ Without imports, every possible fourth block needs some additional local capacit
 
 The table is local demand against local plus baseline capacity; the market can cover power,
 water, disposal and labour shortages if the treasury can pay. Traffic remains a hard wall.
-The direct opening therefore builds transit before commerce, then lets that profitable core
-fund the remaining support chain:
+This example includes transit before commerce to bank headroom for later growth, then lets
+that profitable core support the remaining chain. It is a plan, not a required order: during
+opening planning all eight Balanced blocks can be placed, removed and reordered before any
+resource changes:
 
 <!-- generated:opening -->
-| # | place | cost | spent so far | tightest resource | money |
+| # | place | cost | spent so far | tightest resource | projected money/tick |
 |---|---|---|---|---|---|
 | 1 | `residential` | 15 | 15 | power 15/15 | −14 |
 | 2 | `power_plant` | 80 | 95 | water 32/32 | −6 |
@@ -263,13 +277,13 @@ fund the remaining support chain:
 
 Total 300, against the recommended 400 bond issue. The finished city nets +12 per tick. Every stage is fully supplied on all seven physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
 
-| issue | principal | route | measured timing | first payment | total interest |
+| issue | principal | opening plan | reserve when sim begins | first payment | total interest |
 |---|---:|---|---|---:|---:|
-| Lean | 250 | house → commerce → plant → transit, then save and grow | no fixed-gap route; save-and-grow verified | 3.75 | 63.13 |
-| **Balanced · recommended** | **400** | direct opening | up to **4 ticks (4 s)** physically; 3 ticks warning-free | **6.00** | **101.00** |
-| Generous | 550 | direct opening with more reaction time | up to **6 ticks (6 s)** physically; 5 ticks warning-free | 8.25 | 138.88 |
+| Lean | 250 | plan the four-block earning core, begin, then save and grow | 75 | 3.75 | 63.13 |
+| **Balanced · recommended** | **400** | plan all eight blocks, then begin | **100** | **6.00** | **101.00** |
+| Generous | 550 | plan all eight blocks, then begin | 250 | 8.25 | 138.88 |
 
-All three issues have a 20-tick construction holiday, 100 servicing ticks, level principal, and 0.5% interest per servicing tick. The Lean route is different by design: assemble its four-block commercial core revenue-first, before a tick lands, then pause to fund the last four blocks.
+All three issues include an untimed opening-planning phase with full-refund undo. Begin sim starts both the city clock and a 20-tick debt-service grace period; the bond then has 100 servicing ticks, level principal, and 0.5% interest per tick.
 <!-- /generated:opening -->
 
 Read the `tightest resource` column downwards and you can watch the binding constraint
@@ -283,28 +297,38 @@ and automatic purchases: step 1 is 1 income minus 15 imported power, step 2 adds
 5 upkeep and two imported water, and step 3 adds transit's 4. Commerce arrives next and
 reverses the flow to +6.
 
-**Transit goes before the shop.** Without it, the house, plant and shop generate 18 ordinary
-traffic plus 4 commuter traffic against a baseline of 20. Transit turns that immediate
-shortfall into enough headroom for the commercial core and later growth.
+**Transit is early, but no longer mandatory before the shop.** Without it, the house, plant
+and shop generate 18 ordinary traffic plus 4 commuter traffic against a baseline of 30, so
+the three-block core works. Adding transit in the example raises capacity to 90 before later
+housing and support blocks consume that margin.
 
-### If you need longer between clicks
+### When to begin the simulation
 
-The first deadline is reaching commerce at step 4. Before then the first house imports power,
-then the power plant and transit hub run upkeep and water-import deficits. The measured
-physical upper bounds are four ticks for Balanced and six for Generous; use three and five,
-respectively, to keep the rescue warning quiet. Lean must click its
-house, commerce, plant and transit core before a tick lands, then save the entire remaining
-construction budget before continuing. Once
-the four-block core is running, operating cash flow rises, but debt service begins when the
-20-tick holiday ends and must be budgeted separately.
+There is no deadline between planning clicks. Balanced can place the complete eight-block
+opening for 300, revise it freely, and begin with 100 still in reserve. Generous can do the
+same with 250. Lean cannot afford all eight before starting: plan its four-block earning core
+for 175, click Begin sim with 75 in reserve, then let that core fund the remaining support
+chain. Once the clock starts, the 20-tick debt-service grace period is the time to turn any
+remaining imports into durable capacity.
 
 <!-- generated:opening_pace -->
-After step 4, the transit-backed commercial core has +6 of operating cash flow per tick. Debt service is separate: the first Lean, Balanced and Generous payments are 3.75, 6.00 and 8.25. Lean can save at the core; Balanced initially breaks even after debt; Generous should use its larger construction reserve to finish the opening before service starts.
+The four-block commercial core has +6 of operating cash flow per tick. Debt service is separate: Lean can begin at the core, save through its 20-tick grace period, and then cover a first payment of 3.75. Balanced and Generous can plan all eight blocks before beginning; the finished opening's +12 flow covers their first payments of 6.00 and 8.25.
 <!-- /generated:opening_pace -->
 
-Until step 4, watch *Automatic purchases* as well as block prices: the market charge repeats
-every tick. After step 4, the core's +6 flow is what makes a large treasury sustainable
-rather than temporary runway.
+During planning, *Projected purchases* describes what the current plan will need once the
+clock starts; no money moves yet. After Begin sim, the core's +6 flow is what makes a large
+treasury sustainable rather than temporary runway.
+
+### A no-demolition path from Balanced
+
+The two parks in the opening are useful infrastructure, not temporary scaffolding. The intended
+stable route never asks you to remove them: save the opening surplus, then expand utilities,
+income, waste disposal and health care together. The exact checkpoint below is simulated by the
+guide tests rather than estimated by hand.
+
+<!-- generated:balanced_growth -->
+Keep every opening block. Let the finished Balanced opening save until tick 38, when its treasury reaches 451.06, then add `hospital`, `commercial`, `power_plant`, `water_plant`, `industrial` for 350 total. No demolition is required. That leaves a 101.06 operating reserve. The expanded city has +6 of operating cash flow before debt service and traffic 76/90; its hospital clears the periodic health burden while that surplus retires the bond.
+<!-- /generated:balanced_growth -->
 
 ## What a support set can carry
 
@@ -325,7 +349,7 @@ income can pay for them. Two practical consequences:
 **Build producers first.** Demand arrives instantly and in full, so a consumer placed
 before its support starts an import bill on the very next tick. This is subordinate to
 housing, though: a producer placed on an empty grid must buy its staff until housing
-exists, and those imported workers consume traffic capacity. See "Build a house first"
+exists, and those imported workers consume traffic capacity. See "Choose an opening approach"
 above.
 
 **Place one node at a time and watch the panel.** Because the eight resources are
@@ -466,7 +490,7 @@ turn growth into drainage.
 With no free power, an unfunded dead house has no self-healing exception: even one is
 stalled at zero. Money in the bank can change that calculation because market purchases
 count as supply. For example, cutting four dead houses to three costs 10 and leaves demand
-for 45 imported power; if that money remains, traffic is also back under its 20 baseline
+for 45 imported power; if that money remains, traffic is also back under its 30 baseline
 and the clock restarts. That may buy only one
 tick rather than a recovery — if the treasury empties while the city still has no local
 power, it can stall again.
@@ -493,8 +517,8 @@ your ability to act.
 
 The word for the underlying condition is **insolvent**, and it is the same one used above for a
 support set with no commercial block. Insolvency on its own is not a crisis — the documented
-opening sequence is insolvent at its second and third stages, which is exactly what the
-construction-period reserve is for. It becomes fatal only when the treasury can no longer buy
+opening sequence is insolvent at its second and third projected stages, which is exactly what
+the opening reserve is for. It becomes fatal only when the treasury can no longer buy
 the way out.
 
 So the game warns you first. While a city is insolvent and the fix is slipping out of reach,
@@ -522,7 +546,7 @@ Available with no infrastructure placed at all.
 <!-- generated:baseline -->
 | power | water | waste | traffic | injuries | disease | labour | money |
 |---|---|---|---|---|---|---|---|
-| 0 | 30 | 40 | 20 | 0 | 0 | 0 | 0 |
+| 0 | 30 | 40 | 30 | 0 | 0 | 0 | 0 |
 <!-- /generated:baseline -->
 
 ### Per-block effect, scaled by health
@@ -633,9 +657,9 @@ Demolishing anything costs 10, whatever it was. A new city starts with no cash; 
 | health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
 | labour supply, multiplied per park per housing block | **+1 × (parks ÷ housing)** |
 | that multiplier's ceiling, at 1 park per housing block | **×2** |
-| healthy traffic ceiling | **80% of traffic capacity** |
+| healthy traffic ceiling | **90% of traffic capacity** |
 | injuries above that ceiling | **+1 per 10 excess traffic** |
-| disease outbreak | **+2 per residential every 30 ticks** |
+| disease outbreak | **+2 per residential every 45 ticks** |
 | untreated cases that suppress one residential block's labour | **10** |
 | `:online` at | health ≥ 60 |
 | `:degraded` at | health ≥ 20 |

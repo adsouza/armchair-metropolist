@@ -57,12 +57,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     test "wraps the totals footnote and reports the free baselines", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#metrics-panel + #legend-footnote")
-      assert has_element?(view, "#legend-footnote.max-w-xl")
+      assert has_element?(view, "#simulator-layout + #legend-footnote")
+      assert has_element?(view, "#legend-footnote.max-w-5xl")
+      refute has_element?(view, "#legend-and-metrics #legend-footnote")
 
       footnote = view |> element("#legend-footnote") |> render()
       assert footnote =~ "30 water supplied, 40 waste"
-      assert footnote =~ "20 traffic absorbed"
+      assert footnote =~ "30 traffic absorbed"
     end
 
     # Two power plants at 80 each is 160, comfortably inside this legacy fixture's treasury —
@@ -469,6 +470,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       # This suite intentionally seeds a grandfathered city with 500 so legend tests do
       # not depend on a player-facing issue choice.
       assert view |> element("#metrics-treasury") |> render() =~ "Treasury: 500"
+    end
+
+    test "the treasury line turns red only while the next tick depletes it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, %{empty_city_metrics() | treasury_delta: -0.5}})
+      render(view)
+
+      draining = view |> element("#metrics-treasury") |> render()
+      assert draining =~ ~s(data-depleting="true")
+      assert draining =~ "text-red-700"
+      assert draining =~ "dark:text-red-300"
+
+      send(view.pid, {:city_metrics, %{empty_city_metrics() | treasury_delta: 0.0}})
+      render(view)
+
+      steady = view |> element("#metrics-treasury") |> render()
+      assert steady =~ ~s(data-depleting="false")
+      refute steady =~ "text-red-700"
     end
 
     test "the metrics panel shows the landfill, floored", %{conn: conn} do

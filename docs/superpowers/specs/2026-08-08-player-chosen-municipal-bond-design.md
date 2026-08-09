@@ -1029,3 +1029,16 @@ authorizes a bond issue; legacy cities are the only debt-free exception.
 Their 400 was presented and balanced as a grant. Turning an already-spent historical benefit into
 a liability changes saved state without player action and can immediately lock cities whose
 owners never accepted these terms.
+
+## 15. Amendment: opening planning and traffic baseline (2026-08-09)
+
+The opening sequence no longer starts on the first successful placement. Authorizing a bond now
+enters an untimed planning phase: simulation ticks, operating expenses, imports, health changes and
+debt service are paused. Any planned block can be removed without limit for a full construction-cost
+refund. **Begin sim** is enabled once at least one block exists; clicking it starts both the city
+clock and the 20-tick debt-service grace period.
+
+This supersedes the first-placement clock rules and placement-gap requirements above. The guide's
+economic invariant is now that Lean can begin from a durable earning core while Balanced and
+Generous can complete the documented opening during planning. The free traffic baseline is also
+30 rather than 20, giving early layouts more room before congestion becomes harmful.
