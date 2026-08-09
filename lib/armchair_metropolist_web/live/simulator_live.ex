@@ -124,6 +124,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:bond_issues, [400.0, 250.0, 550.0])
       |> assign(:commands_enabled?, connected?(socket))
       |> assign(:legend_detail, true)
+      |> assign(:confirming_reset?, false)
       # False only on the desktop target (see mount/3): a recovery code the desktop
       # cannot use — there is no "elsewhere" to return to it from, and it would
       # change on every launch — is worse than none.
@@ -232,6 +233,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
+  def handle_event("confirm_reset", _params, socket) do
+    {:noreply, assign(socket, :confirming_reset?, true)}
+  end
+
+  def handle_event("cancel_reset", _params, socket) do
+    {:noreply, assign(socket, :confirming_reset?, false)}
+  end
+
   def handle_event("wipe", _params, socket) do
     :ok = CityEngine.reset(socket.assigns.city_id)
 
@@ -240,7 +249,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     # returns, and `handle_info({:city_reset, ...})` below does strictly more: it also
     # resizes the grid. Clearing here too would render one frame at the pre-reset (grown)
     # grid size with an empty stream, before the resize catches up.
-    {:noreply, socket}
+    {:noreply, assign(socket, :confirming_reset?, false)}
   end
 
   def handle_event("toggle_legend_detail", _params, socket) do
@@ -299,6 +308,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply,
      socket
      |> assign_grid(city_map)
+     |> assign(:confirming_reset?, false)
      |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
   end
 
@@ -338,13 +348,58 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           id="reset-city"
           type="button"
           class="btn btn-xs btn-error text-white min-h-6"
-          phx-click="wipe"
-          data-confirm="Discard this city and authorize a new municipal bond issue? This cannot be undone."
+          phx-click="confirm_reset"
           title="Discard this city and return to bond authorization"
         >
           Reset
         </button>
       </:actions>
+
+      <div
+        :if={@confirming_reset?}
+        id="reset-confirmation"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reset-confirmation-title"
+        class="fixed inset-0 z-50 grid place-items-center bg-base-content/40 p-4 backdrop-blur-sm"
+      >
+        <section class="w-full max-w-md rounded-3xl border border-base-300 bg-base-100 p-6 shadow-2xl sm:p-7">
+          <div class="flex items-start gap-4">
+            <div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-error/10 text-error">
+              <.icon name="hero-arrow-path" class="size-6" />
+            </div>
+            <div>
+              <h2 id="reset-confirmation-title" class="text-xl font-semibold tracking-tight">
+                Reset this city?
+              </h2>
+              <p class="mt-2 text-sm leading-relaxed opacity-70">
+                This permanently discards the city and returns you to municipal bond authorization.
+                It cannot be undone.
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              id="cancel-reset"
+              type="button"
+              class="btn btn-ghost"
+              phx-click="cancel_reset"
+              autofocus
+            >
+              Keep city
+            </button>
+            <button
+              id="confirm-reset"
+              type="button"
+              class="btn btn-error text-white"
+              phx-click="wipe"
+            >
+              Discard and reset
+            </button>
+          </div>
+        </section>
+      </div>
 
       <%!-- The chrome in Layouts.app already shows the wordmark, so rendering it
             again here just duplicated it. Kept as sr-only rather than deleted:
