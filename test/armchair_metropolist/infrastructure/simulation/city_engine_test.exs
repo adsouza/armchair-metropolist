@@ -781,6 +781,29 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert named == ["injuries", "traffic", "waste", "labour", "power", "water"]
     end
 
+    test "omits disease from the notification when the city has a hospital", %{
+      city_id: city_id
+    } do
+      city =
+        legacy_city(40, 30)
+        |> CityMap.put_node(Node.new(20, 0, :hospital))
+        |> Map.put(:disease_stock, 100.0)
+        |> Map.put(:money, 10_000.0)
+
+      StubSnapshotRepository.set_initial({:ok, {0, city}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      # The stored disease stock is already critical at hydration. Suppressing it must
+      # also keep the notification edge armed so a newly created, actionable deficit is
+      # still reported instead of being mistaken for the old disease condition.
+      starve(city_id)
+      broadcast_tick(1)
+
+      assert_receive {:notified, "City resources in deficit", body}, 1_000
+      assert body =~ "traffic"
+      refute body =~ "disease"
+    end
+
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
       StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})

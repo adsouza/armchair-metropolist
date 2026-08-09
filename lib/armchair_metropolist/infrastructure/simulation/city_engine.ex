@@ -708,7 +708,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   end
 
   defp critical_resources(metrics) do
+    hospital_present? =
+      case Map.get(metrics.by_type, :hospital) do
+        %{count: count} -> count > 0
+        _missing -> false
+      end
+
     metrics.resources
+    # Disease remains in metrics and keeps affecting labour. It is omitted only from
+    # the native deficit notification when the player has already built its sole
+    # remedy; repeating the stock there provides no additional action to take.
+    |> Enum.reject(fn {resource, _stats} -> resource == :disease and hospital_present? end)
     |> Enum.filter(fn {_resource, stats} -> stats.satisfaction < @critical_satisfaction end)
     # Power and labour can now land on the same satisfaction. Include the resource name
     # so notification order does not depend on the map's enumeration order.
