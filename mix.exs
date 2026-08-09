@@ -4,7 +4,7 @@ defmodule ArmchairMetropolist.MixProject do
   def project do
     [
       app: :armchair_metropolist,
-      version: "0.4.0",
+      version: "0.5.0",
       # 1.19.3, and the patch number is load-bearing. `config/runtime.exs` uses the
       # `E` regex modifier on its live-reload patterns — `:export`, which Elixir
       # added in **1.19.3** exactly (see `Regex` docs, "since Elixir 1.19.3"). A
