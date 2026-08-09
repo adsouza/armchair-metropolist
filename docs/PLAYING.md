@@ -197,6 +197,8 @@ above that moving threshold creates one injury per ten excess trips. With one re
 outbreaks occur every 49 ticks; every additional
 residential block shortens that interval by three ticks, down to a 10-tick minimum. Each outbreak
 adds two disease cases per residential block. The Metrics panel shows both untreated stocks.
+The first time either stock becomes positive during a play session, the goal box explains the
+cause and response. It stays out of the way when the city already has a hospital.
 
 Injuries and disease are not separate legend columns because only hospitals directly change
 them. The hospital row instead states the per-block treatment rate, while Metrics shows both

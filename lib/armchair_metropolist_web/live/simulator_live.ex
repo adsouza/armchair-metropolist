@@ -132,6 +132,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:commands_enabled?, connected?(socket))
       |> assign(:legend_detail, true)
       |> assign(:confirming_reset?, false)
+      |> assign(:health_tutorial, nil)
+      |> assign(:health_tutorial_seen, initial_health_tutorial_seen(metrics))
       # False only on the desktop target (see mount/3): a recovery code the desktop
       # cannot use — there is no "elsewhere" to return to it from, and it would
       # change on every launch — is worse than none.
@@ -277,6 +279,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply, assign(socket, :legend_detail, not socket.assigns.legend_detail)}
   end
 
+  def handle_event("dismiss_health_tutorial", _params, socket) do
+    {:noreply, assign(socket, :health_tutorial, nil)}
+  end
+
   defp redeem_bond(socket, action) do
     case CityEngine.redeem_municipal_bond(socket.assigns.city_id, action) do
       :ok -> {:noreply, socket}
@@ -293,7 +299,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   def handle_info({:city_metrics, metrics}, socket) do
-    {:noreply, assign(socket, :metrics, metrics)}
+    {:noreply, assign_metrics(socket, metrics)}
   end
 
   def handle_info({:city_node_placed, node}, socket) do
@@ -330,6 +336,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
      socket
      |> assign_grid(city_map)
      |> assign(:confirming_reset?, false)
+     |> assign(:health_tutorial, nil)
+     |> assign(:health_tutorial_seen, MapSet.new())
      |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
   end
 
@@ -462,7 +470,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             resources or type names changed; content-driven wrapping cannot. --%>
         <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
           <div id="city-column" class="shrink-0">
-            <.opening_goal_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+            <.opening_goal_banner
+              metrics={@metrics}
+              tutorial={@health_tutorial}
+              width={@width}
+              cell_size={@cell_size}
+            />
 
             <div
               id="city-grid"
@@ -1001,24 +1014,43 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   attr :metrics, :map, required: true
+  attr :tutorial, :map, default: nil
   attr :width, :integer, required: true
   attr :cell_size, :integer, required: true
 
   defp opening_goal_banner(assigns) do
-    assigns = assign(assigns, :goal, opening_goal(assigns.metrics))
+    assigns =
+      assigns
+      |> assign(:goal, assigns.tutorial || opening_goal(assigns.metrics))
+      |> assign(:variant, if(assigns.tutorial, do: "health_tutorial", else: "opening_goal"))
 
     ~H"""
     <div
       :if={@goal}
       id="opening-goal-banner"
-      data-variant="opening_goal"
+      data-variant={@variant}
       class="mb-3 box-border max-w-full rounded-lg border border-l-4 border-primary bg-primary/5 px-4 py-3"
       style={"width: #{@width * @cell_size}px"}
     >
       <div id="opening-goal">
-        <p class="text-xs font-bold uppercase tracking-[0.18em] text-primary">
-          Suggested goal {@goal.step} of 4
-        </p>
+        <div class="flex items-start justify-between gap-3">
+          <p class="text-xs font-bold uppercase tracking-[0.18em] text-primary">
+            <%= if @tutorial do %>
+              City health
+            <% else %>
+              Suggested goal {@goal.step} of 4
+            <% end %>
+          </p>
+          <button
+            :if={@tutorial}
+            id="dismiss-health-tutorial"
+            type="button"
+            class="btn btn-ghost btn-xs -mr-2 -mt-1 shrink-0"
+            phx-click="dismiss_health_tutorial"
+          >
+            Got it
+          </button>
+        </div>
         <p class="mt-0.5 font-semibold">{@goal.title}</p>
         <p class="mt-1 text-xs leading-relaxed opacity-80">{@goal.body}</p>
       </div>
@@ -1102,6 +1134,90 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   defp opening_goal(_metrics), do: nil
+
+  # These are session-scoped teaching prompts rather than simulation state. Persisting
+  # tutorial acknowledgement in CityMap would turn UI state into a snapshot-compatibility
+  # concern. A stock already above zero at mount is treated as previously seen, so reloads
+  # do not replay the lesson; resetting the city clears the session flags with the stocks.
+  defp initial_health_tutorial_seen(metrics) do
+    [:injuries, :disease]
+    |> Enum.filter(&(health_stock(metrics, &1) > 0.0))
+    |> MapSet.new()
+  end
+
+  defp assign_metrics(socket, metrics) do
+    previous = socket.assigns.metrics
+    seen = socket.assigns.health_tutorial_seen
+
+    newly_positive =
+      Enum.filter([:injuries, :disease], fn topic ->
+        not MapSet.member?(seen, topic) and health_stock(previous, topic) <= 0.0 and
+          health_stock(metrics, topic) > 0.0
+      end)
+
+    seen = Enum.reduce(newly_positive, seen, &MapSet.put(&2, &1))
+
+    tutorial =
+      cond do
+        hospital_present?(metrics) ->
+          nil
+
+        newly_positive == [] ->
+          socket.assigns.health_tutorial
+
+        true ->
+          merge_health_tutorial(socket.assigns.health_tutorial, newly_positive)
+      end
+
+    socket
+    |> assign(:metrics, metrics)
+    |> assign(:health_tutorial, tutorial)
+    |> assign(:health_tutorial_seen, seen)
+  end
+
+  defp health_stock(metrics, :injuries), do: metrics.injury_stock
+  defp health_stock(metrics, :disease), do: metrics.disease_stock
+
+  defp hospital_present?(metrics) do
+    case Map.get(metrics.by_type, :hospital) do
+      %{count: count} -> count > 0
+      _missing -> false
+    end
+  end
+
+  defp merge_health_tutorial(nil, newly_positive), do: health_tutorial(newly_positive)
+
+  defp merge_health_tutorial(tutorial, newly_positive) do
+    topics = Enum.filter([:injuries, :disease], &(&1 in tutorial.topics or &1 in newly_positive))
+    health_tutorial(topics)
+  end
+
+  defp health_tutorial([:injuries]) do
+    %{
+      topics: [:injuries],
+      title: "Why injuries appeared",
+      body:
+        "Traffic crossed its healthy threshold, which falls from 100% toward 80% of capacity as the network fills. Every ten trips above that threshold add one injury. Add transit capacity or reduce traffic; a healthy hospital treats ten injuries per tick."
+    }
+  end
+
+  defp health_tutorial([:disease]) do
+    %{
+      topics: [:disease],
+      title: "Why disease appeared",
+      body:
+        "A scheduled outbreak added disease. Outbreaks become larger and more frequent as residential blocks increase. A healthy hospital treats ten disease cases per tick; untreated cases persist and suppress local labour."
+    }
+  end
+
+  defp health_tutorial([:injuries, :disease]) do
+    %{
+      topics: [:injuries, :disease],
+      title: "Why health problems appeared",
+      body:
+        "Traffic above its utilization-sensitive healthy threshold added injuries, while a scheduled residential outbreak added disease. Add transit capacity or reduce traffic to prevent injuries; healthy hospitals treat ten injuries and ten disease cases per tick."
+    }
+  end
 
   # Local labour is not automatically cheaper labour. A new house also adds power, water,
   # waste and traffic loads plus one unit of income. Recommend it only when those recurring

@@ -521,6 +521,51 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert view |> element("#metrics-disease") |> render() =~ "Disease: 12.0"
     end
 
+    test "the first injury explains traffic pressure and can be dismissed", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      injured = %{empty_city_metrics() | injury_stock: 0.6}
+
+      send(view.pid, {:city_metrics, injured})
+
+      assert has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+      assert has_element?(view, "#opening-goal", "Why injuries appeared")
+      assert has_element?(view, "#opening-goal", "Traffic crossed its healthy threshold")
+      assert has_element?(view, "#opening-goal", "Add transit capacity or reduce traffic")
+
+      view |> element("#dismiss-health-tutorial") |> render_click()
+      refute has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+
+      send(view.pid, {:city_metrics, empty_city_metrics()})
+      render(view)
+      send(view.pid, {:city_metrics, injured})
+
+      refute has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+    end
+
+    test "the first disease case explains outbreaks and treatment", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(view.pid, {:city_metrics, %{empty_city_metrics() | disease_stock: 4.0}})
+
+      assert has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+      assert has_element?(view, "#opening-goal", "Why disease appeared")
+      assert has_element?(view, "#opening-goal", "scheduled outbreak")
+      assert has_element?(view, "#opening-goal", "healthy hospital treats ten disease cases")
+    end
+
+    test "an existing hospital suppresses the first health tutorial", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      metrics =
+        empty_city_metrics()
+        |> put_hospital_count(1)
+        |> Map.put(:injury_stock, 0.6)
+
+      send(view.pid, {:city_metrics, metrics})
+
+      refute has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+    end
+
     test "a negative satisfaction renders as 0%, not as a negative percentage",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -929,6 +974,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
   defp empty_city_metrics do
     %{SimulationMetrics.build(legacy_city(40, 30), %{}) | bond: %{legacy: true}}
+  end
+
+  defp put_hospital_count(metrics, count) do
+    hospital = metrics.by_type |> Map.fetch!(:hospital) |> Map.put(:count, count)
+    %{metrics | by_type: Map.put(metrics.by_type, :hospital, hospital)}
   end
 
   # Waste supplied 40 against demand 50 with a 60 backlog: available -20 and
