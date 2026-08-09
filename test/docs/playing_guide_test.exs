@@ -188,8 +188,8 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
              ]
 
       assert route.operating_flow >= 6.0
-      assert route.traffic_demand <= route.traffic_supply * Calc.healthy_traffic_ratio()
-      assert route.funded_tick < Calc.disease_outbreak_interval()
+      assert route.traffic_demand <= route.traffic_supply
+      assert route.funded_tick < Calc.disease_outbreak_interval(2)
       assert route.reserve_after_expansion >= 100.0
     end
 

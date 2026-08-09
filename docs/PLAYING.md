@@ -191,10 +191,12 @@ all 15 power it needs.
 Waste, injuries and disease keep score. Whatever waste you emit past absorption
 stays in the ground as a **Landfill**, shown in the metrics panel, and is added to
 the next tick's load. Injuries and disease likewise persist until hospital capacity
-treats them. Traffic itself still clears at the tick boundary, but it creates injuries
-whenever demand rises above 90% of current traffic capacity; every ten excess trips
-add one injury. Every 45 ticks, an outbreak adds two disease cases per residential
-block. The Metrics panel shows both untreated stocks.
+treats them. Traffic itself still clears at the tick boundary, but its healthy threshold falls
+linearly from 100% of available capacity at zero utilization to 80% at full utilization. Demand
+above that moving threshold creates one injury per ten excess trips. With one residential block,
+outbreaks occur every 49 ticks; every additional
+residential block shortens that interval by three ticks, down to a 10-tick minimum. Each outbreak
+adds two disease cases per residential block. The Metrics panel shows both untreated stocks.
 
 Injuries and disease are not separate legend columns because only hospitals directly change
 them. The hospital row instead states the per-block treatment rate, while Metrics shows both
@@ -212,7 +214,7 @@ drain of 14 per tick. Two draw 30 and earn 2, draining 28. Satisfaction still re
 while those imports are affordable; once the treasury is gone, health begins to fall.
 
 Larger unsupported neighbourhoods exhaust the treasury faster. Five houses fill the
-unpurchasable traffic baseline and already cross its healthy 90% threshold, creating
+unpurchasable traffic baseline and cross its dynamically lowered healthy threshold, creating
 injuries; a sixth exceeds capacity outright. Imports buy time and can make a deliberately
 import-dependent city viable, but they do not make capacity planning optional.
 
@@ -657,9 +659,9 @@ Demolishing anything costs 10, whatever it was. A new city starts with no cash; 
 | health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
 | labour supply, multiplied per park per housing block | **+1 × (parks ÷ housing)** |
 | that multiplier's ceiling, at 1 park per housing block | **×2** |
-| healthy traffic ceiling | **90% of traffic capacity** |
+| healthy traffic ceiling | **100% at no utilization, falling linearly to 80% at full utilization** |
 | injuries above that ceiling | **+1 per 10 excess traffic** |
-| disease outbreak | **+2 per residential every 45 ticks** |
+| disease outbreak | **+2 per residential; every 49 ticks with one home, 3 ticks sooner per additional home (minimum 10)** |
 | untreated cases that suppress one residential block's labour | **10** |
 | `:online` at | health ≥ 60 |
 | `:degraded` at | health ≥ 20 |

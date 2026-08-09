@@ -46,10 +46,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        stock enters through `carried/2` negated, a backlog drives `satisfaction`
        below zero and health decay past `@decay_per_tick` — which is therefore a
        coefficient, not a maximum.
-   13. Traffic above 90% of the city's traffic capacity adds injuries. Every
-       forty-fifth tick adds a disease outbreak proportional to the number of
-       residential blocks. The untreated remainder after health-scaled hospital
-       capacity becomes the next tick's injury and disease stocks.
+   13. Traffic's healthy threshold falls linearly from 100% of available capacity at
+       zero utilization to 80% at full utilization. Demand above that moving threshold
+       adds injuries. Disease outbreaks begin every 49 ticks with one residential block,
+       then arrive three ticks sooner for each additional block down to a 10-tick interval. Each
+       outbreak is also proportional to the number of residential blocks. The
+       untreated remainder after health-scaled hospital capacity becomes the next
+       tick's injury and disease stocks.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -97,14 +100,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # the unit legible and roughly matches housing's 6 traffic for 5 local workers.
   @imported_labour_traffic_per_unit 1.0
 
-  # Congestion becomes unsafe just before the transport network is completely saturated.
-  # Every ten trips above this 90% line add one injury to the stock for treatment.
-  @healthy_traffic_ratio 0.9
+  # Congestion becomes progressively less safe as the network fills. The healthy share
+  # of available capacity slides linearly from 100% at zero utilization to 80% at full
+  # utilization, then stays at 80% beyond capacity. Every ten trips above that moving
+  # threshold add one injury to the stock for treatment.
+  @initial_healthy_traffic_ratio 1.0
+  @minimum_healthy_traffic_ratio 0.8
   @injuries_per_excess_traffic 0.1
 
   # Outbreaks are deterministic so a saved city resumes the same simulation and tests
-  # can reason about exact ticks. Each residential block contributes two cases.
-  @disease_outbreak_interval 45
+  # can reason about exact ticks. One home retains a forgiving 49-tick opening cadence;
+  # every additional home shortens it by three ticks until the 10-tick floor. Each
+  # residential block also contributes two cases, so denser cities face both more frequent
+  # and larger outbreaks.
+  @base_disease_outbreak_interval 49
+  @disease_outbreak_interval_step 3
+  @minimum_disease_outbreak_interval 10
   @disease_per_residential 2.0
 
   # Ten untreated cases across one effective residential block suppress all five of
@@ -174,13 +185,35 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec imported_labour_traffic_per_unit() :: float()
   def imported_labour_traffic_per_unit, do: @imported_labour_traffic_per_unit
 
-  @doc "Share of traffic capacity that remains within the healthy range."
-  @spec healthy_traffic_ratio() :: float()
-  def healthy_traffic_ratio, do: @healthy_traffic_ratio
+  @doc "Healthy share of capacity at zero traffic utilization."
+  @spec initial_healthy_traffic_ratio() :: float()
+  def initial_healthy_traffic_ratio, do: @initial_healthy_traffic_ratio
 
-  @doc "Number of ticks between deterministic disease outbreaks."
-  @spec disease_outbreak_interval() :: pos_integer()
-  def disease_outbreak_interval, do: @disease_outbreak_interval
+  @doc "Lowest healthy share of capacity, reached at full traffic utilization."
+  @spec minimum_healthy_traffic_ratio() :: float()
+  def minimum_healthy_traffic_ratio, do: @minimum_healthy_traffic_ratio
+
+  @doc "Healthy share of available capacity at the given traffic demand and capacity."
+  @spec healthy_traffic_ratio(number(), number()) :: float()
+  def healthy_traffic_ratio(demanded, capacity) do
+    utilization =
+      cond do
+        demanded <= 0.0 -> 0.0
+        capacity <= 0.0 -> 1.0
+        true -> (demanded / capacity) |> max(0.0) |> min(1.0)
+      end
+
+    range = @initial_healthy_traffic_ratio - @minimum_healthy_traffic_ratio
+    @initial_healthy_traffic_ratio - range * utilization
+  end
+
+  @doc "Number of ticks between deterministic disease outbreaks at the given housing count."
+  @spec disease_outbreak_interval(non_neg_integer()) :: pos_integer()
+  def disease_outbreak_interval(residential_count) do
+    reduction = max(residential_count - 1, 0) * @disease_outbreak_interval_step
+
+    max(@minimum_disease_outbreak_interval, @base_disease_outbreak_interval - reduction)
+  end
 
   @doc "Injuries added per unit of traffic above the healthy threshold."
   @spec injuries_per_excess_traffic() :: float()
@@ -852,10 +885,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # visible as demand in the legend instead of reading 0/0 and 100% supplied.
   defp add_health_burden_demand(stats, city_map) do
     traffic = Map.fetch!(stats, :traffic)
+    traffic_capacity = traffic.supplied + traffic.carried
+    healthy_traffic_ratio = healthy_traffic_ratio(traffic.demanded, traffic_capacity)
 
     injury_demand =
       city_map.injury_stock +
-        max(0.0, traffic.demanded - traffic.supplied * @healthy_traffic_ratio) *
+        max(0.0, traffic.demanded - traffic_capacity * healthy_traffic_ratio) *
           @injuries_per_excess_traffic
 
     disease_demand = city_map.disease_stock + disease_outbreak(city_map)
@@ -866,11 +901,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   defp disease_outbreak(city_map) do
-    if rem(city_map.tick + 1, @disease_outbreak_interval) == 0 do
+    residential_count =
       city_map.nodes
       |> Map.values()
       |> Enum.count(&(&1.type == :residential))
-      |> Kernel.*(@disease_per_residential)
+
+    interval = disease_outbreak_interval(residential_count)
+
+    if residential_count > 0 and rem(city_map.tick + 1, interval) == 0 do
+      residential_count * @disease_per_residential
     else
       0.0
     end

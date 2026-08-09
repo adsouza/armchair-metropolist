@@ -628,55 +628,44 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 }
               }
             </script>
-
-            <%!-- The whole address, not the bare code. The code alone told a player what
-                their city was called without telling them what to do with it — the route
-                that accepts it (`/c/:code`) appeared nowhere on the page, so the only way
-                to use the thing on offer was to guess it.
-
-                `break-all` and the two-line split are for the sidebar, not for looks:
-                `<aside>` is `min-w-fit`, so any unbreakable token it contains becomes a
-                floor under the sidebar's width, which is why the URL is allowed to break
-                mid-token and why it is not sharing a line with the sentence above it.
-
-                What `break-all` does *not* do is remove this block's influence on the
-                sidebar's intrinsic width: it lowers min-content, not max-content.
-                Measured 2026-08-06, the first line is 359px; the URL is 332px at the dev
-                host and 506px at a production-length one, at which point it takes over.
-                An earlier version of this comment claimed the line "has never been what
-                decides that width", comparing the aside's *min*-content (~1020px, set by
-                the expanded matrix) against these figures. That was the wrong box. --%>
-            <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
-              <p>This city lives in this browser. To open it somewhere else, go to:</p>
-              <p>
-                <a href={~p"/c/#{@city_id}"} class="font-mono underline break-all">
-                  {url(~p"/c/#{@city_id}")}
-                </a>
-              </p>
-            </div>
           </aside>
         </div>
 
         <%!-- Supporting detail belongs after the entire interactive layout, not inside the
-              responsive legend/metrics row. Inside that row it became a third column beside
-              Metrics whenever the sidebar wrapped below the grid, and its long copy dictated
-              the sidebar's width. Kept conditional with the detailed totals it explains. --%>
-        <p
-          :if={@legend_detail}
+              responsive legend/metrics row. `max-w-3xl` is 768px, the same ceiling as the
+              growing city grid, so neither this copy nor the re-entry URL can widen the page.
+              The address leads because it applies to the whole city; the resource explanation
+              remains conditional with the detailed totals it explains. --%>
+        <section
           id="legend-footnote"
-          class="mt-4 max-w-5xl text-xs leading-relaxed opacity-60"
+          class="mt-4 max-w-3xl space-y-3"
         >
-          Totals include free capacity belonging to no type: 30 water supplied, 40 waste
-          absorbed and 30 traffic absorbed. Power, labour and money have no free baseline.
-          Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
-          the hospital row shows its treatment rate. Traffic above 90% of capacity creates
-          injuries, and every 45 ticks a residential-scaled disease outbreak occurs. Labour's
-          total includes park amenity and the health-burden penalty; park's own row carries its
-          amenity. Shortfalls in power, water, waste disposal and labour are bought automatically
-          for 1 money per unit while the treasury can pay; purchased units count toward supplied
-          totals. Each imported labour unit adds one traffic demand, and traffic itself cannot be
-          bought.
-        </p>
+          <%!-- The whole address, not the bare code. The code alone would name the city
+                without telling a player how to open it. Keeping the URL breakable prevents a
+                production-length host from overflowing the grid-width footnote. --%>
+          <div :if={@show_reentry?} id="city-reentry" class="text-xs opacity-70">
+            <p>This city lives in this browser. To open it somewhere else, go to:</p>
+            <p>
+              <a href={~p"/c/#{@city_id}"} class="break-all font-mono underline">
+                {url(~p"/c/#{@city_id}")}
+              </a>
+            </p>
+          </div>
+
+          <p :if={@legend_detail} class="text-xs leading-relaxed opacity-60">
+            Totals include free capacity belonging to no type: 30 water supplied, 40 waste
+            absorbed and 30 traffic absorbed. Power, labour and money have no free baseline.
+            Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
+            the hospital row shows its treatment rate. Traffic's healthy threshold falls from 100%
+            of capacity at zero utilization to 80% at full utilization; demand above it creates
+            injuries. Disease outbreaks begin every 49 ticks with one residential block and arrive
+            three ticks sooner per additional block, down to every 10 ticks. Labour's total includes
+            park amenity and the health-burden penalty; park's own row carries its amenity. Shortfalls
+            in power, water, waste disposal and labour are bought automatically for 1 money per unit
+            while the treasury can pay; purchased units count toward supplied totals. Each imported
+            labour unit adds one traffic demand, and traffic itself cannot be bought.
+          </p>
+        </section>
       </div>
     </Layouts.app>
     """

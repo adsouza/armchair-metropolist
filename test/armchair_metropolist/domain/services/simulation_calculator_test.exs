@@ -384,20 +384,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "injuries, disease and hospitals" do
-    test "traffic creates injuries only above the healthy capacity threshold" do
+    test "traffic lowers its healthy threshold from one hundred to eighty percent" do
       safe = map_with(for(x <- 0..1, do: Node.new(x, 0, :residential)))
       busy = map_with(for(x <- 0..4, do: Node.new(x, 0, :residential)))
 
-      assert Calc.healthy_traffic_ratio() == 0.9
+      assert Calc.initial_healthy_traffic_ratio() == 1.0
+      assert Calc.minimum_healthy_traffic_ratio() == 0.8
+      assert_in_delta Calc.healthy_traffic_ratio(0.0, 30.0), 1.0, 0.001
+      assert_in_delta Calc.healthy_traffic_ratio(15.0, 30.0), 0.9, 0.001
+      assert_in_delta Calc.healthy_traffic_ratio(30.0, 30.0), 0.8, 0.001
+      assert_in_delta Calc.healthy_traffic_ratio(45.0, 30.0), 0.8, 0.001
       assert Calc.resource_stats(safe).injuries.demanded == 0.0
 
       busy_stats = Calc.resource_stats(busy)
       assert busy_stats.traffic.supplied == 30.0
       assert busy_stats.traffic.demanded == 30.0
-      assert_in_delta busy_stats.injuries.demanded, 0.3, 0.001
+      assert_in_delta busy_stats.injuries.demanded, 0.6, 0.001
 
       {next, _delta} = Calc.advance_tick(busy)
-      assert_in_delta next.injury_stock, 0.3, 0.001
+      assert_in_delta next.injury_stock, 0.6, 0.001
     end
 
     test "injuries and disease combine to reduce residential labour" do
@@ -416,17 +421,29 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert_in_delta metrics.by_type.residential.actual_capacity.labour, 5.0, 0.001
     end
 
-    test "disease outbreaks recur every forty-five ticks and scale with housing" do
-      city = map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
+    test "disease outbreaks become more frequent as housing increases" do
+      one_home = map_with([Node.new(0, 0, :residential)])
+      two_homes = CityMap.put_node(one_home, Node.new(1, 0, :residential))
+      seven_homes = map_with(for(x <- 0..6, do: Node.new(x, 0, :residential)))
 
-      assert Calc.disease_outbreak_interval() == 45
-      assert Calc.resource_stats(%{city | tick: 43}).disease.demanded == 0.0
+      assert Calc.disease_outbreak_interval(0) == 49
+      assert Calc.disease_outbreak_interval(1) == 49
+      assert Calc.disease_outbreak_interval(2) == 46
+      assert Calc.disease_outbreak_interval(7) == 31
+      assert Calc.disease_outbreak_interval(13) == 13
+      assert Calc.disease_outbreak_interval(14) == 10
+      assert Calc.disease_outbreak_interval(20) == 10
 
-      outbreak_city = %{city | tick: 44}
+      assert Calc.resource_stats(%{one_home | tick: 47}).disease.demanded == 0.0
+      assert Calc.resource_stats(%{one_home | tick: 48}).disease.demanded == 2.0
+      assert Calc.resource_stats(%{two_homes | tick: 44}).disease.demanded == 0.0
+
+      outbreak_city = %{two_homes | tick: 45}
       assert Calc.resource_stats(outbreak_city).disease.demanded == 4.0
+      assert Calc.resource_stats(%{seven_homes | tick: 30}).disease.demanded == 14.0
 
       {next, _delta} = Calc.advance_tick(outbreak_city)
-      assert next.tick == 45
+      assert next.tick == 46
       assert next.disease_stock == 4.0
     end
 

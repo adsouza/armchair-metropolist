@@ -58,7 +58,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#simulator-layout + #legend-footnote")
-      assert has_element?(view, "#legend-footnote.max-w-5xl")
+      assert has_element?(view, "#legend-footnote.max-w-3xl")
+      assert has_element?(view, "#legend-footnote > #city-reentry")
+      refute has_element?(view, "#simulator-layout #city-reentry")
       refute has_element?(view, "#legend-and-metrics #legend-footnote")
 
       footnote = view |> element("#legend-footnote") |> render()
