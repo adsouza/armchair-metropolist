@@ -80,10 +80,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#redeem-bond-full:not([disabled])")
       view |> element("#redeem-bond-full") |> render_click()
 
-      assert has_element?(view, "#bond-principal", "0")
-      assert has_element?(view, "#bond-service-status", "Bond redeemed")
+      refute has_element?(view, "#bond-panel")
+      assert has_element?(view, "#metrics-panel")
+      assert has_element?(view, "#city-grid")
       refute has_element?(view, "#bond-issuance")
-      refute has_element?(view, "#redeem-bond-full")
     end
 
     @tag :unissued_city
@@ -112,11 +112,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
     end
 
     @tag :redeemed_bond
-    test "a redeemed issue keeps its achievement panel", %{conn: conn} do
+    test "a paid-off issue hides its bond panel without reopening authorization", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#bond-panel")
-      assert has_element?(view, "#bond-service-status", "Bond redeemed")
+      refute has_element?(view, "#bond-panel")
+      assert has_element?(view, "#metrics-panel")
+      assert has_element?(view, "#city-grid")
       refute has_element?(view, "#bond-issuance")
     end
   end

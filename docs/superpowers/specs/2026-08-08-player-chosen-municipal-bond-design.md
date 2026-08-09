@@ -275,8 +275,9 @@ after the first placement, 1 at tick 19 and 0 at tick 20. After that,
 ### Debt-free is not unissued
 
 Redeeming the balance to zero keeps the `MunicipalBond` struct and its original principal. The
-issuance screen never reappears, the city cannot authorize another series, and the bond panel can
-show the achievement. Only Reset returns to `nil` and permits a new issue.
+issuance screen never reappears, the city cannot authorize another series, and the bond panel is
+hidden once principal and interest arrears are fully paid. Only Reset returns to `nil` and permits
+a new issue.
 
 ### Reset
 
@@ -648,11 +649,12 @@ buttons become actionable only on the connected mount in the ordinary LiveView l
 
 ### Bond panel
 
-After issuance, a compact `#bond-panel` sits in the always-visible metrics column and shows:
+While an issued bond still has principal or interest arrears, a compact `#bond-panel` sits in the
+always-visible metrics column and shows:
 
 * principal outstanding;
 * interest and principal arrears, each only when positive;
-* `Debt service begins in N ticks`, `Next debt service X`, `Payments paused`, or `Bond redeemed`;
+* `Debt service begins in N ticks`, `Next debt service X`, or `Payments paused`;
 * `Matures in N ticks` once servicing begins;
 * the server-calculated redemption amount;
 * `Callable in N servicing ticks` until optional redemption opens;
@@ -936,8 +938,8 @@ Tests use the IDs in §9 and assert outcomes rather than raw HTML:
 * Balanced is marked recommended and its issue figures are correct;
 * issuance dismisses the setup view, credits proceeds and shows 20 opening-period ticks;
 * the first placement starts the countdown; a rejected click does not;
-* metrics show next debt service, maturity, arrears, redemption, default and redeemed states,
-  marking any rounded financial figure as approximate;
+* metrics show next debt service, maturity, arrears, redemption and default states, marking any
+  rounded financial figure as approximate, then hide the bond panel once the issue is fully paid;
 * Redeem 25 and Redeem all enable only when the issue is callable and the server-side actions are
   affordable;
 * stale or forged redemption events show the matching error without changing treasury or revision;

@@ -1197,7 +1197,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
       <.bond_panel
-        :if={@metrics.bond && not @metrics.bond.legacy}
+        :if={@metrics.bond && not @metrics.bond.legacy && not bond_redeemed?(@metrics.bond)}
         bond={@metrics.bond}
         money={@metrics.money}
       />
