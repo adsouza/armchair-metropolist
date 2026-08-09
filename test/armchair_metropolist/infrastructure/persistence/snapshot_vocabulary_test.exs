@@ -95,6 +95,22 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert SnapshotVocabulary.modernize(decoded).waste_stock == 0.0
   end
 
+  test "modernize/1 supplies health stocks for a payload written before the fields existed" do
+    SnapshotVocabulary.ensure_loaded!()
+
+    decoded =
+      @pre_rename_fixture
+      |> File.read!()
+      |> :erlang.binary_to_term([:safe])
+
+    refute Map.has_key?(decoded, :injury_stock)
+    refute Map.has_key?(decoded, :disease_stock)
+
+    modernized = SnapshotVocabulary.modernize(decoded)
+    assert modernized.injury_stock == 0.0
+    assert modernized.disease_stock == 0.0
+  end
+
   test "modernize/1 does not reset a waste_stock the city already carries" do
     # The mutation this exists to catch is `Map.put` where `Map.put_new` belongs.
     # It passes the test above, and silently wipes a real backlog on every hydrate
@@ -104,10 +120,24 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert SnapshotVocabulary.modernize(city).waste_stock == 42.0
   end
 
+  test "modernize/1 does not reset health stocks the city already carries" do
+    city = %{CityMap.new(40, 30) | injury_stock: 9.0, disease_stock: 13.0}
+    modernized = SnapshotVocabulary.modernize(city)
+
+    assert modernized.injury_stock == 9.0
+    assert modernized.disease_stock == 13.0
+  end
+
   test "added_fields names every CityMap field an older release could not decode" do
     # `waste_stock` was added 2026-08-07. A field absent from this list is one a
     # rolled-back binary will fail to decode, so the list is pinned rather than
     # merely exercised.
-    assert SnapshotVocabulary.added_fields() == [:waste_stock, :revision, :municipal_bond]
+    assert SnapshotVocabulary.added_fields() == [
+             :waste_stock,
+             :injury_stock,
+             :disease_stock,
+             :revision,
+             :municipal_bond
+           ]
   end
 end

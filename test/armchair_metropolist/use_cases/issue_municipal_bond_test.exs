@@ -25,6 +25,8 @@ defmodule ArmchairMetropolist.UseCases.IssueMunicipalBondTest do
       %{city | revision: 1},
       %{city | money: 1.0},
       %{city | waste_stock: 1.0},
+      %{city | injury_stock: 1.0},
+      %{city | disease_stock: 1.0},
       CityMap.put_node(city, Node.new(0, 0, :residential))
     ]
 

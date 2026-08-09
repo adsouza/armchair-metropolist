@@ -22,7 +22,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
   alias ArmchairMetropolist.UseCases.{IssueMunicipalBond, ManageInfrastructure}
 
-  @resources [:power, :water, :waste, :traffic, :labour, :money]
+  @resources Node.resources()
 
   @doc "Every generated block, keyed by the marker name used in the markdown."
   @spec blocks() :: %{String.t() => String.t()}
@@ -81,7 +81,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # whole middle and leans on the treasury to cover it — that is the mechanic being
   # documented, not a fault. The five below have no such backstop: a shortfall in any of
   # them is decay on the very same tick.
-  @physical [:power, :water, :waste, :traffic, :labour]
+  @physical [:power, :water, :waste, :traffic, :injuries, :disease, :labour]
 
   # The first four blocks form the earner. Derived from `@opening_order` so the expansion
   # wall and the documented route cannot drift apart.
@@ -319,7 +319,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
           "Total #{num(opening_cost())}, against the recommended #{num(@recommended_issue)} " <>
             "bond issue. The finished city nets " <>
             "#{signed(opening_income())} per tick. Every stage is fully supplied on all " <>
-            "five physical resources — the `tightest resource` column is demand against " <>
+            "seven physical resources — the `tightest resource` column is demand against " <>
             "available supply, including purchases, so step 1's `15/15` is imported power.",
           "",
           "| issue | principal | route | measured timing | first payment | total interest |",
@@ -599,25 +599,24 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # a city's only income is 1 per residential, which cannot cover the water plants and
   # transit hubs that residential itself requires.
   #
-  # These are solved, not guessed. {1,1,1,1,1} has NO viable residential count —
-  # industrial and commercial demand 20 labour (r >= 5) while power caps r at 4 — so
-  # the smallest set carries a second power plant.
-  @support_sets [{2, 1, 1, 1, 1}, {2, 2, 1, 1, 1}, {3, 3, 2, 2, 2}]
+  # Hospitals are part of every durable support set: without treatment the periodic
+  # outbreaks accumulate until labour collapses, however generous the utility margins.
+  @support_sets [{2, 2, 1, 1, 1, 1}, {3, 3, 2, 2, 2, 1}, {7, 6, 4, 4, 3, 2}]
 
   defp capacities_block do
     rows =
-      for {pp, wp, ind, th, com} <- @support_sets do
-        support = pp + wp + ind + th + com
+      for {pp, wp, ind, th, com, hosp} <- @support_sets do
+        support = pp + wp + ind + th + com + hosp
 
-        case residential_range(pp, wp, ind, th, com) do
+        case residential_range(pp, wp, ind, th, com, hosp) do
           nil ->
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial, #{hosp} hospital " <>
               "| #{support} | none | none | none | none |"
 
           {min_r, max_r} ->
             total = support + max_r
 
-            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial " <>
+            "| #{pp} power, #{wp} water, #{ind} industrial, #{th} transit, #{com} commercial, #{hosp} hospital " <>
               "| #{support} | #{min_r} | **#{max_r}** | #{total} | #{Float.round(max_r / total, 2)} |"
         end
       end
@@ -645,7 +644,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
   # the same band in a fraction of the simulations, and it would be wrong the
   # first time the band is not contiguous -- a failure that shows up as a
   # plausible wrong number in a published document, not as a test failure.
-  defp residential_range(pp, wp, ind, th, com) do
+  defp residential_range(pp, wp, ind, th, com, hosp) do
     sustainable =
       for r <- 1..40,
           city =
@@ -655,6 +654,7 @@ defmodule ArmchairMetropolist.PlayingGuide do
               industrial: ind,
               transit_hub: th,
               commercial: com,
+              hospital: hosp,
               residential: r
             ),
           final = Enum.reduce(1..120, city, fn _, c -> elem(Calc.advance_tick(c), 0) end),
@@ -763,6 +763,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
         "| health lost per tick, per unit of shortfall | **−#{num(decay_rate())} × (1 − satisfaction)** |",
         "| labour supply, multiplied per park per housing block | **+#{num(amenity_coefficient())} × (parks ÷ housing)** |",
         "| that multiplier's ceiling, at #{num(amenity_cap_ratio())} park per housing block | **×#{num(amenity_ceiling())}** |",
+        "| healthy traffic ceiling | **#{num(Calc.healthy_traffic_ratio() * 100)}% of traffic capacity** |",
+        "| injuries above that ceiling | **+1 per #{num(1.0 / Calc.injuries_per_excess_traffic())} excess traffic** |",
+        "| disease outbreak | **+#{num(Calc.disease_per_residential())} per residential every #{Calc.disease_outbreak_interval()} ticks** |",
+        "| untreated cases that suppress one residential block's labour | **#{num(Calc.health_burden_tolerance_per_housing())}** |",
         "| `:online` at | health ≥ #{num(online)} |",
         "| `:degraded` at | health ≥ #{num(degraded)} |",
         "| `:offline` below | health #{num(degraded)} |",

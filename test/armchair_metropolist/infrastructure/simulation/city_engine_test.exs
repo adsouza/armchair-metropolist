@@ -134,14 +134,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       assert {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
 
-      assert Enum.sort(Map.keys(metrics.resources)) == [
-               :labour,
-               :money,
-               :power,
-               :traffic,
-               :waste,
-               :water
-             ],
+      assert Enum.sort(Map.keys(metrics.resources)) == Enum.sort(Node.resources()),
              "metrics must carry every resource at mount, not an empty map"
 
       assert metrics.resources.power.satisfaction == 1.0
@@ -722,7 +715,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # The first tick earns 300, which reaches the post-tick treasury and is then
       # available to the metrics' next-tick market plan. That budget is split across
       # power, water, waste and labour; traffic remains wholly unpurchasable. Imported
-      # workers add enough commuter traffic to make congestion the worst shortage. The
+      # workers add enough commuter traffic to make congestion the worst flow shortage,
+      # and that unsafe traffic has created an untreated injury stock by the next plan. The
       # order below is the severity signal the operator reads first and is pinned rather
       # than incidental.
       named =
@@ -730,7 +724,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         |> String.split(", ")
         |> Enum.map(fn part -> part |> String.split(" ", parts: 2) |> hd() end)
 
-      assert named == ["traffic", "waste", "labour", "power", "water"]
+      assert named == ["injuries", "traffic", "waste", "labour", "power", "water"]
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
@@ -752,9 +746,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       broadcast_tick(1)
       assert_receive {:notified, _, _}, 1_000
 
-      # Demolishing every consumer removes all demand, so satisfaction returns
-      # to 1.0 and the notification must re-arm.
+      # Demolishing every consumer removes the flow demand, but the injuries their traffic
+      # created are a stock. Two hospitals clear that stock so every resource returns to
+      # 1.0 and the notification can re-arm.
       Enum.each(0..9, fn x -> {:ok, _id} = CityEngine.demolish(city_id, x, 0) end)
+      {:ok, _node} = CityEngine.place(city_id, 10, 0, :hospital)
+      {:ok, _node} = CityEngine.place(city_id, 11, 0, :hospital)
       broadcast_tick(2)
       assert {:ok, %{city_map: %{tick: 2}}} = CityEngine.snapshot(city_id)
       refute_receive {:notified, _, _}, 200

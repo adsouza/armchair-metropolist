@@ -88,8 +88,9 @@ worsens: a decaying `industrial` reads `-90 → -45`, which is less waste remove
 more of the problem. A dash means the type does not touch that resource at all,
 which is different from netting to zero. The totals row gives city-wide demand, supply
 and satisfaction, per tick. Water supply has a free baseline of 30, waste absorption has 40;
-traffic absorption starts at 20. Power, labour and money have no free baseline,
-deliberately — see below. When the city is short of power, water, waste
+traffic absorption starts at 20. Power, labour and money have no free baseline, deliberately —
+see below. Injuries and disease are persistent stocks shown outside this matrix. When the city is
+short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
 Each totals cell turns orange at 10% headroom or less and red once available supply no longer
 meets demand; purchased capacity counts as available supply in that warning.
@@ -108,7 +109,7 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 ### Build a house first
 
 **Every block needs staff except the homes the staff live in.** Power plants, water
-plants, transit hubs, parks, industry and commerce all draw labour; `residential` is the
+plants, transit hubs, hospitals, parks, industry and commerce all draw labour; `residential` is the
 only thing that produces it locally. Imported labour can bridge the gap while the treasury
 lasts, but housing is the cheaper durable source and imported workers add commuter traffic.
 
@@ -155,13 +156,23 @@ The city starts with free baseline capacity of 30 water, 40 waste disposal and 2
 but **zero power**. The market keeps an unsupported house at 100% satisfaction by buying
 all 15 power it needs.
 
-Waste is the one bad that keeps a score. Whatever you emit past your absorption
-capacity stays in the ground as a **Landfill**, shown in the metrics panel, and it
-is added to next tick's load — so a city that is 10 over runs 10 short, then 20,
-then 30. The backlog drains at capacity minus emissions once you are back under,
-which makes the exit from a waste spiral either an `industrial` block or fewer
-emitters. Traffic does not work this way: a jam clears at the tick boundary, and
-only waste accumulates.
+Waste, injuries and disease keep score. Whatever waste you emit past absorption
+stays in the ground as a **Landfill**, shown in the metrics panel, and is added to
+the next tick's load. Injuries and disease likewise persist until hospital capacity
+treats them. Traffic itself still clears at the tick boundary, but it creates injuries
+whenever demand rises above 80% of current traffic capacity; every ten excess trips
+add one injury. Every 30 ticks, an outbreak adds two disease cases per residential
+block. The Metrics panel shows both untreated stocks.
+
+Injuries and disease are not separate legend columns because only hospitals directly change
+them. The hospital row instead states the per-block treatment rate, while Metrics shows both
+untreated stocks.
+
+Those stocks suppress the workforce before the next resource calculation. Ten untreated
+cases per effective residential block reduce local labour to zero, with smaller burdens
+reducing every residential block proportionally. Parks multiply what remains; they cannot
+amplify sick or injured workers back into the workforce. A healthy hospital treats ten
+injuries and ten disease cases per tick, and treatment falls with the hospital's health.
 
 Power, labour and money have no free baseline; they arrive only once you build for them or
 pay the market. One residential block draws `power 15` and earns 1, for a net treasury
@@ -184,10 +195,10 @@ slightly-overloaded state, because three mechanics compound:
   almost nothing. A collapsing district actively poisons the rest of the city.
 
 So any shortfall reduces supply, which deepens the shortfall. The totals row at the
-foot of the legend shows all six satisfaction figures; the lowest one is the only
-number that matters, because each node takes the worst of the resources it consumes.
-That lowest figure is exactly what the metrics' *Tightest* line reports, so it stays on
-screen with the legend collapsed.
+foot of the legend shows satisfaction for the six columnar resources. The lowest of all
+eight tracked resources is the only number that matters, because each node takes the worst
+of the resources it consumes. That lowest figure is exactly what the metrics' *Tightest*
+line reports, so it stays on screen with the legend collapsed.
 
 ## Your first durable city
 
@@ -203,6 +214,7 @@ Without imports, every possible fourth block needs some additional local capacit
 | add this to the earner | what overruns |
 |---|---|
 | `commercial` | labour 19/5 |
+| `hospital` | labour 15/5 |
 | `industrial` | labour 23/5 |
 | `park` | water 58/30 |
 | `power_plant` | labour 12/5 |
@@ -228,7 +240,7 @@ fund the remaining support chain:
 | 7 | `park` | 20 | 280 | waste 54/54 | +9 |
 | 8 | `park` | 20 | 300 | waste 54/56 | +12 |
 
-Total 300, against the recommended 400 bond issue. The finished city nets +12 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
+Total 300, against the recommended 400 bond issue. The finished city nets +12 per tick. Every stage is fully supplied on all seven physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
 
 | issue | principal | route | measured timing | first payment | total interest |
 |---|---:|---|---|---:|---:|
@@ -281,9 +293,9 @@ health:
 <!-- generated:capacities -->
 | support set | support tiles | min residential | max residential | total tiles | residential per tile |
 |---|---|---|---|---|---|
-| 2 power, 1 water, 1 industrial, 1 transit, 1 commercial | 6 | 3 | **6** | 12 | 0.5 |
-| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial | 7 | 4 | **8** | 15 | 0.53 |
-| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial | 12 | 5 | **11** | 23 | 0.48 |
+| 2 power, 2 water, 1 industrial, 1 transit, 1 commercial, 1 hospital | 8 | 5 | **6** | 14 | 0.43 |
+| 3 power, 3 water, 2 industrial, 2 transit, 2 commercial, 1 hospital | 13 | 7 | **9** | 22 | 0.41 |
+| 7 power, 6 water, 4 industrial, 4 transit, 3 commercial, 2 hospital | 26 | 18 | **22** | 48 | 0.46 |
 <!-- /generated:capacities -->
 
 These measured ceilings include sustainable market purchases where the support set's
@@ -295,7 +307,7 @@ housing, though: a producer placed on an empty grid must buy its staff until hou
 exists, and those imported workers consume traffic capacity. See "Build a house first"
 above.
 
-**Place one node at a time and watch the panel.** Because the six resources are
+**Place one node at a time and watch the panel.** Because the eight resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
 fix one shortfall creates demand elsewhere. The binding constraint moves rather than
 disappearing.
@@ -303,7 +315,7 @@ disappearing.
 Those capacity figures include the one-off baselines, so a district that works is not
 automatically tileable: the second copy has no baseline of its own. As the city grows
 the ratio converges to roughly **3 power : 3 water : 2 industrial : 2 transit hubs : 2
-commercial per 12 residential**. Commercial belongs in that ratio now, not as an
+commercial : 1 hospital per 9 residential**. Commercial belongs in that ratio now, not as an
 optional add-on: a residential block's own income (money 1) can't cover what it costs
 the water plants and transit hubs it needs, so a support set without a commercial block is
 insolvent — the treasury drains over the game's lifetime even while every other resource
@@ -313,7 +325,7 @@ warning you get first and the way back out.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
-plants, transit hubs, parks, industry and commerce all draw labour, and residential is the
+plants, transit hubs, hospitals, parks, industry and commerce all draw labour, and residential is the
 only local source. A support set with fewer homes must import its missing workers; the
 minimum is where the whole economy, including that market bill, remains sustainable.
 
@@ -470,7 +482,8 @@ above: the escape has to be bought while there is still something to buy it with
 
 Once you change a city, a **Reset** button appears in the page header beside the theme toggle.
 It is available whether the city is thriving, rescuable, stalled or locked, so an economic
-softlock never traps you in that city. Reset clears every block, returns the treasury to zero,
+softlock never traps you in that city. Reset clears every block, stock and health burden,
+returns the treasury to zero,
 sets the tick back to zero and discards the stored city. You then authorize a new bond issue.
 The button asks for confirmation because there is no undo; it stays hidden only while the city
 is equivalent to the untouched, unissued state.
@@ -482,21 +495,22 @@ is equivalent to the untouched, unissued state.
 Available with no infrastructure placed at all.
 
 <!-- generated:baseline -->
-| power | water | waste | traffic | labour | money |
-|---|---|---|---|---|---|
-| 0 | 30 | 40 | 20 | 0 | 0 |
+| power | water | waste | traffic | injuries | disease | labour | money |
+|---|---|---|---|---|---|---|---|
+| 0 | 30 | 40 | 20 | 0 | 0 | 0 | 0 |
 <!-- /generated:baseline -->
 
 ### Per-block effect, scaled by health
 
 Each figure is one block's effect on that resource, scaled by the block's health — a plant
 at 50% health delivers half. Power, water, labour and money are goods: you want them to
-rise. Waste and traffic are bads: you want them to fall.
+rise. Waste, traffic, injuries and disease are bads: you want them to fall.
 
 <!-- generated:production -->
 | type | effect |
 |---|---|
 | `commercial` | money +30 |
+| `hospital` | injuries -10, disease -10 |
 | `industrial` | waste -90 |
 | `park` | waste -8 |
 | `power_plant` | power +120 |
@@ -513,16 +527,23 @@ The other side of the ledger, and it is **never** scaled by health. This is the 
 behind every death spiral: a dying block draws its full power and emits its full waste.
 
 <!-- generated:consumption -->
-| type | power | water | waste | traffic | labour | money |
-|---|---|---|---|---|---|---|
-| `commercial` | -22 | -8 | +14 | +9 | -8 | — |
-| `industrial` | -40 | -25 | — | +8 | -12 | — |
-| `park` | — | -18 | — | +2 | -1 | -3 |
-| `power_plant` | — | -20 | +12 | +3 | -1 | -5 |
-| `residential` | -15 | -12 | +10 | +6 | — | — |
-| `transit_hub` | -8 | — | +2 | — | -2 | -4 |
-| `water_plant` | -25 | — | +6 | +2 | -1 | -5 |
+| type | power | water | waste | traffic | injuries | disease | labour | money |
+|---|---|---|---|---|---|---|---|---|
+| `commercial` | -22 | -8 | +14 | +9 | — | — | -8 | — |
+| `hospital` | -20 | -15 | +10 | +4 | — | — | -4 | -6 |
+| `industrial` | -40 | -25 | — | +8 | — | — | -12 | — |
+| `park` | — | -18 | — | +2 | — | — | -1 | -3 |
+| `power_plant` | — | -20 | +12 | +3 | — | — | -1 | -5 |
+| `residential` | -15 | -12 | +10 | +6 | — | — | — | — |
+| `transit_hub` | -8 | — | +2 | — | — | — | -2 | -4 |
+| `water_plant` | -25 | — | +6 | +2 | — | — | -1 | -5 |
 <!-- /generated:consumption -->
+
+`hospital` removes ten injuries and ten disease cases per tick at full health. That
+treatment is capacity, so a hospital at 50% health removes five of each while still
+drawing its full utilities, staffing and upkeep. Injuries and disease cannot be bought
+away on the market; durable cities must include enough healthy hospitals to clear both
+ordinary traffic injuries and periodic outbreak spikes.
 
 `park` is how you get more workers out of the housing you already have. It produces no
 labour itself — a city with no residential blocks has no workforce for a park to
@@ -553,6 +574,8 @@ while still costing everything.
 | waste disposal | 1 money | yes | — |
 | labour | 1 money | yes | +1 traffic per unit |
 | traffic | — | no | — |
+| injuries | — | no | requires hospitals |
+| disease | — | no | requires hospitals |
 
 Net upkeep is reserved before imports. If the remaining treasury cannot cover every
 eligible shortage, the same percentage of each is purchased. Money earned during a tick
@@ -565,6 +588,7 @@ actually purchased, not the unfunded portion of a labour shortage, and clears ea
 | type | cost to build |
 |---|---|
 | `commercial` | 40 |
+| `hospital` | 100 |
 | `industrial` | 60 |
 | `park` | 20 |
 | `power_plant` | 80 |
@@ -584,6 +608,10 @@ Demolishing anything costs 10, whatever it was. A new city starts with no cash; 
 | health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
 | labour supply, multiplied per park per housing block | **+1 × (parks ÷ housing)** |
 | that multiplier's ceiling, at 1 park per housing block | **×2** |
+| healthy traffic ceiling | **80% of traffic capacity** |
+| injuries above that ceiling | **+1 per 10 excess traffic** |
+| disease outbreak | **+2 per residential every 30 ticks** |
+| untreated cases that suppress one residential block's labour | **10** |
 | `:online` at | health ≥ 60 |
 | `:degraded` at | health ≥ 20 |
 | `:offline` below | health 20 |

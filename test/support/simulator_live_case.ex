@@ -39,7 +39,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         transit_hub: "🚉",
         residential: "🏘️",
         commercial: "🛍️",
-        park: "🌳"
+        park: "🌳",
+        hospital: "🏥"
       ]
 
       setup %{conn: conn} = context do

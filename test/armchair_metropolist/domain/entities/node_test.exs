@@ -15,7 +15,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "types/0" do
-    test "lists all seven node types" do
+    test "lists all eight node types" do
       assert Enum.sort(Node.types()) ==
                Enum.sort([
                  :power_plant,
@@ -24,7 +24,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                  :transit_hub,
                  :residential,
                  :commercial,
-                 :park
+                 :park,
+                 :hospital
                ])
     end
   end
@@ -45,14 +46,23 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "resources/0" do
-    test "lists the six resources in display order" do
-      assert Node.resources() == [:power, :water, :waste, :traffic, :labour, :money]
+    test "lists the eight resources in display order" do
+      assert Node.resources() == [
+               :power,
+               :water,
+               :waste,
+               :traffic,
+               :injuries,
+               :disease,
+               :labour,
+               :money
+             ]
     end
   end
 
   describe "negative_resources/0" do
-    test "names the two resources where a rising figure is bad" do
-      assert Node.negative_resources() == [:waste, :traffic]
+    test "names the four resources where a rising figure is bad" do
+      assert Node.negative_resources() == [:waste, :traffic, :injuries, :disease]
     end
 
     test "every negative resource is a resource" do
@@ -76,7 +86,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       negatives = Enum.filter(Node.resources(), &Node.negative_resource?/1)
       positives = Enum.reject(Node.resources(), &Node.negative_resource?/1)
 
-      assert negatives == [:waste, :traffic]
+      assert negatives == [:waste, :traffic, :injuries, :disease]
       assert positives == [:power, :water, :labour, :money]
     end
   end
@@ -136,6 +146,17 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
 
       assert Node.capacity(:park) == %{waste: 8.0}
       assert Node.load(:park) == %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
+
+      assert Node.capacity(:hospital) == %{injuries: 10.0, disease: 10.0}
+
+      assert Node.load(:hospital) == %{
+               power: 20.0,
+               water: 15.0,
+               waste: 10.0,
+               traffic: 4.0,
+               labour: 4.0,
+               money: 6.0
+             }
     end
 
     # Guards the invariant SimulationCalculator's decay rule depends on:
@@ -157,6 +178,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.load(:power_plant)[:labour] == 1.0
       assert Node.load(:water_plant)[:labour] == 1.0
       assert Node.load(:park)[:labour] == 1.0
+      assert Node.load(:hospital)[:labour] == 4.0
 
       # The one exemption, and the whole reason the rule is statable.
       refute Map.has_key?(Node.load(:residential), :labour),
@@ -193,6 +215,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.construction_cost(:transit_hub) == 40.0
       assert Node.construction_cost(:commercial) == 40.0
       assert Node.construction_cost(:park) == 20.0
+      assert Node.construction_cost(:hospital) == 100.0
       assert Node.construction_cost(:residential) == 15.0
     end
 

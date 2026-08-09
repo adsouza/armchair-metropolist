@@ -13,6 +13,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           nodes: %{optional(String.t()) => Node.t()},
           money: float(),
           waste_stock: float(),
+          injury_stock: float(),
+          disease_stock: float(),
           municipal_bond: MunicipalBond.t() | nil
         }
 
@@ -72,6 +74,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             nodes: %{},
             money: 0.0,
             waste_stock: 0.0,
+            injury_stock: 0.0,
+            disease_stock: 0.0,
             municipal_bond: nil
 
   @doc """

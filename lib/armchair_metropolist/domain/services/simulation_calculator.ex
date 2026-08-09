@@ -6,12 +6,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        capacity for `r`, plus whatever balance `r` carried over from the
-       previous tick (only money and waste carry anything; see step 12 for
-       waste's balance, which is negated). Labour is then
+       previous tick (only money and waste use the generic carryover ledger;
+       injuries and disease are folded into their next-tick treatment demand).
+       Labour is then
        multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
        both sides health-weighted — so parks raise the workforce their housing
-       supplies without producing labour themselves. With no housing the
-       multiplier is 1.0 and labour supply is 0.0 regardless of parks.
+       supplies without producing labour themselves — and reduced by the city's
+       existing injury and disease burden. With no housing the multiplier is 1.0
+       and labour supply is 0.0 regardless of parks.
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
@@ -43,6 +45,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        stock enters through `carried/2` negated, a backlog drives `satisfaction`
        below zero and health decay past `@decay_per_tick` — which is therefore a
        coefficient, not a maximum.
+   13. Traffic above 80% of the city's traffic capacity adds injuries. Every
+       thirtieth tick adds a disease outbreak proportional to the number of
+       residential blocks. The untreated remainder after health-scaled hospital
+       capacity becomes the next tick's injury and disease stocks.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -66,6 +72,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     water: 30.0,
     waste: 40.0,
     traffic: 20.0,
+    injuries: 0.0,
+    disease: 0.0,
     labour: 0.0,
     money: 0.0
   }
@@ -87,6 +95,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # not a stock: like every other jam it clears at the tick boundary. One-to-one keeps
   # the unit legible and roughly matches housing's 6 traffic for 5 local workers.
   @imported_labour_traffic_per_unit 1.0
+
+  # Congestion becomes unsafe before the transport network is completely saturated.
+  # Every ten trips above this 80% line add one injury to the stock for treatment.
+  @healthy_traffic_ratio 0.8
+  @injuries_per_excess_traffic 0.1
+
+  # Outbreaks are deterministic so a saved city resumes the same simulation and tests
+  # can reason about exact ticks. Each residential block contributes two cases.
+  @disease_outbreak_interval 30
+  @disease_per_residential 2.0
+
+  # Ten untreated cases across one effective residential block suppress all five of
+  # its workers. The ratio makes the same city-wide burden gentler as housing grows,
+  # while still applying one shared multiplier to every residential block.
+  @health_burden_tolerance_per_housing 10.0
 
   # The park amenity: parks per housing block multiply labour supply. Both values are
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
@@ -138,10 +161,30 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec imported_labour_traffic_per_unit() :: float()
   def imported_labour_traffic_per_unit, do: @imported_labour_traffic_per_unit
 
+  @doc "Share of traffic capacity that remains within the healthy range."
+  @spec healthy_traffic_ratio() :: float()
+  def healthy_traffic_ratio, do: @healthy_traffic_ratio
+
+  @doc "Number of ticks between deterministic disease outbreaks."
+  @spec disease_outbreak_interval() :: pos_integer()
+  def disease_outbreak_interval, do: @disease_outbreak_interval
+
+  @doc "Injuries added per unit of traffic above the healthy threshold."
+  @spec injuries_per_excess_traffic() :: float()
+  def injuries_per_excess_traffic, do: @injuries_per_excess_traffic
+
+  @doc "Disease cases added per residential block during an outbreak."
+  @spec disease_per_residential() :: float()
+  def disease_per_residential, do: @disease_per_residential
+
+  @doc "Untreated cases per effective residential block that suppress all local labour."
+  @spec health_burden_tolerance_per_housing() :: float()
+  def health_burden_tolerance_per_housing, do: @health_burden_tolerance_per_housing
+
   @doc """
   Supply, purchases, demand, deficit and satisfaction for every resource in the city.
 
-  Always returns an entry for all six resources, even on an empty map. A node's
+  Always returns an entry for all eight resources, even on an empty map. A node's
   capacity is scaled by that node's health; load is not scaled at all. The free
   baseline folded into `supplied` is scaled by nothing — it belongs to no node. Market
   capacity is reported separately as `purchased`.
@@ -151,7 +194,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   defp tick_plan(city_map) do
     nodes = CityMap.nodes(city_map)
-    supply = total_supply(nodes)
+    health_labour_multiplier = health_labour_multiplier(city_map, nodes)
+    supply = total_supply(nodes, health_labour_multiplier)
     demand = total_demand(nodes)
 
     raw_stats =
@@ -184,6 +228,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     purchase_budget = min(city_map.money, cash_after_upkeep_and_bond)
     purchases = market_purchases(raw_stats, purchase_budget)
     raw_stats = add_imported_labour_traffic(raw_stats, purchases)
+    raw_stats = add_health_burden_demand(raw_stats, city_map)
 
     resources =
       Map.new(raw_stats, fn {resource, stats} ->
@@ -254,6 +299,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     # `stats` every node saw, so the landfill and the health decay it caused
     # cannot disagree about the same tick.
     waste_stock = Map.fetch!(stats, :waste).deficit
+    injury_stock = Map.fetch!(stats, :injuries).deficit
+    disease_stock = Map.fetch!(stats, :disease).deficit
 
     {%{
        city_map
@@ -261,6 +308,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
          tick: city_map.tick + 1,
          money: money,
          waste_stock: waste_stock,
+         injury_stock: injury_stock,
+         disease_stock: disease_stock,
          municipal_bond: plan.next_bond
      }, delta}
   end
@@ -277,12 +326,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     operating = solvency(city_map, nodes, stats, stalled)
     financing = financing(city_map, nodes, plan.bond_quote, stalled)
     bond = if plan.bond_quote, do: Map.put(plan.bond_quote, :paused, stalled), else: nil
+    health_labour_multiplier = health_labour_multiplier(city_map, nodes)
 
     derived =
       %{
         amenity: labour_multiplier(nodes),
-        amenity_marginal_labour: marginal_amenity_labour(nodes),
-        amenity_labour: placed_amenity_labour(nodes),
+        amenity_marginal_labour: marginal_amenity_labour(nodes, health_labour_multiplier),
+        amenity_labour: placed_amenity_labour(nodes, health_labour_multiplier),
+        health_labour_multiplier: health_labour_multiplier,
         market_spend: plan.market_spend,
         imported_labour_traffic:
           Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
@@ -574,13 +625,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # Applied here rather than in `resource_stats/1` so there is exactly one labour supply
   # figure: satisfaction, deficit, health decay, the deficit notification and the
   # Tightest line all read this and cannot disagree about it.
-  defp total_supply(nodes) do
+  defp total_supply(nodes, health_labour_multiplier) do
     supply =
       Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
         Enum.reduce(Node.effective_capacity(node), acc, &add_resource/2)
       end)
 
-    Map.update!(supply, :labour, &(&1 * labour_multiplier(nodes)))
+    Map.update!(supply, :labour, fn labour ->
+      labour * labour_multiplier(nodes) * health_labour_multiplier
+    end)
   end
 
   # Effective parks per effective housing block, capped, scaled by
@@ -610,11 +663,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # everywhere except where the extra park takes the ratio across the cap, and there only
   # the difference is right.
   #
-  # The probe park's coordinates are arbitrary. `total_supply/1` reduces over a list and
+  # The probe park's coordinates are arbitrary. `total_supply/2` reduces over a list and
   # never reads position or identity, so a duplicate id cannot collide here — but this
   # list must not be put back into a CityMap.
-  defp marginal_amenity_labour(nodes) do
-    labour_supply([Node.new(0, 0, :park) | nodes]) - labour_supply(nodes)
+  defp marginal_amenity_labour(nodes, health_labour_multiplier) do
+    labour_supply([Node.new(0, 0, :park) | nodes], health_labour_multiplier) -
+      labour_supply(nodes, health_labour_multiplier)
   end
 
   # What the parks *already placed* are contributing to labour supply — the counterpart to
@@ -627,13 +681,27 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # right on both sides of that boundary without a case split.
   #
   # Removing the parks changes nothing else about labour. Parks produce no labour, and
-  # `total_supply/1` derives the multiplier from the nodes it is given, so the second term
+  # `total_supply/2` derives the multiplier from the nodes it is given, so the second term
   # is exactly the unamplified housing supply.
-  defp placed_amenity_labour(nodes) do
-    labour_supply(nodes) - labour_supply(Enum.reject(nodes, &(&1.type == :park)))
+  defp placed_amenity_labour(nodes, health_labour_multiplier) do
+    labour_supply(nodes, health_labour_multiplier) -
+      labour_supply(Enum.reject(nodes, &(&1.type == :park)), health_labour_multiplier)
   end
 
-  defp labour_supply(nodes), do: nodes |> total_supply() |> Map.fetch!(:labour)
+  defp labour_supply(nodes, health_labour_multiplier) do
+    nodes |> total_supply(health_labour_multiplier) |> Map.fetch!(:labour)
+  end
+
+  defp health_labour_multiplier(city_map, nodes) do
+    housing = effective_count(nodes, :residential)
+
+    if housing > 0.0 do
+      burden = city_map.injury_stock + city_map.disease_stock
+      max(0.0, 1.0 - burden / (housing * @health_burden_tolerance_per_housing))
+    else
+      1.0
+    end
+  end
 
   # Counted by health rather than by node: a park at 40% health is 0.4 of a park.
   defp effective_count(nodes, type) do
@@ -688,6 +756,49 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
           deficit: max(0.0, demanded - available),
           satisfaction: satisfaction(available, demanded),
           flow_satisfaction: satisfaction(traffic.supplied, demanded)
+      }
+    end)
+  end
+
+  # Unlike waste, these stocks are presented as treatment demand rather than as
+  # negative carried supply. That keeps a quiet tick with an existing disease stock
+  # visible as demand in the legend instead of reading 0/0 and 100% supplied.
+  defp add_health_burden_demand(stats, city_map) do
+    traffic = Map.fetch!(stats, :traffic)
+
+    injury_demand =
+      city_map.injury_stock +
+        max(0.0, traffic.demanded - traffic.supplied * @healthy_traffic_ratio) *
+          @injuries_per_excess_traffic
+
+    disease_demand = city_map.disease_stock + disease_outbreak(city_map)
+
+    stats
+    |> put_health_burden(:injuries, injury_demand)
+    |> put_health_burden(:disease, disease_demand)
+  end
+
+  defp disease_outbreak(city_map) do
+    if rem(city_map.tick + 1, @disease_outbreak_interval) == 0 do
+      city_map.nodes
+      |> Map.values()
+      |> Enum.count(&(&1.type == :residential))
+      |> Kernel.*(@disease_per_residential)
+    else
+      0.0
+    end
+  end
+
+  defp put_health_burden(stats, resource, demanded) do
+    Map.update!(stats, resource, fn resource_stats ->
+      available = resource_stats.supplied
+
+      %{
+        resource_stats
+        | demanded: demanded,
+          deficit: max(0.0, demanded - available),
+          satisfaction: satisfaction(available, demanded),
+          flow_satisfaction: satisfaction(available, demanded)
       }
     end)
   end

@@ -71,11 +71,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           by_type: %{Node.node_type() => type_stats()},
           money: float(),
           waste_stock: float(),
+          injury_stock: float(),
+          disease_stock: float(),
           market_spend: float(),
           imported_labour_traffic: float(),
           amenity: float(),
           amenity_marginal_labour: float(),
           amenity_labour: float(),
+          health_labour_multiplier: float(),
           housing_alive: boolean(),
           bankrupt: boolean(),
           money_ceiling: float(),
@@ -127,6 +130,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     amenity: 1.0,
     amenity_marginal_labour: 0.0,
     amenity_labour: 0.0,
+    health_labour_multiplier: 1.0,
     market_spend: 0.0,
     imported_labour_traffic: 0.0,
     stalled: false,
@@ -148,11 +152,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             by_type: %{},
             money: 0.0,
             waste_stock: 0.0,
+            injury_stock: 0.0,
+            disease_stock: 0.0,
             market_spend: 0.0,
             imported_labour_traffic: 0.0,
             amenity: 1.0,
             amenity_marginal_labour: 0.0,
             amenity_labour: 0.0,
+            health_labour_multiplier: 1.0,
             housing_alive: false,
             bankrupt: false,
             money_ceiling: 0.0,
@@ -169,11 +176,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   Build a SimulationMetrics struct from a city map, resource statistics and the city's
   derived figures.
 
-  `derived` carries `:amenity` (the multiplier on labour supply), `:amenity_marginal_labour`
-  (what one more park would add to it), `:amenity_labour` (what the *already placed*
-  parks are contributing to it) and `:stalled` (whether the city has reached a health
-  fixpoint). The amenity pair answers different questions and the legend shows both,
-  stacked.
+  `derived` carries `:amenity` (the park multiplier on labour supply),
+  `:amenity_marginal_labour` (what one more park would add to it), `:amenity_labour`
+  (what the *already placed* parks are contributing), `:health_labour_multiplier`
+  (what remains after injuries and disease) and `:stalled` (whether the city has reached
+  a health fixpoint). The amenity pair answers different questions and the legend shows
+  both, stacked.
 
   It also carries the solvency four: `:money_ceiling` (what the city could earn with every
   earner at full health), `:insolvent` (whether upkeep exceeds that ceiling),
@@ -185,7 +193,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   `:market_spend` is the money those automatic purchases consume this tick, and
   `:imported_labour_traffic` is the commuter demand created by the labour portion.
 
-  All ten are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  All fifteen are computed by `Domain.Services.SimulationCalculator`, which this module cannot
   call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
   here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
@@ -202,14 +210,17 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       node_count: node_count,
       avg_health: avg_health,
       offline_count: offline_count,
-      by_type: build_by_type(nodes),
+      by_type: build_by_type(nodes, Map.fetch!(derived, :health_labour_multiplier)),
       money: city_map.money,
       waste_stock: city_map.waste_stock,
+      injury_stock: city_map.injury_stock,
+      disease_stock: city_map.disease_stock,
       market_spend: Map.fetch!(derived, :market_spend),
       imported_labour_traffic: Map.fetch!(derived, :imported_labour_traffic),
       amenity: Map.fetch!(derived, :amenity),
       amenity_marginal_labour: Map.fetch!(derived, :amenity_marginal_labour),
       amenity_labour: Map.fetch!(derived, :amenity_labour),
+      health_labour_multiplier: Map.fetch!(derived, :health_labour_multiplier),
       housing_alive: housing_alive?(nodes),
       # Derived rather than a written-down `10.0`, for the same reason
       # `Node.cheapest_action_cost/0` itself is derived: so a balance patch to the
@@ -330,7 +341,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   # rows. Rated and actual are kept apart rather than reduced to one figure: capacity
   # scales with health and load does not, and that divergence is what makes a
   # collapse visible.
-  defp build_by_type(nodes) do
+  defp build_by_type(nodes, health_labour_multiplier) do
     grouped = Enum.group_by(nodes, & &1.type)
 
     Map.new(Node.types(), fn type ->
@@ -340,7 +351,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
        %{
          count: length(of_type),
          rated_capacity: scale(Node.capacity(type), length(of_type)),
-         actual_capacity: sum_actual_capacity(type, of_type),
+         actual_capacity: sum_actual_capacity(type, of_type, health_labour_multiplier),
          load: scale(Node.load(type), length(of_type))
        }}
     end)
@@ -352,7 +363,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   # Keyed off the type's *base* capacity table rather than the nodes, so the keys are
   # the same whether or not any are placed.
-  defp sum_actual_capacity(type, nodes) do
+  defp sum_actual_capacity(type, nodes, health_labour_multiplier) do
     type
     |> Node.capacity()
     |> Map.new(fn {resource, _base} ->
@@ -361,7 +372,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           acc + Map.get(Node.effective_capacity(node), resource, 0.0)
         end)
 
-      {resource, total}
+      adjusted =
+        if type == :residential and resource == :labour,
+          do: total * health_labour_multiplier,
+          else: total
+
+      {resource, adjusted}
     end)
   end
 end

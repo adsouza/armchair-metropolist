@@ -132,15 +132,18 @@ window state.
 
 ## The third trap: rolling back past a new CityMap field
 
-`waste_stock` was added to `CityMap` on 2026-08-07. Snapshots written from that
-commit onward contain the `:waste_stock` atom, and a binary built before it
-cannot decode them — `:safe` will not create an atom the release does not
-already have. Rolling back past that commit strands every city written since:
-the server crash-loops on hydrate, the desktop app starts an empty grid.
+`waste_stock` was added to `CityMap` on 2026-08-07. The health-system release later
+added `injury_stock` and `disease_stock`, plus the persisted `hospital` node type.
+Snapshots written from either change contain atoms that a binary built before that
+change cannot decode — `:safe` will not create an atom the release does not already
+have. Rolling back past the relevant writer strands every city written since: the
+server crash-loops on hydrate, the desktop app starts an empty grid.
 
 `dcd1ee4` is the minimum rollback target. Any future field added to a
 persisted struct has the same one-way property, and the safe pattern is two
 releases — one that interns the atom without writing it, then the writer.
+After deploying the health system, the feature's writer commit becomes the new
+minimum rollback target for any city saved with health stocks or a hospital.
 
 ## The fourth trap: rolling back past the ring-growth grid
 

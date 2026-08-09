@@ -40,8 +40,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     transit_hub: "🚉",
     residential: "🏘️",
     commercial: "🛍️",
-    park: "🌳"
+    park: "🌳",
+    hospital: "🏥"
   }
+
+  # Injuries and disease are persistent city stocks rather than broadly exchanged
+  # resources: only hospitals directly remove them. Giving each its own matrix column
+  # leaves almost every row empty, so the legend keeps the six resources that support
+  # useful read-down comparisons and summarizes hospital treatment in that row instead.
+  @legend_resources [:power, :water, :waste, :traffic, :labour, :money]
 
   # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
   # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
@@ -546,10 +553,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               >
                 Totals include free capacity belonging to no type: 30 water supplied, 40 waste
                 absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
-                Labour's total also includes the park amenity; park's own row carries it. Shortfalls
-                in power, water, waste disposal and labour are bought automatically for 1 money per
-                unit while the treasury can pay; purchased units count toward supplied totals. Each
-                imported labour unit adds one traffic demand, and traffic itself cannot be bought.
+                Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
+                the hospital row shows its treatment rate. Traffic above 80% of capacity creates
+                injuries, and every 30 ticks a residential-scaled disease outbreak occurs. Labour's
+                total includes park amenity and the health-burden penalty; park's own row carries its
+                amenity. Shortfalls in power, water, waste disposal and labour are bought automatically
+                for 1 money per unit while the treasury can pay; purchased units count toward supplied
+                totals. Each imported labour unit adds one traffic demand, and traffic itself cannot be
+                bought.
               </p>
             </div>
 
@@ -912,12 +923,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # stray click.
   #
   # An empty grid can still differ from a new city: it may retain an authorized or redeemed
-  # issue, treasury cash, or a waste backlog. All are changes a reset repairs.
+  # issue, treasury cash, or a waste/health backlog. All are changes a reset repairs.
   # The equality checks keep the control hidden on the untouched opening state even as its
   # tick counter advances in the background.
   defp show_reset?(metrics) do
     metrics.bond != nil or metrics.node_count > 0 or metrics.money != 0.0 or
-      metrics.waste_stock != 0.0
+      metrics.waste_stock != 0.0 or metrics.injury_stock != 0.0 or metrics.disease_stock != 0.0
   end
 
   defp issue_name(250.0), do: "Lean"
@@ -1004,21 +1015,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp financing_error(:use_full_redemption), do: "Use Redeem all for the remaining balance."
   defp financing_error(:insufficient_funds), do: "The treasury cannot cover that redemption."
 
-  # The resource columns are fixed and identical on every row, including where a type
-  # does not touch a resource. Aligned columns are the feature: the question a player
-  # has is "water is short, who is drinking it?", answered by reading one column down
-  # all seven types. Per-row chips would be narrower and unreadable for that.
-  #
-  # The vocabulary itself belongs to the domain — `Node.resources/0` is the one list,
-  # already in display order — so adding a resource grows this table by a column
-  # rather than silently omitting it.
+  # The six columnar resources are fixed and identical on every row, including where a
+  # type does not touch one. Aligned columns are the feature: the question a player has
+  # is "water is short, who is drinking it?", answered by reading one column down all
+  # eight block types. Injuries and disease do not earn columns because only one type
+  # directly changes them; hospital treatment is a compact annotation in that type row.
   attr :metrics, :map, required: true
   attr :node_types, :list, required: true
   attr :selected_type, :atom, required: true
   attr :detail, :boolean, required: true
 
   defp legend(assigns) do
-    assigns = assign(assigns, :resources, Node.resources())
+    assigns = assign(assigns, :resources, @legend_resources)
 
     ~H"""
     <%!-- No width classes here on purpose. The shrink-to-scroll behaviour lives on
@@ -1071,6 +1079,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   <span aria-hidden="true">{block_emoji(type)}</span>
                   <span>{type}</span>
                 </button>
+                <div
+                  :if={@detail and type == :hospital}
+                  id="hospital-treatment-summary"
+                  class="ml-2 mt-0.5 flex items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-300"
+                  title="At full health; treatment scales with hospital health"
+                >
+                  <.icon name="hero-plus-circle" class="size-3" />
+                  <span>-10 injuries/disease</span>
+                </div>
               </td>
               <td data-cell={"#{type}-count"} class="text-right tabular-nums">
                 {@metrics.by_type[type].count}
@@ -1249,7 +1266,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             quantity the player reasons about against whole-number capacities,
             and rounding 78.6 up to 79 would overstate a backlog by a unit. --%>
       <p id="metrics-landfill">Landfill: {trunc(@metrics.waste_stock)}</p>
-      <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
+      <p id="metrics-injuries">Injuries: {Float.round(@metrics.injury_stock, 1)}</p>
+      <p id="metrics-disease">Disease: {Float.round(@metrics.disease_stock, 1)}</p>
+      <p id="metrics-workforce">
+        Workforce: parks ×{Float.round(@metrics.amenity, 2)}, health ×{Float.round(
+          @metrics.health_labour_multiplier,
+          2
+        )}
+      </p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
     """

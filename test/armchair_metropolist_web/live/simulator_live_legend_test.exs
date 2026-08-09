@@ -41,6 +41,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert table =~ "[&amp;_td]:px-1"
     end
 
+    test "keeps health stocks out of the matrix and summarizes hospital treatment",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      refute has_element?(view, ~s{[data-cell="hospital-injuries"]})
+      refute has_element?(view, ~s{[data-cell="hospital-disease"]})
+      refute has_element?(view, ~s{[data-total="injuries"]})
+      refute has_element?(view, ~s{[data-total="disease"]})
+
+      treatment = view |> element("#hospital-treatment-summary") |> render()
+      assert treatment =~ "-10 injuries/disease"
+    end
+
     test "wraps the totals footnote and reports the free baselines", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -391,7 +404,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # SummarizeCity always reports all six, so this is the defensive branch. Power is
+      # SummarizeCity always reports all eight, so this is the defensive branch. Power is
       # present to prove the row still renders figures either side of the gap.
       send(view.pid, {:city_metrics, metrics_with_only_power_statistics()})
       render(view)
@@ -470,6 +483,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       # The label is a decision, so a rename should fail a test rather than pass.
       assert view |> element("#metrics-landfill") |> render() =~ "Landfill"
+    end
+
+    test "the metrics panel shows injury and disease stocks", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      send(
+        view.pid,
+        {:city_metrics, %{empty_city_metrics() | injury_stock: 7.5, disease_stock: 12.0}}
+      )
+
+      render(view)
+
+      assert view |> element("#metrics-injuries") |> render() =~ "Injuries: 7.5"
+      assert view |> element("#metrics-disease") |> render() =~ "Disease: 12.0"
     end
 
     test "a negative satisfaction renders as 0%, not as a negative percentage",
@@ -593,7 +620,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
       # and draws 1 of its own.
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
-      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.5"
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: parks ×1.5"
     end
 
     # ×1.5 does not pin the precision: `Float.round(1.5, 1)` and `Float.round(1.5, 2)` both
@@ -607,7 +634,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       for x <- 1..3, do: place(view, :residential, x, 1)
       place(view, :park, 1, 2)
 
-      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: ×1.33"
+      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: parks ×1.33"
     end
 
     # The bold half of the cell, which is the figure a player's eye lands on. It answers a
@@ -743,8 +770,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert has_element?(view, ~s{[data-cell="residential-cost"][title="costs 15"]})
     end
 
-    # The whole point of the change: waste and traffic are bads, so a block that
-    # removes them reads negative and a block that emits them reads positive.
+    # Waste and traffic are the columnar bads, so a block that removes them reads
+    # negative and a block that emits them reads positive. Injuries and disease use
+    # the hospital treatment summary tested above instead of sparse columns.
     test "a negative resource shows removal as negative and emission as positive",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")

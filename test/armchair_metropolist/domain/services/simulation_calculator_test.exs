@@ -85,12 +85,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   end
 
   describe "baseline_capacity/0" do
-    test "supplies 30 water, 40 waste and 20 traffic, with no free power, labour or money" do
+    test "supplies only the three free baseline resources" do
       assert Calc.baseline_capacity() == %{
                power: 0.0,
                water: 30.0,
                waste: 40.0,
                traffic: 20.0,
+               injuries: 0.0,
+               disease: 0.0,
                labour: 0.0,
                money: 0.0
              }
@@ -378,6 +380,80 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {next, _delta} = Calc.advance_tick(city)
       assert next.money == 4.0
       assert_in_delta Calc.metrics(next).market_spend, 4.0, 0.001
+    end
+  end
+
+  describe "injuries, disease and hospitals" do
+    test "traffic creates injuries only above the healthy capacity threshold" do
+      safe = map_with(for(x <- 0..1, do: Node.new(x, 0, :residential)))
+      busy = map_with(for(x <- 0..3, do: Node.new(x, 0, :residential)))
+
+      assert Calc.healthy_traffic_ratio() == 0.8
+      assert Calc.resource_stats(safe).injuries.demanded == 0.0
+
+      busy_stats = Calc.resource_stats(busy)
+      assert busy_stats.traffic.supplied == 20.0
+      assert busy_stats.traffic.demanded == 24.0
+      assert_in_delta busy_stats.injuries.demanded, 0.8, 0.001
+
+      {next, _delta} = Calc.advance_tick(busy)
+      assert_in_delta next.injury_stock, 0.8, 0.001
+    end
+
+    test "injuries and disease combine to reduce residential labour" do
+      city =
+        %{
+          map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
+          | injury_stock: 6.0,
+            disease_stock: 4.0
+        }
+
+      stats = Calc.resource_stats(city)
+      metrics = Calc.metrics(city)
+
+      assert_in_delta metrics.health_labour_multiplier, 0.5, 0.001
+      assert_in_delta stats.labour.supplied, 5.0, 0.001
+      assert_in_delta metrics.by_type.residential.actual_capacity.labour, 5.0, 0.001
+    end
+
+    test "disease outbreaks recur every thirty ticks and scale with housing" do
+      city = map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
+
+      assert Calc.disease_outbreak_interval() == 30
+      assert Calc.resource_stats(%{city | tick: 28}).disease.demanded == 0.0
+
+      outbreak_city = %{city | tick: 29}
+      assert Calc.resource_stats(outbreak_city).disease.demanded == 4.0
+
+      {next, _delta} = Calc.advance_tick(outbreak_city)
+      assert next.tick == 30
+      assert next.disease_stock == 4.0
+    end
+
+    test "each hospital removes another ten injuries and disease cases per tick" do
+      one_hospital =
+        %{
+          map_with([
+            Node.new(0, 0, :transit_hub),
+            Node.new(1, 0, :hospital)
+          ])
+          | injury_stock: 25.0,
+            disease_stock: 25.0
+        }
+
+      two_hospitals = CityMap.put_node(one_hospital, Node.new(2, 0, :hospital))
+
+      one = Calc.resource_stats(one_hospital)
+      two = Calc.resource_stats(two_hospitals)
+
+      assert one.injuries.deficit == 15.0
+      assert one.disease.deficit == 15.0
+      assert two.injuries.deficit == 5.0
+      assert two.disease.deficit == 5.0
+
+      {next, _delta} = Calc.advance_tick(two_hospitals)
+      assert next.injury_stock == 5.0
+      assert next.disease_stock == 5.0
     end
   end
 

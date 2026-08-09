@@ -11,7 +11,7 @@ defmodule ArmchairMetropolist.UseCases.ResetCityTest do
       |> CityMap.put_node(%Node{Node.new(0, 0, :residential) | health: 0.0, status: :offline})
       |> CityMap.debit(150.0)
 
-    city = %{city | tick: 99}
+    city = %{city | tick: 99, injury_stock: 8.0, disease_stock: 12.0}
 
     assert {:ok, %{city_map: reset, metrics: metrics}} = ResetCity.execute(city)
 
@@ -23,6 +23,8 @@ defmodule ArmchairMetropolist.UseCases.ResetCityTest do
     assert metrics.tick == 0
     assert metrics.node_count == 0
     assert metrics.money == 0.0
+    assert metrics.injury_stock == 0.0
+    assert metrics.disease_stock == 0.0
     assert reset.municipal_bond == nil
     refute metrics.stalled
     assert metrics.bankrupt
