@@ -277,6 +277,30 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert saved.municipal_bond.outstanding_principal == 295.0
     end
 
+    test "a commercial bridge quote is serialized, persisted, and broadcast", %{city_id: city_id} do
+      city = commercial_bridge_city()
+      StubSnapshotRepository.set_initial({:ok, {CityMap.snapshot_order(city), city}})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.issue_commercial_bond(city_id)
+      assert {:error, :already_issued} = CityEngine.issue_commercial_bond(city_id)
+
+      assert_receive {:city_metrics,
+                      %{
+                        money: 94.0,
+                        commercial_bond: %{original_principal: 94.0},
+                        commercial_bond_offer: nil
+                      }}
+
+      refute_receive {:city_metrics, _}, 50
+
+      assert [{^city_id, {0, 1}, saved}] = StubSnapshotRepository.saves()
+      assert saved.money == 94.0
+      assert saved.revision == 1
+      assert saved.commercial_bond.original_principal == 94.0
+    end
+
     test "a refused redemption leaves treasury, revision, and persistence untouched", %{
       city_id: city_id
     } do
@@ -1488,6 +1512,14 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       end)
 
     %{CityMap.new() | tick: 40, revision: 3, money: 500.0, municipal_bond: bond}
+  end
+
+  defp commercial_bridge_city do
+    legacy_city(40, 30)
+    |> CityMap.put_node(Node.new(0, 0, :residential))
+    |> CityMap.put_node(Node.new(1, 0, :power_plant))
+    |> CityMap.put_node(Node.new(2, 0, :water_plant))
+    |> Map.put(:money, 0.0)
   end
 
   # Polls `fun` until it returns truthy or 500ms have passed, returning the last

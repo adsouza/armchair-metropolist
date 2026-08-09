@@ -26,6 +26,7 @@ defmodule ArmchairMetropolist.UseCases.ResetCityTest do
     assert metrics.injury_stock == 0.0
     assert metrics.disease_stock == 0.0
     assert reset.municipal_bond == nil
+    assert reset.commercial_bond == nil
     refute metrics.stalled
     assert metrics.bankrupt
     refute ArmchairMetropolist.Domain.Entities.SimulationMetrics.game_over?(metrics)

@@ -121,4 +121,40 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       refute has_element?(view, "#bond-issuance")
     end
   end
+
+  describe "commercial bridge" do
+    @tag :bridge_eligible_city
+    test "issues the quoted bridge and enables the commercial construction", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#commercial-bond-offer", "6 ticks of projected expenses")
+
+      view |> element("#issue-commercial-bond") |> render_click()
+
+      refute has_element?(view, "#commercial-bond-offer")
+      assert has_element?(view, "#metrics-treasury", "Treasury: 94")
+      assert has_element?(view, "#commercial-bond-panel")
+      assert has_element?(view, "#commercial-bond-principal", "94")
+
+      assert has_element?(
+               view,
+               "#commercial-bond-service-status",
+               "Debt service begins in 20 ticks"
+             )
+
+      place(view, :commercial, 3, 0)
+
+      assert has_element?(view, ~s{#nodes [id="3:0"]})
+      assert has_element?(view, "#metrics-treasury", "Treasury: 54")
+    end
+
+    test "a forged bridge request outside the offer is refused", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "issue_commercial_bond", %{})
+
+      assert render(view) =~ "commercial bridge is no longer available"
+      refute has_element?(view, "#commercial-bond-panel")
+    end
+  end
 end

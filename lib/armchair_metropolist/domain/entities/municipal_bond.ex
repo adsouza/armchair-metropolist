@@ -1,6 +1,6 @@
 defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
   @moduledoc """
-  A city's one municipal bond issue.
+  One serial municipal bond issue, used for either opening finance or the commercial bridge.
 
   The issue amortizes level principal over a fixed term. Principal arrears are a
   subset of outstanding principal, never an additional balance; interest arrears
@@ -52,6 +52,17 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBond do
   @doc "The issue highlighted for a first city."
   @spec recommended_issue() :: float()
   def recommended_issue, do: @recommended_issue
+
+  @doc "Construct and immediately start a quoted one-time commercial bridge issue."
+  @spec commercial_bridge(float(), non_neg_integer()) :: t()
+  def commercial_bridge(principal, tick)
+      when is_number(principal) and principal > 0.0 and is_integer(tick) and tick >= 0 do
+    %__MODULE__{
+      original_principal: principal * 1.0,
+      outstanding_principal: principal * 1.0
+    }
+    |> start(tick)
+  end
 
   @doc "Ticks after first construction before debt service begins."
   @spec opening_period_ticks() :: pos_integer()

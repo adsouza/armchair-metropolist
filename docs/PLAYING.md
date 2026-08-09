@@ -22,9 +22,10 @@ treasury cannot tear anything down either.
 
 ## Choose the bond before you build
 
-A new city has no grant and no spendable cash. First authorize one municipal bond issue;
-its proceeds become the treasury immediately. The issue is a fixed-term commitment, not a
-renewable credit line: there is one issue per city, and only Reset returns to the choice.
+A new city has no grant and no spendable cash. First authorize one opening municipal bond
+issue; its proceeds become the treasury immediately. The opening issue is a fixed-term
+commitment, not a renewable credit line, and only Reset returns to those three choices. A
+narrow one-time commercial bridge can become available later; it is described below.
 
 <!-- generated:bonds -->
 | issue | proceeds | principal/tick | first interest | first payment | total interest | final payment |
@@ -45,6 +46,26 @@ service is shown separately in the Municipal bond panel and never masquerades as
 load. Interest is 0.5% of outstanding principal per servicing tick, while one hundredth of
 the original principal matures each tick. Payments decline as principal falls, and the
 100th servicing tick makes every remaining principal due.
+
+### The one-time commercial bridge
+
+If a city remains at full health with every non-money resource supplied, but its treasury is
+permanently shrinking and can no longer cover the commercial block that would restore
+solvency, the simulator offers one commercial bridge bond. This is an escape hatch for that
+specific healthy economic lock, not a general second bond market.
+
+The quote is calculated from the live city rather than fixed. It raises the treasury to the
+commercial block's 40 construction cost **plus six projected ticks of the city's actual cash
+outflow**, rounded up to a whole unit. The projection uses the real tick calculation, so
+operating costs, market purchases, changing income and scheduled opening-bond service are all
+included. Issuing the bridge starts its own 20-tick payment holiday immediately; it then
+amortizes over 100 servicing ticks at the same 0.5% interest rate. Opening-bond service is paid
+first when both series owe money.
+
+The bridge can be issued only once. Its card disappears as soon as the city stops qualifying
+or the issue is accepted, and the server recomputes the quote on the click so a stale browser
+cannot borrow against conditions that no longer exist. A missed payment on either series
+pauses new construction until the past-due balance clears.
 
 If cash is short, interest and serial principal remain past due. **Default pauses new
 construction**, but it does not remove blocks or stop demolition; later cash is applied to
@@ -319,9 +340,10 @@ commercial : 1 hospital per 9 residential**. Commercial belongs in that ratio no
 optional add-on: a residential block's own income (money 1) can't cover what it costs
 the water plants and transit hubs it needs, so a support set without a commercial block is
 insolvent — the treasury drains over the game's lifetime even while every other resource
-reads 100% satisfied. That word has a precise meaning the game acts on, and a city that stays
-insolvent long enough ends up locked and unplayable; see "When the city stops" below for the
-warning you get first and the way back out.
+reads 100% satisfied. That word has a precise meaning the game acts on. Build commerce while
+it is affordable; if an otherwise fully healthy city loses that chance, the one-time bridge
+above may reopen it. A city that cannot qualify, or has already used the bridge, can still end
+up locked and unplayable; see "When the city stops" below.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
@@ -449,10 +471,11 @@ and the clock restarts. That may buy only one
 tick rather than a recovery — if the treasury empties while the city still has no local
 power, it can stall again.
 
-**Game over** is the case where the treasury can never rise again, so no command will ever be
-affordable. The cheapest thing you can do is demolish, at 10, and the cheapest thing you can
-build is a house, at 15, so below 10 you have no move at all. Two different things can make
-that floor permanent, and a city needs only one of them.
+**Game over** is the case where the treasury can never rise again and no commercial bridge
+offer remains, so no command will ever be affordable. The cheapest thing you can do is
+demolish, at 10, and the cheapest thing you can build is a house, at 15, so below 10 you have
+no ordinary move at all. Two different things can make that floor permanent, and a city needs
+only one of them.
 
 **Stalled and broke** is the first. The clock has stopped, production is health-scaled and
 therefore zero, so the balance cannot move. Nothing in the city can change on its own.
@@ -460,11 +483,13 @@ therefore zero, so the balance cannot move. Nothing in the city can change on it
 **Locked** is the second, and it does not look like death at all. If your upkeep is higher
 than the most your city could *ever* earn — every block at 100 health — then the treasury
 drains to zero and stays there however long you wait, because upkeep is not scaled by health
-and income is. The smallest stable example is one house, one power plant and one water
-plant: local infrastructure covers every physical resource, but the two plants cost 10 a
-tick against a maximum income of 1. At an empty treasury all three remain healthy forever
-and nothing can be clicked. The banner calls this **City locked** rather than dead, because
-the house really is alive; what has died is your ability to act.
+and income is. One house, one power plant and one water plant demonstrate the underlying
+condition: local infrastructure covers every physical resource, but the two plants cost 10 a
+tick against a maximum income of 1. At an empty treasury all three remain healthy forever.
+That exact city now receives the bridge offer because one commercial block fixes it. If the
+bridge has already been used, or the city is no longer otherwise healthy, the banner calls the
+terminal state **City locked** rather than dead: the house really is alive; what has died is
+your ability to act.
 
 The word for the underlying condition is **insolvent**, and it is the same one used above for a
 support set with no commercial block. Insolvency on its own is not a crisis — the documented
@@ -596,7 +621,7 @@ actually purchased, not the unfunded portion of a labour shortage, and clears ea
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-Demolishing anything costs 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 municipal bond issue before construction. Those proceeds are debt, not a grant.
+Demolishing anything costs 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A qualifying healthy city may later receive one dynamically quoted commercial bridge covering the gap to 40 plus six projected ticks of expenses.
 <!-- /generated:costs -->
 
 ### Health and timing

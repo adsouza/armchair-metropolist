@@ -41,7 +41,8 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
       is_nil(city_map.municipal_bond) ->
         {:error, :financing_required}
 
-      MunicipalBond.defaulted?(city_map.municipal_bond) ->
+      MunicipalBond.defaulted?(city_map.municipal_bond) or
+          MunicipalBond.defaulted?(city_map.commercial_bond) ->
         {:error, :bond_default}
 
       city_map.money < Node.construction_cost(type) ->

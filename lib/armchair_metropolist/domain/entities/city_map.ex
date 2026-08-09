@@ -15,7 +15,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           waste_stock: float(),
           injury_stock: float(),
           disease_stock: float(),
-          municipal_bond: MunicipalBond.t() | nil
+          municipal_bond: MunicipalBond.t() | nil,
+          commercial_bond: MunicipalBond.t() | nil
         }
 
   @type snapshot_order :: {non_neg_integer(), non_neg_integer()}
@@ -76,7 +77,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             waste_stock: 0.0,
             injury_stock: 0.0,
             disease_stock: 0.0,
-            municipal_bond: nil
+            municipal_bond: nil,
+            commercial_bond: nil
 
   @doc """
   Create a new empty city map with the given dimensions.
@@ -152,9 +154,9 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @doc """
   Discard this city and start a new one.
 
-  Tick 0, revision 0, no nodes, an empty treasury, no authorized bond, and the grid at the
-  starting size — delegating to `new/0` rather than resetting fields by hand, so there is
-  exactly one definition of what a new city is and this cannot drift from it.
+  Tick 0, revision 0, no nodes, an empty treasury, no opening or commercial bridge bond,
+  and the grid at the starting size — delegating to `new/0` rather than resetting fields
+  by hand, so there is exactly one definition of what a new city is and this cannot drift.
   """
   @spec reset(t()) :: t()
   def reset(_map), do: new()

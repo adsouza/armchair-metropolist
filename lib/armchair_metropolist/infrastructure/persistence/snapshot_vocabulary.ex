@@ -79,7 +79,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     :injury_stock,
     :disease_stock,
     :revision,
-    :municipal_bond
+    :municipal_bond,
+    :commercial_bond
   ]
 
   @doc "The modules whose atoms a persisted city can contain."
@@ -132,6 +133,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
       :municipal_bond,
       ArmchairMetropolist.Domain.Entities.MunicipalBond.legacy()
     )
+    |> Map.put_new(:commercial_bond, nil)
     |> Map.put(:nodes, Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end))
   end
 

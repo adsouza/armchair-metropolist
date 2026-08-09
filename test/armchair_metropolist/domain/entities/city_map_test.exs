@@ -16,6 +16,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.injury_stock == 0.0
       assert map.disease_stock == 0.0
       assert map.municipal_bond == nil
+      assert map.commercial_bond == nil
     end
   end
 
@@ -30,6 +31,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.nodes == %{}
       assert map.money == 0.0
       assert map.municipal_bond == nil
+      assert map.commercial_bond == nil
     end
 
     test "the struct defaults agree with new/0 on the starting grid" do
@@ -182,6 +184,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert reset.injury_stock == 0.0
       assert reset.disease_stock == 0.0
       assert reset.municipal_bond == nil
+      assert reset.commercial_bond == nil
     end
 
     test "delegates to new/0 so there is one definition of a new city" do

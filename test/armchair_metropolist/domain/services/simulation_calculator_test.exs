@@ -975,6 +975,61 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # banner on a fresh city.
       refute Calc.metrics(CityMap.new(40, 30)).insolvent
     end
+
+    test "quotes the commercial shortfall plus six projected ticks for a healthy city" do
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          Node.new(1, 0, :power_plant),
+          Node.new(2, 0, :water_plant)
+        ])
+        |> Map.put(:money, 0.0)
+
+      assert Calc.metrics(city).commercial_bond_offer == %{
+               principal: 94.0,
+               construction_cost: 40.0,
+               runway_ticks: 6
+             }
+    end
+
+    test "includes existing opening-bond service in the six-tick bridge quote" do
+      {:ok, bond} = MunicipalBond.new(400.0)
+
+      city =
+        %{
+          CityMap.new(40, 30)
+          | municipal_bond: MunicipalBond.start(bond, 0),
+            tick: 20
+        }
+        |> CityMap.put_node(Node.new(0, 0, :residential))
+        |> CityMap.put_node(Node.new(1, 0, :power_plant))
+        |> CityMap.put_node(Node.new(2, 0, :water_plant))
+
+      assert Calc.metrics(city).commercial_bond_offer == %{
+               principal: 130.0,
+               construction_cost: 40.0,
+               runway_ticks: 6
+             }
+    end
+
+    test "does not offer the bridge when the city is damaged or can still afford commerce" do
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          Node.new(1, 0, :power_plant),
+          Node.new(2, 0, :water_plant)
+        ])
+
+      refute Calc.metrics(%{city | money: 40.0}).commercial_bond_offer
+
+      damaged =
+        CityMap.put_node(
+          %{city | money: 0.0},
+          %Node{Node.new(0, 0, :residential) | health: 99.0, status: :online}
+        )
+
+      refute Calc.metrics(damaged).commercial_bond_offer
+    end
   end
 
   describe "escape" do
@@ -1338,6 +1393,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert metrics.resources.money.demanded == 5.0
       assert metrics.by_type.water_plant.load.money == 5.0
       assert metrics.bond.next_payment == 6.0
+    end
+
+    test "services the commercial bridge after its own opening period" do
+      city = %{
+        legacy_city()
+        | tick: 20,
+          money: 100.0,
+          commercial_bond: MunicipalBond.commercial_bridge(94.0, 0)
+      }
+
+      metrics = Calc.metrics(city)
+      {next, _delta} = Calc.advance_tick(city)
+
+      assert_in_delta metrics.commercial_bond.next_payment, 1.41, 1.0e-9
+      assert_in_delta next.money, 98.59, 1.0e-9
+      assert_in_delta next.commercial_bond.outstanding_principal, 93.06, 1.0e-9
     end
 
     test "unissued and issued-unstarted clocks change neither tick nor bond" do

@@ -41,6 +41,15 @@ defmodule ArmchairMetropolist.Domain.Entities.MunicipalBondTest do
       assert MunicipalBond.debt_free?(redeemed)
       refute MunicipalBond.legacy?(redeemed)
     end
+
+    test "a quoted commercial bridge accepts a dynamic principal and starts immediately" do
+      bridge = MunicipalBond.commercial_bridge(94.0, 17)
+
+      assert bridge.original_principal == 94.0
+      assert bridge.outstanding_principal == 94.0
+      assert bridge.started_at_tick == 17
+      assert MunicipalBond.quote(bridge, 17).opening_period_remaining == 20
+    end
   end
 
   describe "schedule" do

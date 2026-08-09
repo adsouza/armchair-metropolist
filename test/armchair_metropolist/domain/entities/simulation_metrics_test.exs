@@ -81,6 +81,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         escape: {:demolish, :park, 10.0},
         rescue_window: 8,
         bond: %{outstanding_principal: 200.0},
+        commercial_bond: %{outstanding_principal: 75.0},
+        commercial_bond_offer: %{principal: 94.0, construction_cost: 40.0, runway_ticks: 6},
         financing_locked: true,
         financing_escape: {:redeem, 25.0},
         financing_rescue_window: 3
@@ -103,6 +105,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.escape == {:demolish, :park, 10.0}
     assert metrics.rescue_window == 8
     assert metrics.bond == %{outstanding_principal: 200.0}
+    assert metrics.commercial_bond == %{outstanding_principal: 75.0}
+
+    assert metrics.commercial_bond_offer == %{
+             principal: 94.0,
+             construction_cost: 40.0,
+             runway_ticks: 6
+           }
+
     assert metrics.financing_locked
     assert metrics.financing_escape == {:redeem, 25.0}
     assert metrics.financing_rescue_window == 3
@@ -299,6 +309,18 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
                stalled: false,
                insolvent: false,
                bankrupt: true
+             })
+    end
+
+    test "false while a commercial bridge offer remains available" do
+      refute SimulationMetrics.game_over?(%SimulationMetrics{
+               insolvent: true,
+               bankrupt: true,
+               commercial_bond_offer: %{
+                 principal: 94.0,
+                 construction_cost: 40.0,
+                 runway_ticks: 6
+               }
              })
     end
   end

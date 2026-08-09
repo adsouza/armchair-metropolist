@@ -133,10 +133,23 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         {:ok, {0, %{city | money: 0.0}}}
       end
 
-      # `@tag :locked_city` seeds a physically self-sufficient insolvency softlock: one
-      # house, one power plant and one water plant remain healthy, but ceiling 1 is below
-      # upkeep 5 and the empty treasury cannot buy an escape action.
-      defp initial_snapshot(%{locked_city: true}), do: {:ok, {0, locked_city()}}
+      # One house, one power plant and one water plant remain fully healthy, but ceiling 1
+      # is below upkeep 10 and the empty treasury cannot buy the commercial cure. Before
+      # its one-time bridge is used, this is the exact state that receives the offer.
+      defp initial_snapshot(%{bridge_eligible_city: true}),
+        do: {:ok, {0, bridge_eligible_city()}}
+
+      # The same city after its one bridge has already been issued. With no second offer
+      # and no affordable command it is a real lock again, preserving coverage of the
+      # terminal state alongside the new rescue path.
+      defp initial_snapshot(%{locked_city: true}) do
+        city = %{
+          bridge_eligible_city()
+          | commercial_bond: MunicipalBond.commercial_bridge(94.0, 0)
+        }
+
+        {:ok, {0, city}}
+      end
 
       # The same city inside the warning band: 30 in the bank, a rescue window of 2 ticks
       # against a reaction budget of 12. Not bankrupt, so the player can still demolish the park.
@@ -237,7 +250,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         %{city | money: money}
       end
 
-      defp locked_city do
+      defp bridge_eligible_city do
         legacy_city(40, 30)
         |> CityMap.put_node(Node.new(0, 0, :residential))
         |> CityMap.put_node(Node.new(1, 0, :power_plant))

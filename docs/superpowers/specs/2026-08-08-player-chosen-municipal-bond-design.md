@@ -6,6 +6,12 @@
 playing-guide claim derived from it. Existing saved cities are grandfathered debt-free; this
 design does not assign a liability retroactively.
 
+**2026-08-09 amendment:** the opening issue remains single-choice and cannot be reopened, but
+the later commercial-bridge feature adds one narrowly gated second series. It is available only
+to a fully healthy, physically supplied, insolvent city after the 40-cost commercial cure becomes
+unaffordable; its dynamic quote covers the shortfall plus six projected ticks of cash outflow.
+This supersedes the broad “no second series” non-goal below without creating a general bond market.
+
 ## 1. Problem
 
 The opening grant does two jobs today, and its fixed size makes them impossible to separate.

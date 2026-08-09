@@ -22,6 +22,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           paused: boolean()
         }
 
+  @type commercial_bond_offer :: %{
+          principal: float(),
+          construction_cost: float(),
+          runway_ticks: pos_integer()
+        }
+
   @typedoc """
   Two satisfaction figures, on two different bases. `satisfaction` is computed
   over `supplied + carried + purchased` — the balance-inclusive figure that drives health
@@ -86,6 +92,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           escape: escape() | nil,
           rescue_window: non_neg_integer() | nil,
           bond: bond_summary() | nil,
+          commercial_bond: bond_summary() | nil,
+          commercial_bond_offer: commercial_bond_offer() | nil,
           financing_locked: boolean(),
           financing_escape: escape() | nil,
           financing_rescue_window: non_neg_integer() | nil,
@@ -139,6 +147,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     escape: nil,
     rescue_window: nil,
     bond: nil,
+    commercial_bond: nil,
+    commercial_bond_offer: nil,
     financing_locked: false,
     financing_escape: nil,
     financing_rescue_window: nil
@@ -167,6 +177,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             escape: nil,
             rescue_window: nil,
             bond: nil,
+            commercial_bond: nil,
+            commercial_bond_offer: nil,
             financing_locked: false,
             financing_escape: nil,
             financing_rescue_window: nil,
@@ -192,8 +204,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   `:market_spend` is the money those automatic purchases consume this tick, and
   `:imported_labour_traffic` is the commuter demand created by the labour portion.
+  `:commercial_bond` is the live bridge-series quote, while
+  `:commercial_bond_offer` is the one-time rescue quote when the city qualifies.
 
-  All fifteen are computed by `Domain.Services.SimulationCalculator`, which this module cannot
+  All seventeen are computed by `Domain.Services.SimulationCalculator`, which this module cannot
   call — `Domain` has `deps: []` — so they arrive as an argument rather than being derived
   here. A partial map is a programming error; see the `Map.fetch!/2` calls below.
   """
@@ -235,6 +249,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       escape: Map.fetch!(derived, :escape),
       rescue_window: Map.fetch!(derived, :rescue_window),
       bond: Map.fetch!(derived, :bond),
+      commercial_bond: Map.fetch!(derived, :commercial_bond),
+      commercial_bond_offer: Map.fetch!(derived, :commercial_bond_offer),
       financing_locked: Map.fetch!(derived, :financing_locked),
       financing_escape: Map.fetch!(derived, :financing_escape),
       financing_rescue_window: Map.fetch!(derived, :financing_rescue_window),
@@ -243,13 +259,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   end
 
   @doc """
-  Whether this city's treasury can never rise again — and so whether the player can never
-  act again, since both commands have a price.
+  Whether this city's treasury can never rise again and no financing escape remains — and
+  so whether the player can never act again, since every infrastructure command has a price.
 
   `bankrupt` is necessary: while any command is affordable the player still has a move, and
-  neither `stalled` nor `insolvent` is beyond help on its own. A stalled city holding money
-  can be rescued by one demolition, which takes three dead houses back under the free
-  baseline; an insolvent city holding money can buy the shop that ends the insolvency.
+  neither `stalled` nor `insolvent` is beyond help on its own. The commercial-bridge offer
+  is also an action, so a qualifying healthy city is not game over even below the ordinary
+  command floor. A stalled city holding money can be rescued by one demolition, which takes
+  three dead houses back under the free baseline; an insolvent city holding money can buy
+  the shop that ends the insolvency.
 
   Given bankruptcy, either of two conditions makes the treasury's floor permanent, and
   neither implies the other:
@@ -268,7 +286,9 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   """
   @spec game_over?(t()) :: boolean()
   def game_over?(%__MODULE__{} = metrics),
-    do: metrics.bankrupt and (metrics.stalled or metrics.insolvent or metrics.financing_locked)
+    do:
+      metrics.bankrupt and is_nil(metrics.commercial_bond_offer) and
+        (metrics.stalled or metrics.insolvent or metrics.financing_locked)
 
   @doc """
   Whether the city is insolvent and close enough to losing its escape to be told about it.

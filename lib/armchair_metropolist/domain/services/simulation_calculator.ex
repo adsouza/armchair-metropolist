@@ -17,8 +17,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct.
-    3. Node upkeep is reserved, then scheduled municipal-bond service is paid
-       from the remaining balance. Current-tick income can service debt.
+    3. Node upkeep is reserved, then scheduled opening-bond service and any
+       commercial-bridge service are paid from the remaining balance. Current-tick
+       income can service debt.
     4. Power, water, waste disposal and labour shortfalls are bought from the
        external market for one money per unit. Only treasury carried into the
        tick is spendable, after reserving upkeep and debt service. If it cannot cover
@@ -137,6 +138,18 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # only paid while the city is insolvent.
   @runway_horizon 60
 
+  # The bridge quote protects more than the instant it is clicked. Six ticks is long
+  # enough for the player to read the updated treasury, select commercial and place it,
+  # while keeping this a small construction bridge rather than a second opening issue.
+  @commercial_bridge_runway_ticks 6
+
+  # A projection balance large enough that the quoted city's existing expenses cannot
+  # hit the zero floor during six ticks. The difference between this seed and the
+  # projected balance is therefore the real cash outflow, which can be added to the
+  # construction cost without losing expenses that occur after an empty treasury would
+  # otherwise clamp to zero.
+  @commercial_bridge_projection_balance 1_000_000.0
+
   @regen_per_tick 1.0
   @decay_per_tick 6.0
   @min_health 0.0
@@ -220,8 +233,17 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       end)
 
     cash_after_upkeep = raw_stats |> Map.fetch!(:money) |> new_balance()
-    service = MunicipalBond.service(city_map.municipal_bond, city_map.tick, cash_after_upkeep)
-    cash_after_upkeep_and_bond = max(0.0, cash_after_upkeep - service.payment)
+
+    opening_service =
+      MunicipalBond.service(city_map.municipal_bond, city_map.tick, cash_after_upkeep)
+
+    cash_after_opening_bond = max(0.0, cash_after_upkeep - opening_service.payment)
+
+    commercial_service =
+      MunicipalBond.service(city_map.commercial_bond, city_map.tick, cash_after_opening_bond)
+
+    cash_after_upkeep_and_bond =
+      max(0.0, cash_after_opening_bond - commercial_service.payment)
 
     # Current-tick income can service the bond, but only treasury carried into the tick
     # can fund imports. The second bound reserves both node upkeep and debt first.
@@ -247,9 +269,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
     %{
       resources: resources,
-      next_bond: service.bond,
+      next_bond: opening_service.bond,
+      next_commercial_bond: commercial_service.bond,
       bond_quote: MunicipalBond.quote(city_map.municipal_bond, city_map.tick),
-      bond_payment: service.payment,
+      commercial_bond_quote: MunicipalBond.quote(city_map.commercial_bond, city_map.tick),
+      bond_payment: opening_service.payment + commercial_service.payment,
       cash_after_upkeep_and_bond: cash_after_upkeep_and_bond,
       market_spend: market_spend(resources)
     }
@@ -310,7 +334,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
          waste_stock: waste_stock,
          injury_stock: injury_stock,
          disease_stock: disease_stock,
-         municipal_bond: plan.next_bond
+         municipal_bond: plan.next_bond,
+         commercial_bond: plan.next_commercial_bond
      }, delta}
   end
 
@@ -326,6 +351,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     operating = solvency(city_map, nodes, stats, stalled)
     financing = financing(city_map, nodes, plan.bond_quote, stalled)
     bond = if plan.bond_quote, do: Map.put(plan.bond_quote, :paused, stalled), else: nil
+
+    commercial_bond =
+      if plan.commercial_bond_quote,
+        do: Map.put(plan.commercial_bond_quote, :paused, stalled),
+        else: nil
+
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
 
     derived =
@@ -338,12 +369,58 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         imported_labour_traffic:
           Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
         stalled: stalled,
-        bond: bond
+        bond: bond,
+        commercial_bond: commercial_bond,
+        commercial_bond_offer: commercial_bond_offer(city_map, nodes, stats, operating, stalled)
       }
       |> Map.merge(operating)
       |> Map.merge(financing)
 
     SimulationMetrics.build(city_map, stats, derived)
+  end
+
+  # The bridge is a deliberately narrow escape hatch, not a general second bond market.
+  # It appears only when a full-health, fully supplied city has a permanently shrinking
+  # operating treasury, one commercial block is the exact single-action cure, and that
+  # block's construction cost has already slipped out of reach. The server-side use case
+  # reads this same value, so a forged click cannot borrow in any other state.
+  defp commercial_bond_offer(city_map, nodes, stats, operating, stalled) do
+    commercial_cost = Node.construction_cost(:commercial)
+
+    eligible? =
+      is_nil(city_map.commercial_bond) and not is_nil(city_map.municipal_bond) and
+        not MunicipalBond.defaulted?(city_map.municipal_bond) and not stalled and nodes != [] and
+        city_map.money < commercial_cost and operating.insolvent and
+        operating.escape == {:place, :commercial, commercial_cost} and
+        Enum.all?(nodes, &(&1.health == @max_health and &1.status == :online)) and
+        Enum.all?(stats, fn
+          {:money, _resource_stats} -> true
+          {_resource, resource_stats} -> resource_stats.satisfaction >= 1.0
+        end)
+
+    if eligible? do
+      projected =
+        Enum.reduce(
+          1..@commercial_bridge_runway_ticks,
+          %{city_map | money: @commercial_bridge_projection_balance},
+          fn
+            _tick, current -> elem(advance_tick(current), 0)
+          end
+        )
+
+      projected_expenses =
+        max(0.0, @commercial_bridge_projection_balance - projected.money)
+
+      principal =
+        max(0.0, commercial_cost + projected_expenses - city_map.money)
+        |> Float.ceil()
+
+      %{
+        principal: principal,
+        construction_cost: commercial_cost,
+        runway_ticks: @commercial_bridge_runway_ticks
+      }
+    end
   end
 
   # The solvency group: the rated money ceiling, whether it falls short of upkeep, the

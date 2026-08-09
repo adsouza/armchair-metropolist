@@ -197,15 +197,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       assert has_element?(view, "#reset-city")
     end
 
+    @tag :bridge_eligible_city
+    test "a healthy operating lock offers a commercial bridge instead of declaring game over",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render(view)
+      assert has_element?(view, "#commercial-bond-offer")
+      assert has_element?(view, "#issue-commercial-bond", "Issue 94 bridge bond")
+      refute html =~ "City locked"
+      refute html =~ "this city is dead"
+    end
+
     @tag :locked_city
-    test "the banner says locked, not dead", %{conn: conn} do
-      # A house at 100 health makes "this city is dead" a false sentence. Both directions
-      # asserted, because the two banners share their closing advice and an assertion on
-      # that alone would pass against the wrong copy.
+    test "a city that already used its bridge is locked, not dead", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       html = render(view)
       assert html =~ "City locked"
+      refute has_element?(view, "#commercial-bond-offer")
       refute html =~ "this city is dead"
     end
 
@@ -267,16 +277,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       assert has_element?(view, "#reset-city")
     end
 
-    @tag :locked_city
-    test "a locked city shows no rescue window, because there is no rescue", %{conn: conn} do
-      # `rescue_window` is `0` for this city, and `0` is truthy in Elixir — so a line gated
-      # on the bare value renders "Rescue window: 0 ticks" underneath a banner that has just
-      # explained the city is over. The figure is a warning device; once the warning is moot
-      # it is noise, and "0 ticks to rescue" invites a player to look for the rescue.
+    @tag :bridge_eligible_city
+    test "the bridge offer replaces the stale zero-tick rescue line", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert html = render(view)
-      assert html =~ "City locked"
+      assert has_element?(view, "#commercial-bond-offer")
       refute has_element?(view, "#metrics-rescue")
     end
 

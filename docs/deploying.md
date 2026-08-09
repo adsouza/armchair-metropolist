@@ -230,6 +230,13 @@ command at the top of this document immediately after the writer deploys; the bi
 and writes the non-null `revision` column. The migration is additive, but leaving the column
 behind does not make an older binary a safe rollback target for snapshots already written.
 
+The commercial-bridge writer adds `CityMap.commercial_bond`, a second persisted
+`MunicipalBond` value. Once that writer has saved a city, do not roll back to a binary that
+predates the field: the older binary neither services the bridge nor blocks construction on
+its default. `SnapshotVocabulary.modernize/1` defaults older snapshots to no bridge for the
+forward upgrade, but that forward-compatible reader cannot make the reverse semantic rollback
+safe.
+
 ## Deploying the server
 
 ```bash

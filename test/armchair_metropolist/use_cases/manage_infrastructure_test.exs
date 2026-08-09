@@ -106,6 +106,16 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :unknown_type} = ManageInfrastructure.place(broke, 1, 1, :airport)
     end
 
+    test "a defaulted commercial bridge pauses construction" do
+      bridge =
+        MunicipalBond.commercial_bridge(94.0, 0)
+        |> Map.put(:interest_arrears, 1.0)
+
+      map = %{legacy_city(40, 30) | commercial_bond: bridge}
+
+      assert {:error, :bond_default} = ManageInfrastructure.place(map, 1, 1, :commercial)
+    end
+
     property "place/4 either succeeds and debits exactly the cost, or fails and reports why" do
       check all(
               type <- StreamData.member_of(Node.types()),

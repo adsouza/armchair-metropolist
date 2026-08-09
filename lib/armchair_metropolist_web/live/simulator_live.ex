@@ -184,6 +184,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
+  def handle_event("issue_commercial_bond", _params, socket) do
+    case CityEngine.issue_commercial_bond(socket.assigns.city_id) do
+      :ok -> {:noreply, socket}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
+    end
+  end
+
   def handle_event("redeem_bond_25", _params, socket) do
     redeem_bond(socket, :minimum)
   end
@@ -423,6 +430,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <div :if={not is_nil(@metrics.bond)} id="financed-simulator">
         <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+
+        <.commercial_bond_offer
+          :if={@metrics.commercial_bond_offer}
+          offer={@metrics.commercial_bond_offer}
+          commands_enabled?={@commands_enabled?}
+        />
 
         <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
@@ -752,6 +765,48 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     """
   end
 
+  attr :offer, :map, required: true
+  attr :commands_enabled?, :boolean, required: true
+
+  defp commercial_bond_offer(assigns) do
+    ~H"""
+    <section
+      id="commercial-bond-offer"
+      class="mb-4 max-w-3xl rounded-2xl border border-primary/40 bg-primary/5 p-5 shadow-sm"
+    >
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-[0.2em] text-primary">
+            Commercial bridge available
+          </p>
+          <h2 class="mt-1 text-xl font-semibold tracking-tight">
+            Keep a healthy city from running out of options
+          </h2>
+          <p class="mt-2 max-w-2xl text-sm leading-relaxed opacity-75">
+            Your treasury is shrinking and no longer covers a {trunc(@offer.construction_cost)} commercial block. Issue {trunc(
+              @offer.principal
+            )} to restore that construction
+            budget plus {pluralize_ticks(@offer.runway_ticks)} of projected expenses. This is
+            serviced debt with the same 20-tick holiday and 100-tick term as the opening bond.
+          </p>
+        </div>
+        <button
+          id="issue-commercial-bond"
+          type="button"
+          class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl bg-primary px-5 py-2.5 font-semibold text-primary-content shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+          phx-click="issue_commercial_bond"
+          disabled={not @commands_enabled?}
+        >
+          Issue {trunc(@offer.principal)} bridge bond
+        </button>
+      </div>
+    </section>
+    """
+  end
+
+  defp pluralize_ticks(1), do: "1 tick"
+  defp pluralize_ticks(ticks), do: "#{ticks} ticks"
+
   # Rendered above the grid, deliberately outside the `<aside>`: the sidebar's width sets
   # the wrap thresholds documented in `render/1`, and this block's prose is far wider than
   # anything already in there.
@@ -890,7 +945,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       SimulationMetrics.game_over?(metrics) and metrics.financing_locked -> :financing_locked
       SimulationMetrics.game_over?(metrics) -> :locked
       metrics.stalled -> :stalled
-      metrics.bond && Map.get(metrics.bond, :defaulted, false) -> :bond_default
+      bond_defaulted?(metrics) -> :bond_default
       SimulationMetrics.financing_warning?(metrics) -> :financing_warning
       SimulationMetrics.warning?(metrics) -> :warning
       true -> nil
@@ -965,6 +1020,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     bond.outstanding_principal == 0.0 and bond.interest_arrears == 0.0
   end
 
+  defp bond_defaulted?(metrics) do
+    Enum.any?([metrics.bond, metrics.commercial_bond], fn
+      nil -> false
+      bond -> Map.get(bond, :defaulted, false)
+    end)
+  end
+
   defp bond_service_status(bond) do
     cond do
       bond_redeemed?(bond) ->
@@ -1014,6 +1076,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp financing_error(:not_callable), do: "Optional redemption is still call-protected."
   defp financing_error(:use_full_redemption), do: "Use Redeem all for the remaining balance."
   defp financing_error(:insufficient_funds), do: "The treasury cannot cover that redemption."
+  defp financing_error(:already_issued), do: "This city has already issued its bridge bond."
+
+  defp financing_error(:not_eligible),
+    do: "The commercial bridge is no longer available for this city."
 
   # The six columnar resources are fixed and identical on every row, including where a
   # type does not touch one. Aligned columns are the feature: the question a player has
@@ -1172,27 +1238,27 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # consistent.
   defp affordable?(money, type), do: money >= Node.construction_cost(type)
 
-  defp construction_available?(%{bond: %{defaulted: true}}, _type), do: false
-  defp construction_available?(metrics, type), do: affordable?(metrics.money, type)
+  defp construction_available?(metrics, type) do
+    not bond_defaulted?(metrics) and affordable?(metrics.money, type)
+  end
 
   # The row is dimmed, which is a visual-only signal; the title carries the same fact for
   # anyone who cannot see it. The select button stays enabled deliberately — choosing an
   # unaffordable type is harmless and is often what a player wants while waiting for
   # income.
-  defp cost_title(%{bond: %{defaulted: true, callable: true}}, _type) do
-    "bond payment missed — clear the past-due balance through debt service or redemption before building"
-  end
-
-  defp cost_title(%{bond: %{defaulted: true} = bond}, _type) do
-    "bond payment missed — clear the past-due balance through debt service; optional redemption opens in #{bond.call_protection_remaining} servicing ticks"
-  end
-
   defp cost_title(metrics, type) do
     cost = trunc(Node.construction_cost(type))
 
-    if affordable?(metrics.money, type),
-      do: "costs #{cost}",
-      else: "costs #{cost} — more than the treasury holds"
+    cond do
+      bond_defaulted?(metrics) ->
+        "bond payment missed — clear the past-due balance through debt service before building"
+
+      affordable?(metrics.money, type) ->
+        "costs #{cost}"
+
+      true ->
+        "costs #{cost} — more than the treasury holds"
+    end
   end
 
   # Always on screen, in both legend states. Tick, nodes, average health and offline
@@ -1224,6 +1290,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         :if={@metrics.bond && not @metrics.bond.legacy && not bond_redeemed?(@metrics.bond)}
         bond={@metrics.bond}
         money={@metrics.money}
+      />
+      <.commercial_bond_panel
+        :if={@metrics.commercial_bond && not bond_redeemed?(@metrics.commercial_bond)}
+        bond={@metrics.commercial_bond}
       />
       <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
         <span>Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick</span>
@@ -1257,7 +1327,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             render "Rescue window: 0 ticks" under a banner that has just said the city is over —
             sending the player to look for a rescue that no longer exists. --%>
       <p
-        :if={@metrics.rescue_window && not SimulationMetrics.game_over?(@metrics)}
+        :if={
+          @metrics.rescue_window && is_nil(@metrics.commercial_bond_offer) &&
+            not SimulationMetrics.game_over?(@metrics)
+        }
         id="metrics-rescue"
       >
         Rescue window: {@metrics.rescue_window} ticks
@@ -1354,6 +1427,50 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           Redeem all
         </button>
       </div>
+    </section>
+    """
+  end
+
+  attr :bond, :map, required: true
+
+  defp commercial_bond_panel(assigns) do
+    ~H"""
+    <section
+      id="commercial-bond-panel"
+      class="my-3 rounded-xl border border-primary/30 bg-primary/5 p-3"
+    >
+      <div class="flex items-center justify-between gap-3">
+        <h3 class="font-semibold">Commercial bridge bond</h3>
+        <span
+          :if={@bond.defaulted}
+          class="rounded-full bg-error px-2 py-0.5 text-xs font-bold text-white"
+        >
+          In default
+        </span>
+      </div>
+      <dl class="mt-2 space-y-1 text-sm">
+        <div class="flex justify-between gap-4">
+          <dt class="opacity-65">Principal outstanding</dt>
+          <dd id="commercial-bond-principal" class="font-semibold tabular-nums">
+            {bond_money(@bond.outstanding_principal)}
+          </dd>
+        </div>
+        <div :if={@bond.interest_arrears > 0.0} class="flex justify-between gap-4 text-error">
+          <dt>Interest past due</dt>
+          <dd id="commercial-bond-interest-arrears" class="font-semibold tabular-nums">
+            {bond_money(@bond.interest_arrears)}
+          </dd>
+        </div>
+        <div :if={@bond.principal_arrears > 0.0} class="flex justify-between gap-4 text-error">
+          <dt>Principal past due</dt>
+          <dd id="commercial-bond-principal-arrears" class="font-semibold tabular-nums">
+            {bond_money(@bond.principal_arrears)}
+          </dd>
+        </div>
+      </dl>
+      <p id="commercial-bond-service-status" class="mt-2 text-sm font-medium">
+        {bond_service_status(@bond)}
+      </p>
     </section>
     """
   end
