@@ -105,6 +105,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.UseCases.IssueCommercialBond
   alias ArmchairMetropolist.UseCases.IssueMunicipalBond
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
+  alias ArmchairMetropolist.UseCases.QuickStart
   alias ArmchairMetropolist.UseCases.RedeemMunicipalBond
   alias ArmchairMetropolist.UseCases.ResetCity
   alias ArmchairMetropolist.UseCases.SummarizeCity
@@ -163,6 +164,17 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
              | :bond_default
              | :insufficient_funds}
   def place(city_id, x, y, type), do: call(city_id, {:place, x, y, type})
+
+  @doc "Add the five-block starter plan during opening planning."
+  @spec quick_start(String.t()) ::
+          {:ok, [ArmchairMetropolist.Domain.Entities.Node.t()]}
+          | {:error,
+             :financing_required
+             | :already_started
+             | :bond_default
+             | :insufficient_funds
+             | :grid_full}
+  def quick_start(city_id), do: call(city_id, :quick_start)
 
   @doc "Authorize the city's one opening municipal bond issue."
   def issue_municipal_bond(city_id, principal), do: call(city_id, {:issue_bond, principal})
@@ -336,6 +348,25 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
         # where no clock runs, never.
         broadcast(state.city_id, {:city_metrics, metrics})
         {:reply, {:ok, node}, %{state | city_map: city_map, metrics: metrics}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:quick_start, _from, state) do
+    case QuickStart.execute(state.city_map) do
+      {:ok, %{city_map: city_map, nodes: nodes}} ->
+        metrics = summarize(city_map)
+
+        if city_map.width != state.city_map.width do
+          broadcast(state.city_id, {:city_grew, city_map})
+        end
+
+        Enum.each(nodes, &broadcast(state.city_id, {:city_node_placed, &1}))
+        broadcast(state.city_id, {:city_metrics, metrics})
+
+        {:reply, {:ok, nodes}, %{state | city_map: city_map, metrics: metrics}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}

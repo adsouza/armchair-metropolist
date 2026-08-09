@@ -32,6 +32,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
+  alias ArmchairMetropolist.UseCases.QuickStart
 
   @block_emojis %{
     power_plant: "⚡️",
@@ -209,6 +210,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     case CityEngine.begin_simulation(socket.assigns.city_id) do
       :ok -> {:noreply, socket}
       {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
+    end
+  end
+
+  def handle_event("quick_start", _params, socket) do
+    case CityEngine.quick_start(socket.assigns.city_id) do
+      {:ok, _nodes} ->
+        {:noreply, socket}
+
+      {:error, :insufficient_funds} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Quick start needs #{trunc(QuickStart.cost())} in the treasury."
+         )}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, quick_start_error(reason))}
     end
   end
 
@@ -654,7 +673,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           </div>
         </div>
 
-        <div class="shrink-0 sm:text-right">
+        <div class="grid shrink-0 gap-3 sm:min-w-52">
+          <button
+            id="quick-start"
+            type="button"
+            class="btn btn-outline min-h-11 w-full transition hover:-translate-y-0.5"
+            phx-click="quick_start"
+            disabled={not @commands_enabled? or @metrics.money < QuickStart.cost()}
+            title={
+              if @metrics.money < QuickStart.cost(),
+                do: "Quick start needs #{trunc(QuickStart.cost())} in the treasury",
+                else: "Add power, commercial, water, residential, and park blocks"
+            }
+          >
+            <.icon name="hero-bolt" class="size-4" /> Quick start
+          </button>
+          <p class="text-center text-xs leading-relaxed opacity-60">
+            Adds one power, commercial, water, residential, and park block.
+          </p>
           <button
             id="begin-sim"
             type="button"
@@ -1403,6 +1439,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp financing_error(:not_eligible),
     do: "The commercial bridge is no longer available for this city."
+
+  defp quick_start_error(:financing_required),
+    do: "Authorize a municipal bond issue before using quick start."
+
+  defp quick_start_error(:already_started),
+    do: "Quick start is only available during opening planning."
+
+  defp quick_start_error(:bond_default),
+    do: "Bond payment missed — clear the past-due balance before building."
+
+  defp quick_start_error(:grid_full),
+    do: "The grid has no room for the complete quick-start plan."
 
   # The six columnar resources are fixed and identical on every row, including where a
   # type does not touch one. Aligned columns are the feature: the question a player has

@@ -82,6 +82,35 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
     end
 
     @tag :unissued_city
+    test "quick start adds one of each starter block during planning", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#issue-bond-400") |> render_click()
+
+      assert has_element?(view, "#quick-start:not([disabled])", "Quick start")
+      view |> element("#quick-start") |> render_click()
+
+      for type <- [:power_plant, :commercial, :water_plant, :residential, :park] do
+        assert has_element?(view, ~s{#legend-row-#{type}[data-count="1"]})
+      end
+
+      assert has_element?(view, "#metrics-treasury", "Treasury: 175")
+      assert has_element?(view, "#begin-sim:not([disabled])")
+
+      assert {:ok, %{city_map: city}} = CityEngine.snapshot(CityEngine.default_city_id())
+
+      assert Enum.frequencies_by(CityMap.nodes(city), & &1.type) == %{
+               power_plant: 1,
+               commercial: 1,
+               water_plant: 1,
+               residential: 1,
+               park: 1
+             }
+
+      view |> element("#begin-sim") |> render_click()
+      refute has_element?(view, "#quick-start")
+    end
+
+    @tag :unissued_city
     test "the Balanced opening recommends saving without removing its parks", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       view |> element("#issue-bond-400") |> render_click()
