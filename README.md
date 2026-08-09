@@ -51,6 +51,11 @@ mix ex_tauri.dev
 That opens a window against a live-reloading dev server, which is the fastest loop
 for UI work.
 
+The desktop header includes <kbd>−</kbd>, <kbd>100%</kbd>, and <kbd>+</kbd> controls
+for scaling the whole UI. Browser-style shortcuts work too: use
+<kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>+</kbd> or <kbd>-</kbd>, and
+<kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>0</kbd> to return to 100%.
+
 To build a distributable bundle:
 
 ```bash

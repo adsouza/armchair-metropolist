@@ -33,6 +33,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#begin-sim[disabled]")
       assert has_element?(view, "#bond-service-status", "Debt service begins after Begin sim")
       assert has_element?(view, "#bond-panel.w-fit")
+      assert has_element?(view, "#metrics-treasury + #bond-panel")
+      assert has_element?(view, "#bond-panel + #metrics-market-slot")
       assert has_element?(view, "#bond-redemption-actions.grid.w-fit")
       assert has_element?(view, "#opening-goal-banner[data-variant=opening_goal] #opening-goal")
 
@@ -259,6 +261,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       refute has_element?(view, "#commercial-bond-offer")
       assert has_element?(view, "#metrics-treasury", "Treasury: 94")
       assert has_element?(view, "#commercial-bond-panel")
+      assert has_element?(view, "#metrics-treasury + #commercial-bond-panel")
+      assert has_element?(view, "#commercial-bond-panel + #metrics-market-slot")
       assert has_element?(view, "#commercial-bond-principal", "94")
 
       assert has_element?(

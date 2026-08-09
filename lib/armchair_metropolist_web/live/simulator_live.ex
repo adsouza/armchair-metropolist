@@ -1609,51 +1609,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-nodes">Nodes: {@metrics.node_count}</p>
       <p id="metrics-health">Avg health: {Float.round(@metrics.avg_health, 1)}</p>
       <p id="metrics-offline">Offline: {@metrics.offline_count}</p>
-      <%!-- `trunc/1`, not `round/1`: this figure is spendable, and rounding it up makes
-            the page contradict itself — a balance of 79.6 would read 80 while an 80-cost
-            build is refused. Because every construction cost is a whole number,
-            `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
-            and the domain's exact comparison agree. --%>
-      <p
-        id="metrics-treasury"
-        data-depleting={to_string(@metrics.treasury_delta < 0.0)}
-        class={[
-          @metrics.treasury_delta < 0.0 && "font-semibold text-red-700 dark:text-red-300"
-        ]}
-      >
-        Treasury: {trunc(@metrics.money)}
-      </p>
-      <.bond_panel
-        :if={@metrics.bond && not @metrics.bond.legacy && not bond_redeemed?(@metrics.bond)}
-        bond={@metrics.bond}
-        money={@metrics.money}
-      />
-      <.commercial_bond_panel
-        :if={@metrics.commercial_bond && not bond_redeemed?(@metrics.commercial_bond)}
-        bond={@metrics.commercial_bond}
-      />
-      <%!-- Reserve room for the conditional purchase summary so it does not push every
-            metric below it up and down as purchases start and stop. Chips wrap within the
-            fixed panel instead of contributing their max-content width to the sidebar. --%>
-      <div id="metrics-market-slot" class="min-h-20">
-        <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
-          <span class="block tabular-nums">
-            {if planning?(@metrics), do: "Projected purchases", else: "Automatic purchases"}: {Float.round(
-              @metrics.market_spend,
-              1
-            )}/tick
-          </span>
-          <span class="mt-1 flex flex-wrap gap-1">
-            <span
-              :for={{resource, purchased} <- @automatic_purchases}
-              data-market-resource={resource}
-              class="inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
-            >
-              {resource} +{Float.round(purchased, 1)}
-            </span>
-          </span>
-        </p>
-      </div>
       <p :if={@metrics.imported_labour_traffic > 0.0} id="metrics-imported-labour-traffic">
         Imported-labour traffic: +{Float.round(@metrics.imported_labour_traffic, 1)}/tick
       </p>
@@ -1682,7 +1637,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       >
         Rescue window: {@metrics.rescue_window} ticks
       </p>
-      <%!-- `trunc/1` for the same reason as the treasury above: this is a
+      <%!-- `trunc/1` for the same reason as the treasury line: this is a
             quantity the player reasons about against whole-number capacities,
             and rounding 78.6 up to 79 would overstate a backlog by a unit. --%>
       <p id="metrics-landfill">Landfill: {trunc(@metrics.waste_stock)}</p>
@@ -1695,6 +1650,54 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         )}
       </p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
+      <%!-- `trunc/1`, not `round/1`: this figure is spendable, and rounding it up makes
+            the page contradict itself — a balance of 79.6 would read 80 while an 80-cost
+            build is refused. Because every construction cost is a whole number,
+            `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
+            and the domain's exact comparison agree. Keep this as the final ordinary metric
+            so the visible list stays contiguous above financing and the bottom reservation. --%>
+      <p
+        id="metrics-treasury"
+        data-depleting={to_string(@metrics.treasury_delta < 0.0)}
+        class={[
+          @metrics.treasury_delta < 0.0 && "font-semibold text-red-700 dark:text-red-300"
+        ]}
+      >
+        Treasury: {trunc(@metrics.money)}
+      </p>
+      <.bond_panel
+        :if={@metrics.bond && not @metrics.bond.legacy && not bond_redeemed?(@metrics.bond)}
+        bond={@metrics.bond}
+        money={@metrics.money}
+      />
+      <.commercial_bond_panel
+        :if={@metrics.commercial_bond && not bond_redeemed?(@metrics.commercial_bond)}
+        bond={@metrics.commercial_bond}
+      />
+      <%!-- Reserve room for the conditional purchase summary so it does not change the
+            metrics panel's height as purchases start and stop. This belongs at the bottom:
+            when empty, its reserved height must not interrupt the visible metrics above it.
+            Chips wrap within the fixed panel instead of contributing their max-content width
+            to the sidebar. --%>
+      <div id="metrics-market-slot" class="min-h-20">
+        <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
+          <span class="block tabular-nums">
+            {if planning?(@metrics), do: "Projected purchases", else: "Automatic purchases"}: {Float.round(
+              @metrics.market_spend,
+              1
+            )}/tick
+          </span>
+          <span class="mt-1 flex flex-wrap gap-1">
+            <span
+              :for={{resource, purchased} <- @automatic_purchases}
+              data-market-resource={resource}
+              class="inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              {resource} +{Float.round(purchased, 1)}
+            </span>
+          </span>
+        </p>
+      </div>
     </div>
     """
   end

@@ -255,6 +255,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute view |> element("#metrics-treasury") |> render() =~ "80"
   end
 
+  test "the treasury is the final ordinary metric", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#metrics-tightest ~ #metrics-treasury + #metrics-market-slot")
+  end
+
   @tag treasury: 39.6
   test "a refused build flashes the cost and the balance", %{conn: conn} do
     # 39.6 rather than 40.0 for the same reason as above: the flash floors the balance
@@ -299,6 +305,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "the page header" do
+    test "includes desktop-only explicit zoom controls", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(
+               view,
+               "#desktop-zoom-controls.hidden[phx-hook=DesktopZoom][phx-update=ignore]"
+             )
+
+      assert has_element?(view, "#desktop-zoom-out[data-zoom-action=out]")
+      assert has_element?(view, "#desktop-zoom-reset[data-zoom-action=reset]", "100%")
+      assert has_element?(view, "#desktop-zoom-in[data-zoom-action=in]")
+    end
+
     test "lays its action group out as a row", %{conn: conn} do
       # daisyUI's `.flex-none` is `flex: none` — an *item* property, not `display: flex`.
       # With the original markup a button added to that group stacks above the theme

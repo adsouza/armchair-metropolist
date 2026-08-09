@@ -72,6 +72,7 @@ defmodule ArmchairMetropolistWeb.Layouts do
             every viewport width. --%>
       <div class="flex flex-none items-center gap-2">
         {render_slot(@actions)}
+        <.desktop_zoom_controls />
         <.theme_toggle />
       </div>
     </header>
@@ -83,6 +84,56 @@ defmodule ArmchairMetropolistWeb.Layouts do
     </main>
 
     <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
+  Browser-style zoom controls for the native desktop webview.
+
+  They render hidden so the web target keeps using its browser chrome. The
+  `DesktopZoom` hook reveals and operates them only when Tauri's webview API is
+  available.
+  """
+  def desktop_zoom_controls(assigns) do
+    ~H"""
+    <div
+      id="desktop-zoom-controls"
+      phx-hook="DesktopZoom"
+      phx-update="ignore"
+      class="hidden flex-row items-center overflow-hidden rounded-full border-2 border-base-300 bg-base-100"
+      aria-label="Desktop zoom controls"
+    >
+      <button
+        id="desktop-zoom-out"
+        type="button"
+        data-zoom-action="out"
+        class="cursor-pointer p-2 transition-colors hover:bg-base-200 disabled:cursor-not-allowed disabled:opacity-35"
+        aria-label="Zoom out"
+        title="Zoom out (Command/Ctrl −)"
+      >
+        <.icon name="hero-minus-micro" class="size-4" />
+      </button>
+      <button
+        id="desktop-zoom-reset"
+        type="button"
+        data-zoom-action="reset"
+        class="min-w-12 cursor-pointer border-x border-base-300 px-2 py-2 text-xs font-semibold tabular-nums transition-colors hover:bg-base-200"
+        aria-label="Reset zoom to 100%"
+        title="Reset zoom (Command/Ctrl 0)"
+      >
+        <span data-zoom-value>100%</span>
+      </button>
+      <button
+        id="desktop-zoom-in"
+        type="button"
+        data-zoom-action="in"
+        class="cursor-pointer p-2 transition-colors hover:bg-base-200 disabled:cursor-not-allowed disabled:opacity-35"
+        aria-label="Zoom in"
+        title="Zoom in (Command/Ctrl +)"
+      >
+        <.icon name="hero-plus-micro" class="size-4" />
+      </button>
+    </div>
     """
   end
 

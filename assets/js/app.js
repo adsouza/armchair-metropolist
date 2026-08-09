@@ -25,13 +25,14 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/armchair_metropolist"
 import topbar from "../vendor/topbar"
 import { TauriHook } from "../vendor/ex_tauri"
+import { DesktopZoom } from "./desktop_zoom"
 
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: { TauriHook,...colocatedHooks},
+  hooks: {DesktopZoom, TauriHook, ...colocatedHooks},
 })
 
 // Show progress bar on live navigation and form submits
@@ -82,4 +83,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
