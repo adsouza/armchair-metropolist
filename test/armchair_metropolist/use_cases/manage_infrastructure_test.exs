@@ -2,10 +2,14 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
 
-  setup do: {:ok, map: CityMap.new(40, 30)}
+  setup do: {:ok, map: legacy_city(40, 30)}
+
+  defp legacy_city(width, height) do
+    %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
+  end
 
   describe "place/4" do
     test "places a healthy online node at the requested cell", %{map: map} do
@@ -49,7 +53,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
     end
 
     test "debits the treasury by exactly the type's cost" do
-      map = %{CityMap.new(40, 30) | money: 100.0}
+      map = %{legacy_city(40, 30) | money: 100.0}
 
       {:ok, {map, _node}} = ManageInfrastructure.place(map, 1, 1, :park)
 
@@ -60,7 +64,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # The test that kills `<` flipped to `<=`. Built from a literal balance rather than
       # a simulated one: a damaged producer yields fractional income, and an exact
       # equality against a simulated balance would be asserting float noise.
-      map = %{CityMap.new(40, 30) | money: 20.0}
+      map = %{legacy_city(40, 30) | money: 20.0}
 
       assert {:ok, {map, _node}} = ManageInfrastructure.place(map, 1, 1, :park)
       assert map.money == 0.0
@@ -77,7 +81,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # Where the property *is* observable: "a refused command leaves the engine's balance
       # untouched" in city_engine_test.exs, where the balance lives in a process that
       # survives the call.
-      map = %{CityMap.new(40, 30) | money: 19.0}
+      map = %{legacy_city(40, 30) | money: 19.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.place(map, 1, 1, :park)
     end
@@ -86,7 +90,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # Clause ordering, invisible in review because every clause returns an error
       # tuple. A click on an occupied cell should not report that you are broke about a
       # build that was never possible on that cell.
-      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      {:ok, {map, _}} = ManageInfrastructure.place(legacy_city(40, 30), 1, 1, :park)
       broke = %{map | money: 0.0}
 
       assert {:error, :occupied} = ManageInfrastructure.place(broke, 1, 1, :park)
@@ -97,7 +101,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # check raises KeyError inside a GenServer.call instead of returning an error
       # tuple — which takes the engine down and rolls the city back to its last
       # checkpoint. This test is the guard on that clause order.
-      broke = %{CityMap.new(40, 30) | money: 0.0}
+      broke = %{legacy_city(40, 30) | money: 0.0}
 
       assert {:error, :unknown_type} = ManageInfrastructure.place(broke, 1, 1, :airport)
     end
@@ -107,7 +111,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
               type <- StreamData.member_of(Node.types()),
               money <- StreamData.float(min: 0.0, max: 200.0)
             ) do
-        map = %{CityMap.new(40, 30) | money: money}
+        map = %{legacy_city(40, 30) | money: money}
         cost = Node.construction_cost(type)
 
         case ManageInfrastructure.place(map, 1, 1, type) do
@@ -153,7 +157,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
     end
 
     test "debits the flat demolition cost" do
-      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      {:ok, {map, _}} = ManageInfrastructure.place(legacy_city(40, 30), 1, 1, :park)
       map = %{map | money: 100.0}
 
       {:ok, {map, _id}} = ManageInfrastructure.demolish(map, 1, 1)
@@ -171,7 +175,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       #
       # "The node still stands" is observable in city_engine_test.exs, against an engine's
       # state rather than a local binding.
-      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      {:ok, {map, _}} = ManageInfrastructure.place(legacy_city(40, 30), 1, 1, :park)
       map = %{map | money: 9.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.demolish(map, 1, 1)
@@ -182,7 +186,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # missing: no other fixture holds exactly 10.0 going into a demolish (the refusal
       # above uses 9.0, the debit test 100.0, the round trip 90.0), so nothing killed
       # `<` flipped to `<=` on this gate.
-      {:ok, {map, _}} = ManageInfrastructure.place(CityMap.new(40, 30), 1, 1, :park)
+      {:ok, {map, _}} = ManageInfrastructure.place(legacy_city(40, 30), 1, 1, :park)
       map = %{map | money: 10.0}
 
       assert {:ok, {map, _id}} = ManageInfrastructure.demolish(map, 1, 1)
@@ -190,7 +194,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
     end
 
     test "reports an empty cell before affordability" do
-      broke = %{CityMap.new(40, 30) | money: 0.0}
+      broke = %{legacy_city(40, 30) | money: 0.0}
 
       assert {:error, :empty} = ManageInfrastructure.demolish(broke, 5, 5)
     end
@@ -203,7 +207,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       # counts two, 20 > 28 is false, and it does not grow. Start from a map already over
       # threshold (three nodes, placing a fourth) and both grow — the mutant survives.
       two =
-        CityMap.new(2, 2)
+        legacy_city(2, 2)
         |> CityMap.put_node(Node.new(0, 0, :park))
         |> CityMap.put_node(Node.new(1, 0, :park))
 
@@ -217,7 +221,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
     end
 
     test "a placement below the threshold leaves the grid alone" do
-      one = CityMap.put_node(CityMap.new(2, 2), Node.new(0, 0, :park))
+      one = CityMap.put_node(legacy_city(2, 2), Node.new(0, 0, :park))
 
       assert {:ok, {same, _node}} = ManageInfrastructure.place(one, 1, 0, :park)
 

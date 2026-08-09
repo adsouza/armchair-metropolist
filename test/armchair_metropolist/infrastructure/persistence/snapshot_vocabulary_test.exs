@@ -1,8 +1,7 @@
 defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest do
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
-  alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
   alias ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary
 
   # The standing rule of this file: NO RETIRED ATOM MAY APPEAR AS A LITERAL.
@@ -62,6 +61,13 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
 
     assert nodes |> Enum.map(& &1.status) |> Enum.uniq() |> Enum.sort() ==
              Enum.sort(Node.statuses())
+
+    assert city.revision == 7
+    assert %MunicipalBond{} = city.municipal_bond
+    assert city.municipal_bond.started_at_tick == 0
+    assert city.municipal_bond.outstanding_principal == 400.0
+    assert city.municipal_bond.interest_arrears == 2.25
+    assert city.municipal_bond.principal_arrears == 4.0
   end
 
   test "modernize/1 leaves a current-vocabulary city untouched" do
@@ -102,6 +108,6 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     # `waste_stock` was added 2026-08-07. A field absent from this list is one a
     # rolled-back binary will fail to decode, so the list is pinned rather than
     # merely exercised.
-    assert SnapshotVocabulary.added_fields() == [:waste_stock]
+    assert SnapshotVocabulary.added_fields() == [:waste_stock, :revision, :municipal_bond]
   end
 end

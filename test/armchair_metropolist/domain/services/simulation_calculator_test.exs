@@ -1,18 +1,22 @@
 defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
   alias ArmchairMetropolist.Domain.Services.SimulationCalculator, as: Calc
 
   defp map_with(nodes) do
-    Enum.reduce(nodes, CityMap.new(40, 30), &CityMap.put_node(&2, &1))
+    Enum.reduce(nodes, legacy_city(), &CityMap.put_node(&2, &1))
+  end
+
+  defp legacy_city(width \\ 40, height \\ 30) do
+    %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
   end
 
   # Helpers — added beside `map_with/1`. `map_with/1` is not reused: these need
   # per-node health and status set, and threading that through it would change a
   # helper five other fixtures depend on.
   defp houses(count, health) do
-    Enum.reduce(0..(count - 1)//1, CityMap.new(40, 30), fn x, map ->
+    Enum.reduce(0..(count - 1)//1, legacy_city(), fn x, map ->
       CityMap.put_node(map, %Node{
         Node.new(x, 0, :residential)
         | health: health,
@@ -515,7 +519,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
   describe "advance_tick/1 health arithmetic" do
     test "increments the tick by exactly one" do
-      {map, _} = Calc.advance_tick(CityMap.new(40, 30))
+      {map, _} = Calc.advance_tick(legacy_city())
       assert map.tick == 1
     end
 
@@ -524,7 +528,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.resource_stats(city).power.purchased == 30.0
 
       {advanced, _delta} = Calc.advance_tick(city)
-      assert advanced.money == CityMap.opening_grant() + 2.0 - 30.0
+      assert advanced.money == 500.0 + 2.0 - 30.0
     end
 
     test "an unpayable upkeep starves the consumer once the treasury is empty" do
@@ -1217,11 +1221,125 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
   end
 
+  describe "municipal bond accounting" do
+    test "pays upkeep before debt and records the unpaid balance as arrears" do
+      city =
+        active_bond_city(400.0, 20, 6.0)
+        |> CityMap.put_node(Node.new(0, 0, :water_plant))
+
+      {next, _delta} = Calc.advance_tick(city)
+
+      assert next.money == 0.0
+      assert next.municipal_bond.outstanding_principal == 400.0
+      assert next.municipal_bond.interest_arrears == 1.0
+      assert next.municipal_bond.principal_arrears == 4.0
+    end
+
+    test "pays debt before imports while current income remains eligible for debt service" do
+      city =
+        active_bond_city(400.0, 20, 19.0)
+        |> CityMap.put_node(Node.new(0, 0, :residential))
+
+      metrics = Calc.metrics(city)
+      {next, _delta} = Calc.advance_tick(city)
+
+      assert metrics.resources.money.demanded == 0.0
+      assert metrics.resources.power.purchased == 14.0
+      assert metrics.resources.power.deficit == 1.0
+      assert next.municipal_bond.outstanding_principal == 396.0
+      assert next.municipal_bond.interest_arrears == 0.0
+      assert next.money == 0.0
+      assert CityMap.get_node(next, 0, 0).health < 100.0
+    end
+
+    test "bond service is not attributed to the money resource or a type row" do
+      city =
+        active_bond_city(400.0, 20, 100.0)
+        |> CityMap.put_node(Node.new(0, 0, :water_plant))
+
+      metrics = Calc.metrics(city)
+
+      assert metrics.resources.money.demanded == 5.0
+      assert metrics.by_type.water_plant.load.money == 5.0
+      assert metrics.bond.next_payment == 6.0
+    end
+
+    test "unissued and issued-unstarted clocks change neither tick nor bond" do
+      unissued = CityMap.new()
+      {:ok, bond} = MunicipalBond.new(400.0)
+      unstarted = %{CityMap.new() | municipal_bond: bond, money: 400.0}
+
+      assert Calc.advance_tick(unissued) == {unissued, %{}}
+      assert Calc.advance_tick(unstarted) == {unstarted, %{}}
+    end
+
+    test "a documented finished city clears a recoverable default" do
+      {:ok, bond} = MunicipalBond.new(400.0)
+      bond = MunicipalBond.start(bond, 0)
+      %{bond: bond} = MunicipalBond.service(bond, 20, 0.0)
+
+      city =
+        opening_nodes()
+        |> map_with()
+        |> Map.merge(%{tick: 21, money: 0.0, municipal_bond: bond})
+
+      assert MunicipalBond.defaulted?(city.municipal_bond)
+
+      {next, _delta} = Calc.advance_tick(city)
+
+      refute MunicipalBond.defaulted?(next.municipal_bond)
+      assert next.municipal_bond.outstanding_principal < bond.outstanding_principal
+    end
+
+    test "the finance lock uses interest equality and optimistic sub-10 redemption" do
+      {:ok, bond} = MunicipalBond.new(400.0)
+      bond = %{MunicipalBond.start(bond, 0) | interest_arrears: 8.0}
+
+      city =
+        map_with([Node.new(0, 0, :residential), Node.new(1, 0, :residential)])
+        |> Map.merge(%{tick: 40, money: 8.0, municipal_bond: bond})
+
+      locked = Calc.metrics(city)
+      assert locked.financing_locked
+      assert locked.financing_escape == {:multiple, Node.cheapest_action_cost()}
+      assert SimulationMetrics.game_over?(locked)
+
+      rescued = Calc.metrics(%{city | money: 9.0})
+      refute rescued.financing_locked
+      refute SimulationMetrics.game_over?(rescued)
+    end
+  end
+
   # Five houses emit 50 waste against the free baseline's 40. Five and not four:
   # four emit exactly 40, leave nothing, and would make every waste-stock
   # assertion read the same whether the mechanic exists or not.
   defp five_houses,
     do: %{map_with(for(i <- 0..4, do: Node.new(i, 0, :residential))) | money: 0.0}
+
+  defp active_bond_city(principal, tick, money) do
+    {:ok, bond} = MunicipalBond.new(principal)
+
+    %{
+      CityMap.new(40, 30)
+      | municipal_bond: MunicipalBond.start(bond, 0),
+        tick: tick,
+        money: money
+    }
+  end
+
+  defp opening_nodes do
+    [
+      :residential,
+      :power_plant,
+      :transit_hub,
+      :commercial,
+      :water_plant,
+      :residential,
+      :park,
+      :park
+    ]
+    |> Enum.with_index(fn type, x -> Node.new(x, 0, type) end)
+  end
 
   # One house and one park: a rated ceiling of 1 against 3 of upkeep, with the park
   # demolition at 10 as the escape. Its 17 power is imported while funds last, so the
@@ -1259,7 +1377,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
   # shop's +30 so a placement does. That gap is the only shape in which the free-cell filter
   # can change the answer.
   defp full_grid_gap_of_seven do
-    for y <- 0..29, x <- 0..39, reduce: CityMap.new(40, 30) do
+    for y <- 0..29, x <- 0..39, reduce: legacy_city() do
       map ->
         type =
           case y * 40 + x do

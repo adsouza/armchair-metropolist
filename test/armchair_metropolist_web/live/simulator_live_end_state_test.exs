@@ -16,9 +16,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       assert has_element?(view, "#reset-city")
     end
 
+    @tag :unissued_city
     test "is absent on a fresh, empty city", %{conn: conn} do
-      # No housing alive, but nothing placed and the grant intact — a reset here is a
-      # no-op, so offering one is noise.
       {:ok, view, _html} = live(conn, ~p"/")
 
       refute has_element?(view, "#reset-city")
@@ -42,7 +41,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :stalled_city
-    test "clears the grid and starts a new city", %{conn: conn} do
+    test "clears the grid and returns to bond authorization", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
@@ -50,7 +49,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
 
       html = render(view)
       refute html =~ ~s{id="0:0"}
-      assert html =~ "Treasury: #{trunc(CityMap.opening_grant())}"
+      assert has_element?(view, "#bond-issuance")
+      refute has_element?(view, "#city-grid")
       refute has_element?(view, "#reset-city")
     end
 
@@ -69,7 +69,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       {:ok, view, _html} = live(conn, ~p"/")
       assert render(view) =~ ~s{id="0:0"}
 
-      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, CityMap.new()})
+      Phoenix.PubSub.broadcast(ArmchairMetropolist.PubSub, @topic, {:city_reset, legacy_city()})
 
       refute render(view) =~ ~s{id="0:0"}
       assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
@@ -108,7 +108,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       render_click(view, "place", %{"x" => "1", "y" => "1"})
 
       assert view |> element("#reset-city") |> render() =~
-               ~s(data-confirm="Reset this city and permanently discard all of its blocks and progress?")
+               ~s(data-confirm="Discard this city and authorize a new municipal bond issue? This cannot be undone.")
     end
   end
 

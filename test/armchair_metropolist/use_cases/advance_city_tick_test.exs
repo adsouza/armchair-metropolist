@@ -1,12 +1,16 @@
 defmodule ArmchairMetropolist.UseCases.AdvanceCityTickTest do
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
   alias ArmchairMetropolist.UseCases.AdvanceCityTick
+
+  defp legacy_city(width, height) do
+    %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
+  end
 
   test "returns the new map, the delta and consistent metrics" do
     map =
-      CityMap.new(40, 30)
+      legacy_city(40, 30)
       |> CityMap.put_node(Node.new(0, 0, :residential))
       |> CityMap.put_node(Node.new(1, 0, :residential))
 
@@ -22,7 +26,7 @@ defmodule ArmchairMetropolist.UseCases.AdvanceCityTickTest do
   # An empty grid is the hydration fallback, so this is the startup path.
   test "advances an empty city without raising" do
     assert {:ok, %{city_map: next, delta: delta, metrics: metrics}} =
-             AdvanceCityTick.execute(CityMap.new(40, 30))
+             AdvanceCityTick.execute(legacy_city(40, 30))
 
     assert next.tick == 1
     assert delta == %{}

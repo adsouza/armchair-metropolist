@@ -22,8 +22,10 @@ defmodule ArmchairMetropolist.UseCases.ResetCityTest do
     # collapse banner over an empty grid.
     assert metrics.tick == 0
     assert metrics.node_count == 0
-    assert metrics.money == CityMap.opening_grant()
+    assert metrics.money == 0.0
+    assert reset.municipal_bond == nil
     refute metrics.stalled
-    refute metrics.bankrupt
+    assert metrics.bankrupt
+    refute ArmchairMetropolist.Domain.Entities.SimulationMetrics.game_over?(metrics)
   end
 end

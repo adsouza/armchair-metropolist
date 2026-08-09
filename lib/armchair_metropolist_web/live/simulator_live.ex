@@ -30,9 +30,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   require Logger
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
-  alias ArmchairMetropolist.Domain.Entities.Node
-  alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
 
   @block_emojis %{
@@ -123,6 +121,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       |> assign(:metrics, metrics)
       |> assign(:node_types, Node.types())
       |> assign(:selected_type, List.first(Node.types()))
+      |> assign(:bond_issues, [400.0, 250.0, 550.0])
+      |> assign(:commands_enabled?, connected?(socket))
       |> assign(:legend_detail, true)
       # False only on the desktop target (see mount/3): a recovery code the desktop
       # cannot use — there is no "elsewhere" to return to it from, and it would
@@ -162,6 +162,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply, assign(socket, :selected_type, String.to_existing_atom(type))}
   end
 
+  def handle_event("issue_bond", %{"principal" => principal}, socket) do
+    result =
+      with {amount, ""} <- Float.parse(principal) do
+        CityEngine.issue_municipal_bond(socket.assigns.city_id, amount)
+      else
+        _invalid -> {:error, :invalid_issue}
+      end
+
+    case result do
+      :ok -> {:noreply, socket}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
+    end
+  end
+
+  def handle_event("redeem_bond_25", _params, socket) do
+    redeem_bond(socket, :minimum)
+  end
+
+  def handle_event("redeem_bond_full", _params, socket) do
+    redeem_bond(socket, :full)
+  end
+
   def handle_event("place", %{"x" => x, "y" => y}, socket) do
     x = String.to_integer(x)
     y = String.to_integer(y)
@@ -176,6 +198,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       {:error, :insufficient_funds} ->
         {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics.money))}
+
+      {:error, :financing_required} ->
+        {:noreply, put_flash(socket, :error, "Authorize a municipal bond issue before building.")}
+
+      {:error, :bond_default} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Bond payment missed — clear the past-due balance before building."
+         )}
 
       {:error, _reason} ->
         {:noreply, socket}
@@ -212,6 +245,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   def handle_event("toggle_legend_detail", _params, socket) do
     {:noreply, assign(socket, :legend_detail, not socket.assigns.legend_detail)}
+  end
+
+  defp redeem_bond(socket, action) do
+    case CityEngine.redeem_municipal_bond(socket.assigns.city_id, action) do
+      :ok -> {:noreply, socket}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
+    end
   end
 
   @impl true
@@ -299,8 +339,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           type="button"
           class="btn btn-xs btn-error text-white min-h-6"
           phx-click="wipe"
-          data-confirm="Reset this city and permanently discard all of its blocks and progress?"
-          title="Clear every block and start a new city — this cannot be undone"
+          data-confirm="Discard this city and authorize a new municipal bond issue? This cannot be undone."
+          title="Discard this city and return to bond authorization"
         >
           Reset
         </button>
@@ -311,9 +351,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             the page still needs exactly one h1 for screen readers. --%>
       <h1 class="sr-only">Armchair Metropolist</h1>
 
-      <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+      <.bond_issuance
+        :if={is_nil(@metrics.bond)}
+        issues={@bond_issues}
+        commands_enabled?={@commands_enabled?}
+        city_id={@city_id}
+        show_reentry?={@show_reentry?}
+      />
 
-      <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
+      <div :if={not is_nil(@metrics.bond)} id="financed-simulator">
+        <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+
+        <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
             it fits and drops below when it does not. That matters now that the grid grows:
             its rendered width ranges from 256px to 768px, with wider legacy snapshots,
@@ -323,32 +372,32 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             matrix could fit in it, which is what produced the horizontal scrollbar
             inside the sidebar. Any replacement constant would drift when the grid,
             resources or type names changed; content-driven wrapping cannot. --%>
-      <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
-        <div
-          id="city-grid"
-          class="relative shrink-0 border border-base-300"
-          style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
-        >
-          <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
+        <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
+          <div
+            id="city-grid"
+            class="relative shrink-0 border border-base-300"
+            style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
+          >
+            <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
                 coordinate the server places at — while `cell_style/3` is given
                 `x - @min_x`/`y - @min_y`, a grid *index* counting from the window's
                 visible corner. Conflating the two is what would re-key nodes: pixels
                 need "how many cells from the left edge", the click needs "which cell
                 this actually is", and after a growth those are no longer the same
                 number. --%>
-          <div
-            :for={{x, y} <- @grid_cells}
-            class="absolute border border-base-200 cursor-pointer"
-            style={cell_style(x - @min_x, y - @min_y, @cell_size)}
-            phx-click="place"
-            phx-value-x={x}
-            phx-value-y={y}
-            title={"place #{@selected_type}"}
-          >
-          </div>
+            <div
+              :for={{x, y} <- @grid_cells}
+              class="absolute border border-base-200 cursor-pointer"
+              style={cell_style(x - @min_x, y - @min_y, @cell_size)}
+              phx-click="place"
+              phx-value-x={x}
+              phx-value-y={y}
+              title={"place #{@selected_type}"}
+            >
+            </div>
 
-          <div id="nodes" phx-update="stream">
-            <%!-- No coordinate in this title, and not only because the tooltip never
+            <div id="nodes" phx-update="stream">
+              <%!-- No coordinate in this title, and not only because the tooltip never
                   needed one to do its job — that job is disambiguating place-from-demolish,
                   which the verb already carries. With coordinates in the *background
                   cell's* title too, `assert render(view) =~ "2:3"` used to pass whether or
@@ -356,25 +405,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   the cell's own tooltip that shipped once and was only caught in review.
                   Dropping the coordinate from both titles makes that class of vacuous
                   assertion impossible rather than merely unlikely. --%>
-            <div
-              :for={{dom_id, node} <- @streams.nodes}
-              id={dom_id}
-              class={[
-                "absolute flex cursor-pointer items-center justify-center",
-                status_class(node.status)
-              ]}
-              style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
-              phx-click="demolish"
-              phx-value-x={node.x}
-              phx-value-y={node.y}
-              title={"#{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
-            >
-              {block_emoji(node.type)}
+              <div
+                :for={{dom_id, node} <- @streams.nodes}
+                id={dom_id}
+                class={[
+                  "absolute flex cursor-pointer items-center justify-center",
+                  status_class(node.status)
+                ]}
+                style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
+                phx-click="demolish"
+                phx-value-x={node.x}
+                phx-value-y={node.y}
+                title={"#{node.type} · #{node.status} (#{round(node.health)}%) — click to demolish"}
+              >
+                {block_emoji(node.type)}
+              </div>
             </div>
           </div>
-        </div>
 
-        <%!-- `min-w-fit` (min-width: fit-content) is the other half of the wrapping
+          <%!-- `min-w-fit` (min-width: fit-content) is the other half of the wrapping
               rule above: it stops this flex item being squeezed below its own content,
               so it wraps to the next line instead of shrinking. That is what makes the
               sidebar's horizontal scrollbar unreachable rather than merely unlikely.
@@ -382,7 +431,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               These classes must be written here, in source. Tailwind's JIT only emits
               what it finds in the templates, and neither `flex-wrap` nor `min-w-fit`
               appears anywhere else in this project. --%>
-        <%!-- No `grow`. It made the aside swallow its whole flex line when it wrapped
+          <%!-- No `grow`. It made the aside swallow its whole flex line when it wrapped
               below the grid, stretching the sidebar across otherwise useful space and
               pushing Metrics off the end.
 
@@ -391,41 +440,41 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               and allowing the footnote to set every matrix column's width wastes the
               space the stacked totals row reclaimed. The aside remains sized by its
               widest child; only the table stops stretching to match that child. --%>
-        <aside class="min-w-fit">
-          <button
-            id="toggle-legend-detail"
-            type="button"
-            class="btn btn-xs mb-2"
-            phx-click="toggle_legend_detail"
-            aria-expanded={to_string(@legend_detail)}
-          >
-            {if @legend_detail, do: "Hide detail", else: "Show detail"}
-          </button>
+          <aside class="min-w-fit">
+            <button
+              id="toggle-legend-detail"
+              type="button"
+              class="btn btn-xs mb-2"
+              phx-click="toggle_legend_detail"
+              aria-expanded={to_string(@legend_detail)}
+            >
+              {if @legend_detail, do: "Hide detail", else: "Show detail"}
+            </button>
 
-          <%!-- Column is the safe first paint: Metrics must stay below the legend while the
+            <%!-- Column is the safe first paint: Metrics must stay below the legend while the
                 sidebar is beside the grid. The colocated hook changes `data-position` only
                 after measuring the real grid and sidebar tops; unlike a viewport breakpoint,
                 that remains correct while the grid grows and for wider legacy snapshots. --%>
-          <div
-            id="legend-and-metrics"
-            data-position="side"
-            class="flex flex-col gap-4 data-[position=below]:flex-row"
-          >
-            <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
+            <div
+              id="legend-and-metrics"
+              data-position="side"
+              class="flex flex-col gap-4 data-[position=below]:flex-row"
+            >
+              <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
-            <.legend
-              detail={@legend_detail}
-              metrics={@metrics}
-              node_types={@node_types}
-              selected_type={@selected_type}
-            />
+              <.legend
+                detail={@legend_detail}
+                metrics={@metrics}
+                node_types={@node_types}
+                selected_type={@selected_type}
+              />
 
-            <%!-- A sibling of the legend, not a child of it. Metrics used to live inside
+              <%!-- A sibling of the legend, not a child of it. Metrics used to live inside
                   `legend/1` and so could not survive a collapse — the structural reason
                   the toggle hid them. --%>
-            <.metrics metrics={@metrics} />
+              <.metrics metrics={@metrics} />
 
-            <%!-- Hidden with the totals row it explains — and not only for tidiness. Left
+              <%!-- Hidden with the totals row it explains — and not only for tidiness. Left
                   visible, this paragraph would hold the collapsed sidebar at its own width
                   instead of the re-entry line's width, and collapsing would reclaim little.
 
@@ -435,85 +484,85 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   `max-w-xl` is load-bearing. Its 576px cap sits just inside the compact
                   matrix's measured 582px width instead of letting a 1054px max-content line
                   stretch the sidebar well past the matrix. --%>
-            <p
-              :if={@legend_detail}
-              id="legend-footnote"
-              class="mt-1 max-w-xl text-xs opacity-60"
-            >
-              Totals include free capacity belonging to no type: 30 water supplied, 40 waste
-              absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
-              Labour's total also includes the park amenity; park's own row carries it. Shortfalls
-              in power, water, waste disposal and labour are bought automatically for 1 money per
-              unit while the treasury can pay; purchased units count toward supplied totals. Each
-              imported labour unit adds one traffic demand, and traffic itself cannot be bought.
-            </p>
-          </div>
+              <p
+                :if={@legend_detail}
+                id="legend-footnote"
+                class="mt-1 max-w-xl text-xs opacity-60"
+              >
+                Totals include free capacity belonging to no type: 30 water supplied, 40 waste
+                absorbed and 20 traffic absorbed. Power, labour and money have no free baseline.
+                Labour's total also includes the park amenity; park's own row carries it. Shortfalls
+                in power, water, waste disposal and labour are bought automatically for 1 money per
+                unit while the treasury can pay; purchased units count toward supplied totals. Each
+                imported labour unit adds one traffic demand, and traffic itself cannot be bought.
+              </p>
+            </div>
 
-          <%!-- The hook owns only this ignored marker. It observes the surrounding layout
+            <%!-- The hook owns only this ignored marker. It observes the surrounding layout
                 and changes one data attribute on `#legend-and-metrics`; LiveView remains
                 responsible for that container's children and can patch their metrics. --%>
-          <div
-            id="sidebar-placement-observer"
-            phx-hook=".SidebarPlacement"
-            phx-update="ignore"
-          >
-          </div>
-          <script :type={Phoenix.LiveView.ColocatedHook} name=".SidebarPlacement">
-            export default {
-              mounted() {
-                this.layout = this.el.closest("#simulator-layout")
-                this.grid = this.layout.querySelector("#city-grid")
-                this.sidebar = this.el.closest("aside")
-                this.content = this.sidebar.querySelector("#legend-and-metrics")
-                this.frame = null
-
-                this.syncPosition = () => {
+            <div
+              id="sidebar-placement-observer"
+              phx-hook=".SidebarPlacement"
+              phx-update="ignore"
+            >
+            </div>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".SidebarPlacement">
+              export default {
+                mounted() {
+                  this.layout = this.el.closest("#simulator-layout")
+                  this.grid = this.layout.querySelector("#city-grid")
+                  this.sidebar = this.el.closest("aside")
+                  this.content = this.sidebar.querySelector("#legend-and-metrics")
                   this.frame = null
 
-                  const gridTop = this.grid.getBoundingClientRect().top
-                  const sidebarTop = this.sidebar.getBoundingClientRect().top
-                  const position = Math.abs(gridTop - sidebarTop) < 2 ? "side" : "below"
+                  this.syncPosition = () => {
+                    this.frame = null
 
-                  if (this.content.dataset.position !== position) {
-                    this.content.dataset.position = position
+                    const gridTop = this.grid.getBoundingClientRect().top
+                    const sidebarTop = this.sidebar.getBoundingClientRect().top
+                    const position = Math.abs(gridTop - sidebarTop) < 2 ? "side" : "below"
+
+                    if (this.content.dataset.position !== position) {
+                      this.content.dataset.position = position
+                    }
                   }
-                }
 
-                this.scheduleSync = () => {
-                  if (this.frame === null) {
-                    this.frame = requestAnimationFrame(this.syncPosition)
+                  this.scheduleSync = () => {
+                    if (this.frame === null) {
+                      this.frame = requestAnimationFrame(this.syncPosition)
+                    }
                   }
-                }
 
-                this.resizeObserver = new ResizeObserver(this.scheduleSync)
-                this.resizeObserver.observe(this.layout)
-                this.resizeObserver.observe(this.grid)
-                this.resizeObserver.observe(this.sidebar)
+                  this.resizeObserver = new ResizeObserver(this.scheduleSync)
+                  this.resizeObserver.observe(this.layout)
+                  this.resizeObserver.observe(this.grid)
+                  this.resizeObserver.observe(this.sidebar)
 
-                // A LiveView patch may restore the server-rendered `side` default without
-                // changing any box size. Watching the attribute makes the measured state
-                // self-healing in that case too.
-                this.mutationObserver = new MutationObserver(this.scheduleSync)
-                this.mutationObserver.observe(this.content, {
-                  attributes: true,
-                  attributeFilter: ["data-position"]
-                })
+                  // A LiveView patch may restore the server-rendered `side` default without
+                  // changing any box size. Watching the attribute makes the measured state
+                  // self-healing in that case too.
+                  this.mutationObserver = new MutationObserver(this.scheduleSync)
+                  this.mutationObserver.observe(this.content, {
+                    attributes: true,
+                    attributeFilter: ["data-position"]
+                  })
 
-                this.scheduleSync()
-              },
+                  this.scheduleSync()
+                },
 
-              destroyed() {
-                this.resizeObserver.disconnect()
-                this.mutationObserver.disconnect()
+                destroyed() {
+                  this.resizeObserver.disconnect()
+                  this.mutationObserver.disconnect()
 
-                if (this.frame !== null) {
-                  cancelAnimationFrame(this.frame)
+                  if (this.frame !== null) {
+                    cancelAnimationFrame(this.frame)
+                  }
                 }
               }
-            }
-          </script>
+            </script>
 
-          <%!-- The whole address, not the bare code. The code alone told a player what
+            <%!-- The whole address, not the bare code. The code alone told a player what
                 their city was called without telling them what to do with it — the route
                 that accepts it (`/c/:code`) appeared nowhere on the page, so the only way
                 to use the thing on offer was to guess it.
@@ -530,17 +579,110 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 An earlier version of this comment claimed the line "has never been what
                 decides that width", comparing the aside's *min*-content (~1020px, set by
                 the expanded matrix) against these figures. That was the wrong box. --%>
-          <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
-            <p>This city lives in this browser. To open it somewhere else, go to:</p>
-            <p>
-              <a href={~p"/c/#{@city_id}"} class="font-mono underline break-all">
-                {url(~p"/c/#{@city_id}")}
-              </a>
-            </p>
-          </div>
-        </aside>
+            <div :if={@show_reentry?} class="text-xs opacity-70 mt-2">
+              <p>This city lives in this browser. To open it somewhere else, go to:</p>
+              <p>
+                <a href={~p"/c/#{@city_id}"} class="font-mono underline break-all">
+                  {url(~p"/c/#{@city_id}")}
+                </a>
+              </p>
+            </div>
+          </aside>
+        </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :issues, :list, required: true
+  attr :commands_enabled?, :boolean, required: true
+  attr :city_id, :string, required: true
+  attr :show_reentry?, :boolean, required: true
+
+  defp bond_issuance(assigns) do
+    ~H"""
+    <section
+      id="bond-issuance"
+      class="mx-auto max-w-5xl rounded-3xl border border-base-300 bg-base-100 p-6 shadow-xl sm:p-8"
+    >
+      <div class="max-w-3xl">
+        <p class="text-xs font-bold uppercase tracking-[0.24em] text-primary">Municipal financing</p>
+        <h2 class="mt-2 text-3xl font-semibold tracking-tight">Authorize your city’s bond issue</h2>
+        <p class="mt-3 leading-relaxed opacity-75">
+          Authorize a municipal bond issue to fund the city. No debt service is due for the first
+          20 ticks after construction begins. Then serial principal and 0.5% interest are due each
+          tick, with final maturity 100 servicing ticks later. Optional redemption opens after the
+          first 20 servicing ticks.
+        </p>
+      </div>
+
+      <div class="mt-7 grid gap-4 lg:grid-cols-3">
+        <article
+          :for={principal <- @issues}
+          id={"bond-option-#{trunc(principal)}"}
+          class={[
+            "relative flex flex-col rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-lg",
+            principal == MunicipalBond.recommended_issue() &&
+              "border-primary bg-primary/5 ring-1 ring-primary/30",
+            principal != MunicipalBond.recommended_issue() && "border-base-300 bg-base-200/30"
+          ]}
+        >
+          <span
+            :if={principal == MunicipalBond.recommended_issue()}
+            class="absolute right-4 top-4 rounded-full bg-primary px-2.5 py-1 text-xs font-bold text-primary-content"
+          >
+            Recommended
+          </span>
+          <h3 class="text-xl font-semibold">{issue_name(principal)}</h3>
+          <p class="mt-1 text-3xl font-bold tabular-nums">{trunc(principal)}</p>
+          <p class="text-xs uppercase tracking-wide opacity-60">proceeds now</p>
+          <dl class="mt-5 space-y-2 text-sm">
+            <div class="flex justify-between gap-3">
+              <dt class="opacity-65">First debt service</dt>
+              <dd class="font-semibold tabular-nums">{bond_money(first_payment(principal))}</dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="opacity-65">On-time interest</dt>
+              <dd class="font-semibold tabular-nums">{bond_money(total_interest(principal))}</dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="opacity-65">Call protection</dt>
+              <dd class="font-semibold">20 service ticks</dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="opacity-65">Final maturity</dt>
+              <dd class="font-semibold">100 service ticks</dd>
+            </div>
+          </dl>
+          <p class="mt-4 grow text-sm leading-relaxed opacity-70">{issue_role(principal)}</p>
+          <p class="mt-4 text-xs leading-relaxed text-warning-content">
+            Missed debt service blocks new construction until past-due amounts are cleared.
+          </p>
+          <button
+            id={"issue-bond-#{trunc(principal)}"}
+            type="button"
+            class={[
+              "btn mt-5 w-full",
+              principal == MunicipalBond.recommended_issue() && "btn-primary",
+              principal != MunicipalBond.recommended_issue() && "btn-outline"
+            ]}
+            phx-click="issue_bond"
+            phx-value-principal={principal}
+            disabled={not @commands_enabled?}
+            autofocus={principal == MunicipalBond.recommended_issue()}
+          >
+            Authorize {issue_name(principal)}
+          </button>
+        </article>
+      </div>
+
+      <p :if={@show_reentry?} id="unissued-city-link" class="mt-6 text-xs opacity-60">
+        Open this unissued city elsewhere at
+        <a href={~p"/c/#{@city_id}"} class="font-mono underline break-all">
+          {url(~p"/c/#{@city_id}")}
+        </a>
+      </p>
+    </section>
     """
   end
 
@@ -575,7 +717,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       id="collapse-banner"
       class={[
         "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
-        if(@variant in [:dead, :locked],
+        if(@variant in [:dead, :locked, :financing_locked, :bond_default],
           do: "border-error bg-error/10",
           else: "border-warning bg-warning/10"
         )
@@ -599,8 +741,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@variant == :locked} class="font-semibold">
         City locked — nothing more can be built or demolished.
       </p>
+      <p :if={@variant == :financing_locked} class="font-semibold">
+        City locked — the bond can never amortize from this economy.
+      </p>
       <p :if={@variant == :stalled} class="font-semibold">
         City stalled — nothing is changing on its own.
+      </p>
+      <p :if={@variant == :bond_default} class="font-semibold">
+        Bond payment missed — new construction is paused.
+      </p>
+      <p :if={@variant == :financing_warning} class="font-semibold">
+        Debt service is closing your last escape — {@metrics.financing_rescue_window} ticks to act.
       </p>
       <p :if={@variant == :warning} class="font-semibold">
         Upkeep outruns income — {@metrics.rescue_window} ticks to act.
@@ -613,7 +764,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           @metrics.money
         )} — so
         nothing can restart it. <strong>Reset</strong>
-        in the header clears the grid and starts a new city. This cannot be undone.
+        in the header clears the grid and returns to bond authorization. This cannot be undone.
       </p>
       <%!-- Deliberately not "dead". This city's blocks can be at full health — the point is
             that its bills outrun the most it could ever earn, so no amount of waiting helps.
@@ -626,7 +777,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
           @metrics.money
         )}. <strong>Reset</strong>
-        in the header clears the grid and starts a new city. This cannot be undone.
+        in the header clears the grid and returns to bond authorization. This cannot be undone.
+      </p>
+      <p :if={@variant == :financing_locked} class="text-xs opacity-80">
+        Even applying the whole treasury to redemption leaves debt whose new interest meets or
+        exceeds this city's best possible operating surplus. <strong>Reset</strong>
+        in the header to authorize a new issue and rebuild.
       </p>
       <p :if={@variant == :stalled} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. The treasury still holds {trunc(
@@ -634,6 +790,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         )} — enough to demolish, and demolishing sometimes restarts the clock; placing a
         block always would, once it is affordable. Or <strong>Reset</strong>
         in the header to start over.
+      </p>
+      <p :if={@variant == :bond_default} class="text-xs opacity-80">
+        Past-due interest or principal remains. Debt service will keep applying available cash;
+        demolition remains available, and optional redemption can help once the bond is callable.
+      </p>
+      <p :if={@variant == :financing_warning} class="text-xs opacity-80">
+        The bond cannot amortize against the city's best operating surplus. {escape_text(
+          @metrics.financing_escape
+        )} Act before debt service spends the required treasury.
       </p>
       <p :if={@variant == :warning} class="text-xs opacity-80">
         Upkeep is {round(@metrics.resources.money.demanded)} a tick against a ceiling of {round(
@@ -656,8 +821,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp banner_variant(metrics) do
     cond do
       SimulationMetrics.game_over?(metrics) and metrics.stalled -> :dead
+      SimulationMetrics.game_over?(metrics) and metrics.financing_locked -> :financing_locked
       SimulationMetrics.game_over?(metrics) -> :locked
       metrics.stalled -> :stalled
+      metrics.bond && Map.get(metrics.bond, :defaulted, false) -> :bond_default
+      SimulationMetrics.financing_warning?(metrics) -> :financing_warning
       SimulationMetrics.warning?(metrics) -> :warning
       true -> nil
     end
@@ -688,14 +856,98 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # creates the next unreachable reset. A confirmation prompt protects a viable city from a
   # stray click.
   #
-  # An empty grid can still differ from a new city: demolishing every block may leave less
-  # than the opening grant, or a waste backlog may remain. Both are changes a reset repairs.
+  # An empty grid can still differ from a new city: it may retain an authorized or redeemed
+  # issue, treasury cash, or a waste backlog. All are changes a reset repairs.
   # The equality checks keep the control hidden on the untouched opening state even as its
   # tick counter advances in the background.
   defp show_reset?(metrics) do
-    metrics.node_count > 0 or metrics.money != CityMap.opening_grant() or
+    metrics.bond != nil or metrics.node_count > 0 or metrics.money != 0.0 or
       metrics.waste_stock != 0.0
   end
+
+  defp issue_name(250.0), do: "Lean"
+  defp issue_name(400.0), do: "Balanced"
+  defp issue_name(550.0), do: "Generous"
+
+  defp issue_role(250.0),
+    do: "Least debt; reaches the profitable core, then asks you to save before finishing."
+
+  defp issue_role(400.0),
+    do: "Enough for a deliberate direct route, with debt service matched to the opening core."
+
+  defp issue_role(550.0),
+    do: "The most reaction margin and flexibility, in exchange for the largest payment."
+
+  defp first_payment(principal), do: MunicipalBond.issue_terms(principal).first_payment
+  defp total_interest(principal), do: MunicipalBond.issue_terms(principal).total_interest
+
+  defp bond_money(value) when value > 0.0 and value < 0.01, do: "<0.01"
+
+  defp bond_money(value) do
+    rounded = Float.round(value * 1.0, 2)
+
+    displayed =
+      rounded
+      |> :erlang.float_to_binary(decimals: 2)
+      |> String.trim_trailing("0")
+      |> String.trim_trailing(".")
+
+    if rounded == value, do: displayed, else: "≈" <> displayed
+  end
+
+  defp bond_redeemed?(bond) do
+    bond.outstanding_principal == 0.0 and bond.interest_arrears == 0.0
+  end
+
+  defp bond_service_status(bond) do
+    cond do
+      bond_redeemed?(bond) ->
+        "Bond redeemed"
+
+      bond.paused ->
+        "Payments paused while the city is stalled"
+
+      bond.opening_period_remaining > 0 ->
+        "Debt service begins in #{bond.opening_period_remaining} ticks"
+
+      true ->
+        "Next debt service #{bond_money(bond.next_payment)}"
+    end
+  end
+
+  defp redemption_enabled?(bond, money, :minimum) do
+    bond.callable and bond.redemption_amount > 25.0 and money >= 25.0
+  end
+
+  defp redemption_enabled?(bond, money, :full) do
+    bond.callable and bond.redemption_amount > 0.0 and money >= bond.redemption_amount
+  end
+
+  defp redemption_title(bond, _money, _action) when not bond.callable do
+    "Callable in #{bond.call_protection_remaining} servicing ticks"
+  end
+
+  defp redemption_title(bond, _money, :minimum) when bond.redemption_amount <= 25.0,
+    do: "Use Redeem all for the remaining balance"
+
+  defp redemption_title(_bond, money, :minimum) when money < 25.0,
+    do: "The treasury must hold 25"
+
+  defp redemption_title(bond, money, :full) when money < bond.redemption_amount,
+    do: "The treasury does not cover the full redemption amount"
+
+  defp redemption_title(_bond, _money, :minimum), do: "Redeem 25 at par"
+  defp redemption_title(_bond, _money, :full), do: "Redeem the exact server-calculated balance"
+
+  defp financing_error(:invalid_issue), do: "Choose one of the three offered bond issues."
+  defp financing_error(:not_pristine), do: "This city can no longer authorize an opening issue."
+  defp financing_error(:already_financed), do: "This city has already authorized its bond issue."
+  defp financing_error(:bond_not_issued), do: "No municipal bond has been issued."
+  defp financing_error(:legacy_bond), do: "Legacy cities have no redeemable bond."
+  defp financing_error(:bond_redeemed), do: "This bond has already been redeemed."
+  defp financing_error(:not_callable), do: "Optional redemption is still call-protected."
+  defp financing_error(:use_full_redemption), do: "Use Redeem all for the remaining balance."
+  defp financing_error(:insufficient_funds), do: "The treasury cannot cover that redemption."
 
   # The resource columns are fixed and identical on every row, including where a type
   # does not touch a resource. Aligned columns are the feature: the question a player
@@ -745,10 +997,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               :for={type <- @node_types}
               id={"legend-row-#{type}"}
               data-count={@metrics.by_type[type].count}
-              data-affordable={to_string(affordable?(@metrics.money, type))}
+              data-affordable={to_string(construction_available?(@metrics, type))}
               class={[
                 type == @selected_type && "bg-primary/20",
-                not affordable?(@metrics.money, type) && "opacity-40"
+                not construction_available?(@metrics, type) && "opacity-40"
               ]}
             >
               <td class="text-left">
@@ -771,7 +1023,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               <td
                 data-cell={"#{type}-cost"}
                 class="text-right tabular-nums"
-                title={cost_title(@metrics.money, type)}
+                title={cost_title(@metrics, type)}
               >
                 {trunc(Node.construction_cost(type))}
               </td>
@@ -841,14 +1093,25 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # consistent.
   defp affordable?(money, type), do: money >= Node.construction_cost(type)
 
+  defp construction_available?(%{bond: %{defaulted: true}}, _type), do: false
+  defp construction_available?(metrics, type), do: affordable?(metrics.money, type)
+
   # The row is dimmed, which is a visual-only signal; the title carries the same fact for
   # anyone who cannot see it. The select button stays enabled deliberately — choosing an
   # unaffordable type is harmless and is often what a player wants while waiting for
   # income.
-  defp cost_title(money, type) do
+  defp cost_title(%{bond: %{defaulted: true, callable: true}}, _type) do
+    "bond payment missed — clear the past-due balance through debt service or redemption before building"
+  end
+
+  defp cost_title(%{bond: %{defaulted: true} = bond}, _type) do
+    "bond payment missed — clear the past-due balance through debt service; optional redemption opens in #{bond.call_protection_remaining} servicing ticks"
+  end
+
+  defp cost_title(metrics, type) do
     cost = trunc(Node.construction_cost(type))
 
-    if affordable?(money, type),
+    if affordable?(metrics.money, type),
       do: "costs #{cost}",
       else: "costs #{cost} — more than the treasury holds"
   end
@@ -878,6 +1141,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `trunc(money) >= cost` exactly when `money >= cost`, so the floored display
             and the domain's exact comparison agree. --%>
       <p id="metrics-treasury">Treasury: {trunc(@metrics.money)}</p>
+      <.bond_panel
+        :if={@metrics.bond && not @metrics.bond.legacy}
+        bond={@metrics.bond}
+        money={@metrics.money}
+      />
       <p :if={@metrics.market_spend > 0.0} id="metrics-market" class="leading-relaxed">
         <span>Automatic purchases: {Float.round(@metrics.market_spend, 1)}/tick</span>
         <span class="ml-1 inline-flex flex-wrap gap-1 align-middle">
@@ -922,6 +1190,85 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-workforce">Workforce: ×{Float.round(@metrics.amenity, 2)}</p>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
     </div>
+    """
+  end
+
+  attr :bond, :map, required: true
+  attr :money, :float, required: true
+
+  defp bond_panel(assigns) do
+    assigns =
+      assigns
+      |> assign(:minimum_enabled, redemption_enabled?(assigns.bond, assigns.money, :minimum))
+      |> assign(:full_enabled, redemption_enabled?(assigns.bond, assigns.money, :full))
+
+    ~H"""
+    <section id="bond-panel" class="my-3 rounded-xl border border-base-300 bg-base-200/40 p-3">
+      <div class="flex items-center justify-between gap-3">
+        <h3 class="font-semibold">Municipal bond</h3>
+        <span :if={@bond.defaulted} class="badge badge-error badge-sm">In default</span>
+      </div>
+      <dl class="mt-2 space-y-1 text-sm">
+        <div class="flex justify-between gap-4">
+          <dt class="opacity-65">Principal outstanding</dt>
+          <dd id="bond-principal" class="font-semibold tabular-nums">
+            {bond_money(@bond.outstanding_principal)}
+          </dd>
+        </div>
+        <div :if={@bond.interest_arrears > 0.0} class="flex justify-between gap-4 text-error">
+          <dt>Interest past due</dt>
+          <dd id="bond-interest-arrears" class="font-semibold tabular-nums">
+            {bond_money(@bond.interest_arrears)}
+          </dd>
+        </div>
+        <div :if={@bond.principal_arrears > 0.0} class="flex justify-between gap-4 text-error">
+          <dt>Principal past due</dt>
+          <dd id="bond-principal-arrears" class="font-semibold tabular-nums">
+            {bond_money(@bond.principal_arrears)}
+          </dd>
+        </div>
+        <div class="flex justify-between gap-4">
+          <dt>Redemption amount</dt>
+          <dd id="bond-redemption" class="font-semibold tabular-nums">
+            {bond_money(@bond.redemption_amount)}
+          </dd>
+        </div>
+      </dl>
+
+      <p id="bond-service-status" class="mt-2 text-sm font-medium">{bond_service_status(@bond)}</p>
+      <p
+        :if={@bond.opening_period_remaining == 0 and not bond_redeemed?(@bond)}
+        class="text-xs opacity-65"
+      >
+        Matures in {@bond.maturity_remaining} ticks
+      </p>
+      <p :if={not @bond.callable and not bond_redeemed?(@bond)} class="text-xs opacity-65">
+        Callable in {@bond.call_protection_remaining} servicing ticks
+      </p>
+
+      <div :if={not bond_redeemed?(@bond)} class="mt-3 grid grid-cols-2 gap-2">
+        <button
+          id="redeem-bond-25"
+          type="button"
+          class="btn btn-xs btn-outline"
+          phx-click="redeem_bond_25"
+          disabled={not @minimum_enabled}
+          title={redemption_title(@bond, @money, :minimum)}
+        >
+          Redeem 25
+        </button>
+        <button
+          id="redeem-bond-full"
+          type="button"
+          class="btn btn-xs btn-primary"
+          phx-click="redeem_bond_full"
+          disabled={not @full_enabled}
+          title={redemption_title(@bond, @money, :full)}
+        >
+          Redeem all
+        </button>
+      </div>
+    </section>
     """
   end
 

@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   @moduledoc "Use case: place, remove, and query city infrastructure nodes."
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
 
   @doc """
   Place a new node of `type` at `(x, y)` on `city_map`.
@@ -20,7 +20,13 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   """
   @spec place(CityMap.t(), integer(), integer(), atom()) ::
           {:ok, {CityMap.t(), Node.t()}}
-          | {:error, :out_of_bounds | :occupied | :unknown_type | :insufficient_funds}
+          | {:error,
+             :out_of_bounds
+             | :occupied
+             | :unknown_type
+             | :financing_required
+             | :bond_default
+             | :insufficient_funds}
   def place(city_map, x, y, type) do
     cond do
       not CityMap.in_bounds?(city_map, x, y) ->
@@ -31,6 +37,12 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
 
       CityMap.occupied?(city_map, x, y) ->
         {:error, :occupied}
+
+      is_nil(city_map.municipal_bond) ->
+        {:error, :financing_required}
+
+      MunicipalBond.defaulted?(city_map.municipal_bond) ->
+        {:error, :bond_default}
 
       city_map.money < Node.construction_cost(type) ->
         {:error, :insufficient_funds}
@@ -48,6 +60,8 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           # including fixtures that build a city of a chosen size, and there would then be
           # no way to build one at all.
           |> CityMap.grow_if_crowded()
+          |> start_bond(city_map.tick)
+          |> CityMap.increment_revision()
 
         {:ok, {city_map, node}}
     end
@@ -76,8 +90,13 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           city_map
           |> CityMap.delete_node(x, y)
           |> CityMap.debit(Node.demolition_cost())
+          |> CityMap.increment_revision()
 
         {:ok, {city_map, node.id}}
     end
+  end
+
+  defp start_bond(%CityMap{municipal_bond: bond} = city_map, tick) do
+    %{city_map | municipal_bond: MunicipalBond.start(bond, tick)}
   end
 end

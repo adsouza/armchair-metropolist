@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
   use ExUnit.Case, async: true
 
-  alias ArmchairMetropolist.Domain.Entities.{CityMap, Node}
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
 
   describe "new/2" do
     test "creates an empty grid at tick zero" do
@@ -9,39 +9,31 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.width == 40
       assert map.height == 30
       assert map.tick == 0
+      assert map.revision == 0
       assert map.nodes == %{}
-    end
-  end
-
-  describe "opening_grant/0" do
-    test "is the money a new city starts with, from one constant" do
-      # All three paths must agree. They are three because `CityEngine.normalize_city_map/1`
-      # merges a decoded snapshot onto `%CityMap{}` — so the struct default is what an old
-      # city inherits, while `new/2` is what a fresh one gets. Stating the figure twice
-      # (as this module used to) desyncs them on a path only cold loads exercise.
-      assert CityMap.opening_grant() == 400.0
-      assert CityMap.new(40, 30).money == CityMap.opening_grant()
-      assert %CityMap{}.money == CityMap.opening_grant()
+      assert map.money == 0.0
+      assert map.municipal_bond == nil
     end
   end
 
   describe "new/0" do
-    test "starts a city on the initial 2x2 grid with the opening grant" do
+    test "starts an unissued city on the initial 2x2 grid" do
       map = CityMap.new()
 
       assert map.width == 2
       assert map.height == 2
       assert map.tick == 0
+      assert map.revision == 0
       assert map.nodes == %{}
-      assert map.money == CityMap.opening_grant()
+      assert map.money == 0.0
+      assert map.municipal_bond == nil
     end
 
     test "the struct defaults agree with new/0 on the starting grid" do
       # `CityEngine.normalize_city_map/1` merges every decoded snapshot onto a fresh
       # `%CityMap{}`, so the struct defaults are what a stored city inherits for a field
       # it lacks. A literal in `defstruct` beside a different `@initial_size` desyncs the
-      # two on a path only cold loads exercise -- the same trap the `@opening_grant`
-      # comment above `defstruct` describes. No other test in this suite sees it.
+      # two on a path only cold loads exercise. No other test in this suite sees it.
       assert %CityMap{}.width == CityMap.new().width
       assert %CityMap{}.height == CityMap.new().height
     end
@@ -180,8 +172,10 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert reset.width == 2
       assert reset.height == 2
       assert reset.tick == 0
+      assert reset.revision == 0
       assert reset.nodes == %{}
-      assert reset.money == CityMap.opening_grant()
+      assert reset.money == 0.0
+      assert reset.municipal_bond == nil
     end
 
     test "delegates to new/0 so there is one definition of a new city" do
@@ -190,6 +184,23 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       # The grid does *not* survive a reset. A reset city is a new city in every respect,
       # which is what keeps `new/0` the single definition of one.
       assert CityMap.reset(city) == CityMap.new()
+    end
+  end
+
+  describe "snapshot ordering" do
+    test "increment_revision/1 advances revision without changing the tick" do
+      map = CityMap.new() |> CityMap.increment_revision()
+
+      assert map.tick == 0
+      assert map.revision == 1
+      assert CityMap.snapshot_order(map) == {0, 1}
+    end
+
+    test "legacy financing is represented as a permanent zero-balance bond" do
+      bond = MunicipalBond.legacy()
+
+      assert MunicipalBond.legacy?(bond)
+      assert MunicipalBond.debt_free?(bond)
     end
   end
 

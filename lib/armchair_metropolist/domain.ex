@@ -4,6 +4,7 @@ defmodule ArmchairMetropolist.Domain do
     deps: [],
     exports: [
       Entities.CityMap,
+      Entities.MunicipalBond,
       Entities.Node,
       Entities.SimulationMetrics,
       Ports.SnapshotRepository,

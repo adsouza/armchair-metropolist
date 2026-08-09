@@ -1,7 +1,7 @@
 defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @moduledoc "The city grid and the infrastructure placed on it."
 
-  alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.{MunicipalBond, Node}
 
   @type t :: %__MODULE__{
           width: pos_integer(),
@@ -9,10 +9,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           min_x: integer(),
           min_y: integer(),
           tick: non_neg_integer(),
+          revision: non_neg_integer(),
           nodes: %{optional(String.t()) => Node.t()},
           money: float(),
-          waste_stock: float()
+          waste_stock: float(),
+          municipal_bond: MunicipalBond.t() | nil
         }
+
+  @type snapshot_order :: {non_neg_integer(), non_neg_integer()}
 
   # This struct is persisted, and snapshots are decoded with `:safe` — which will
   # not create atoms. Adding a field whose values are atoms defined outside this
@@ -28,42 +32,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # the default as part of decoding, and `CityEngine.normalize_city_map/1` merges
   # whatever comes out of that onto a fresh `%CityMap{}` on load. The committed fixtures
   # are what prove the first of those still works — see `waste_stock`, added 2026-08-07.
-  # The money a new city starts with, stated once. It used to appear twice — here and
-  # again in `new/2` — and `CityEngine.normalize_city_map/1` merges a decoded snapshot
-  # onto `%CityMap{}`, so this default is what an old city inherits while `new/2`'s
-  # literal was what a fresh one got. Changing one and not the other desynced them on a
-  # path only cold loads exercise.
-  #
-  # 400, sized to the *second* city rather than the first. The cheapest earning city is
-  # 75 — one commercial, one park and one house, measured stable at +28/tick — and 150
-  # bought that twice over, which is why it stood for a while. What 150 could not buy is
-  # the next rung: there is no self-sustaining city between 95 and 260, and the 260 one
-  # has to be built through a stretch with no commercial block in it, so nothing is
-  # earning while it goes up. On 150 that opening is refused part-way, at the power
-  # plant, with 37 in the bank.
-  #
-  # 400 covers the whole of it from the grant alone, which is what the guide's opening
-  # sequence spends. The slack is reaction time, not luxury: every stage of that
-  # sequence is fully supplied, but the treasury drains at up to 7 a tick while it is
-  # half-built, so the grant is what a player spends instead of hurrying. Measured, 400
-  # sustains that opening at up to 4 seconds per placement; see docs/PLAYING.md, "Your
-  # second city", whose figures are generated and pinned by
-  # `test/docs/playing_guide_test.exs`.
-  #
-  # Raising this is not a way to make the game more forgiving in general — the health
-  # deadlines are decay rates and no balance buys them off. Measured: the naive opening,
-  # which puts the commercial block up before the plants, collapses identically on 260,
-  # 1000 and 2000. `:tick_interval_ms` is the knob on that axis.
-  @opening_grant 400.0
-
   # The grid a new city starts on. A city opens two more rows and columns whenever more
   # than 70% of its cells are occupied, up to `@max_size`.
   #
   # Referenced by `defstruct` below rather than restated there. `CityEngine`'s
   # `normalize_city_map/1` merges every decoded snapshot onto a fresh `%CityMap{}`, so the
   # struct defaults are what a stored city inherits for any field it lacks — exactly the
-  # split the `@opening_grant` comment above describes. A literal in `defstruct` beside a
-  # different value here desyncs them on a path only cold loads exercise.
+  # split the persisted-field comment above describes. A literal in `defstruct` beside a
+  # different value in `new/2` would desync them on a path only cold loads exercise.
   @initial_size 2
 
   # Growth stops here. This bounds the data structure, not the game: reaching a 32x32
@@ -92,9 +68,11 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             min_x: 0,
             min_y: 0,
             tick: 0,
+            revision: 0,
             nodes: %{},
-            money: @opening_grant,
-            waste_stock: 0.0
+            money: 0.0,
+            waste_stock: 0.0,
+            municipal_bond: nil
 
   @doc """
   Create a new empty city map with the given dimensions.
@@ -170,27 +148,12 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @doc """
   Discard this city and start a new one.
 
-  Tick 0, no nodes, the treasury back to `opening_grant/0`, and the grid back to the
+  Tick 0, revision 0, no nodes, an empty treasury, no authorized bond, and the grid at the
   starting size — delegating to `new/0` rather than resetting fields by hand, so there is
   exactly one definition of what a new city is and this cannot drift from it.
-
-  The grant has to come back. A collapsed city's treasury has drained to zero and the
-  cheapest block costs 15, so a wipe that cleared the grid and left the balance alone would
-  trade one dead end for another.
   """
   @spec reset(t()) :: t()
   def reset(_map), do: new()
-
-  @doc """
-  The money a new city starts with.
-
-  Public so tests and the playing-guide generator reference the figure instead of
-  restating it. Six readers across four files pinned the old literal, and one of them
-  pinned it *derived* — an assertion on 502.0, the grant plus two ticks of income, which
-  a search for the grant's own value does not find.
-  """
-  @spec opening_grant() :: float()
-  def opening_grant, do: @opening_grant
 
   @doc """
   Subtract `amount` from the city's treasury, flooring at zero.
@@ -204,6 +167,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   def debit(map, amount) do
     %{map | money: max(0.0, map.money - amount)}
   end
+
+  @doc "Increment the persistence ordering revision for one completed command or tick."
+  @spec increment_revision(t()) :: t()
+  def increment_revision(map), do: %{map | revision: map.revision + 1}
+
+  @doc "The lexicographic persistence order for this exact city state."
+  @spec snapshot_order(t()) :: snapshot_order()
+  def snapshot_order(map), do: {map.tick, map.revision}
 
   @doc """
   Check if the given coordinates are within the city bounds.

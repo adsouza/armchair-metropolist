@@ -43,8 +43,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   import ExUnit.CaptureLog
 
-  alias ArmchairMetropolist.Domain.Entities.CityMap
-  alias ArmchairMetropolist.Domain.Entities.Node
+  alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
   alias ArmchairMetropolist.FailingSnapshotRepository
   alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
   alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
@@ -100,14 +99,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     Application.put_env(:armchair_metropolist, :notifier_test_pid, self())
 
     start_supervised!(StubSnapshotRepository)
+    StubSnapshotRepository.set_initial({:ok, {{0, 0}, legacy_city()}})
 
     city_id = "test-#{System.unique_integer([:positive])}"
     {:ok, city_id: city_id}
   end
 
+  defp legacy_city(width \\ 2, height \\ 2) do
+    %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
+  end
+
   describe "hydration" do
     test "hydrates from the latest stored snapshot", %{city_id: city_id} do
-      city = CityMap.put_node(CityMap.new(40, 30), Node.new(1, 1, :power_plant))
+      city = CityMap.put_node(legacy_city(40, 30), Node.new(1, 1, :power_plant))
       stored = %{city | tick: 7}
 
       StubSnapshotRepository.set_initial({:ok, {7, stored}})
@@ -125,7 +129,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # so `resources` was empty until a tick landed and a LiveView mounting in that
       # window had no supply/demand to render. Infrastructure cannot compute these
       # itself (boundary bars Domain.Services), hence UseCases.SummarizeCity.
-      StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {3, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{metrics: metrics}} = CityEngine.snapshot(city_id)
@@ -181,7 +185,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       round_tripped = :erlang.binary_to_term(:erlang.term_to_binary(legacy), [:safe])
       loaded = CityEngine.normalize_city_map(round_tripped)
 
-      assert loaded.money == CityMap.opening_grant()
+      assert loaded.money == 0.0
+      assert loaded.municipal_bond == MunicipalBond.legacy()
       assert loaded.tick == 7
       assert map_size(loaded.nodes) == 1
     end
@@ -232,7 +237,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "advances city_map.tick and ignores the clock's counter", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
 
       # Clock pulse numbers are diagnostic only: an out-of-order or restarted
@@ -246,12 +251,62 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
   end
 
+  describe "municipal financing commands" do
+    test "issuance is serialized, persisted immediately, and broadcast", %{city_id: city_id} do
+      StubSnapshotRepository.set_initial({:error, :not_found})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.issue_municipal_bond(city_id, 400.0)
+      assert {:error, :already_financed} = CityEngine.issue_municipal_bond(city_id, 550.0)
+
+      assert_receive {:city_metrics, %{money: 400.0, bond: %{original_principal: 400.0}}}
+      refute_receive {:city_metrics, _}, 50
+
+      assert [{^city_id, {0, 1}, saved}] = StubSnapshotRepository.saves()
+      assert saved.money == 400.0
+      assert saved.revision == 1
+      assert saved.municipal_bond.original_principal == 400.0
+    end
+
+    test "optional redemption is persisted at a higher same-tick revision", %{city_id: city_id} do
+      city = callable_bond_city()
+      StubSnapshotRepository.set_initial({:ok, {CityMap.snapshot_order(city), city}})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      assert :ok = CityEngine.redeem_municipal_bond(city_id, :minimum)
+
+      assert_receive {:city_metrics, %{money: 475.0, bond: %{outstanding_principal: 295.0}}}
+      assert [{^city_id, {40, 4}, saved}] = StubSnapshotRepository.saves()
+      assert saved.tick == 40
+      assert saved.revision == 4
+      assert saved.municipal_bond.outstanding_principal == 295.0
+    end
+
+    test "a refused redemption leaves treasury, revision, and persistence untouched", %{
+      city_id: city_id
+    } do
+      city = %{callable_bond_city() | money: 20.0}
+      StubSnapshotRepository.set_initial({:ok, {CityMap.snapshot_order(city), city}})
+      start_supervised!({CityEngine, city_id: city_id})
+
+      assert {:error, :insufficient_funds} =
+               CityEngine.redeem_municipal_bond(city_id, :minimum)
+
+      assert StubSnapshotRepository.saves() == []
+      assert {:ok, %{city_map: current}} = CityEngine.snapshot(city_id)
+      assert current.money == city.money
+      assert current.revision == city.revision
+    end
+  end
+
   describe "infrastructure commands" do
     setup %{city_id: city_id} do
       # An explicit 40x30 rather than a fresh city: a fresh city is now a 2x2 where (3, 4) is
       # out of bounds. Above the growth cap, so it also never grows under a test that is not
       # about growth.
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
@@ -336,7 +391,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
   describe "metrics broadcasts on commands" do
     setup %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      StubSnapshotRepository.set_initial({:ok, {{0, 0}, legacy_city()}})
       start_supervised!({CityEngine, city_id: city_id})
       :ok
     end
@@ -376,7 +431,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     # and the engine owns the money from hydration onwards.
 
     test "a refused command broadcasts nothing, but an accepted one does", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 20.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       subscribe_simulation(city_id)
 
@@ -392,7 +447,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "metrics broadcast after a place carry the post-debit balance", %{city_id: city_id} do
       # The treasury line must move on the click, not on the next tick. Nothing else
       # catches an engine that computes metrics before debiting.
-      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 100.0}}})
+      StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 100.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       subscribe_simulation(city_id)
 
@@ -418,7 +473,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # gate mutation: 20.0 only just covers the residential's 15.0, so an implementation
       # that debits before comparing sees 5.0 against a cost of 15.0 and refuses a command
       # that must succeed.
-      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 20.0}}})
+      StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 20.0}}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, _node} = CityEngine.place(city_id, 1, 1, :residential)
@@ -461,7 +516,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       broadcast_tick(2)
       assert {:ok, %{city_map: at_tick_2}} = CityEngine.snapshot(city_id)
-      assert [{^city_id, 2, saved}] = StubSnapshotRepository.saves()
+      assert [{^city_id, {2, 2}, saved}] = StubSnapshotRepository.saves()
 
       # Pin *which* version of the map was written. Saving the pre-tick map
       # instead would store the tick-1 state, which is a different map with
@@ -475,7 +530,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       broadcast_tick(3)
       assert {:ok, %{city_map: %{tick: 3}}} = CityEngine.snapshot(city_id)
 
-      assert [{^city_id, 2, ^saved}] = StubSnapshotRepository.saves(),
+      assert [{^city_id, {2, 2}, ^saved}] = StubSnapshotRepository.saves(),
              "tick 3 is not a checkpoint"
     end
 
@@ -485,7 +540,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # rem(tick, 0) raises inside handle_info/2, which would put the engine in
       # a restart loop on every tick rather than failing at boot.
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 0)
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      StubSnapshotRepository.set_initial({:ok, {{0, 0}, legacy_city()}})
       pid = start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
@@ -502,7 +557,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "terminate/2 persists the city map on a graceful supervisor shutdown", %{
       city_id: city_id
     } do
-      StubSnapshotRepository.set_initial({:error, :not_found})
+      StubSnapshotRepository.set_initial({:ok, {{0, 0}, legacy_city()}})
       pid = start_supervised!({CityEngine, city_id: city_id})
       {:ok, _node} = CityEngine.place(city_id, 1, 1, :power_plant)
 
@@ -512,7 +567,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{^city_id, 0, saved} | _] = StubSnapshotRepository.saves()
+      assert [{^city_id, {0, 1}, saved} | _] = StubSnapshotRepository.saves()
       assert CityMap.occupied?(saved, 1, 1)
     end
 
@@ -527,7 +582,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       stop_supervised!(CityEngine)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
-      assert [{^city_id, 1, saved} | _] = StubSnapshotRepository.saves()
+      assert [{^city_id, {1, 1}, saved} | _] = StubSnapshotRepository.saves()
       assert saved.tick == 1
     end
 
@@ -535,9 +590,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # Without this override tick 1 is not a checkpoint (the default interval is
       # 50), and the save the assertions below depend on would never happen.
       Application.put_env(:armchair_metropolist, :checkpoint_every_ticks, 1)
-      StubSnapshotRepository.set_initial({:ok, {3, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {3, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
-      StubSnapshotRepository.refuse_saves_as_stale(99)
+      StubSnapshotRepository.refuse_saves_as_stale({99, 0})
 
       log =
         capture_log(fn ->
@@ -548,7 +603,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         end)
 
       assert log =~ "declined to persist"
-      assert log =~ "tick 99"
+      assert log =~ "{99, 0}"
       refute log =~ "failed to persist"
     end
   end
@@ -576,6 +631,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         Application.put_env(:armchair_metropolist, :failing_repository_mode, unquote(mode))
 
         pid = start_supervised!({CityEngine, city_id: city_id})
+        :ok = CityEngine.issue_municipal_bond(city_id, 400.0)
         {:ok, node} = CityEngine.place(city_id, 1, 1, :power_plant)
 
         # The shutdown is inside the capture too: terminate/2 saves as well, and
@@ -622,6 +678,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       Application.put_env(:armchair_metropolist, :failing_repository_mode, :raise)
 
       pid = start_supervised!({CityEngine, city_id: city_id})
+      :ok = CityEngine.issue_municipal_bond(city_id, 400.0)
       {:ok, _node} = CityEngine.place(city_id, 1, 1, :power_plant)
       ref = Process.monitor(pid)
 
@@ -652,7 +709,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
     test "names the resources in deficit, worst first", %{city_id: city_id} do
       # Exactly enough to place the ten shops, leaving no treasury for imports.
-      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 400.0}}})
+      StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 400.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       starve(city_id)
 
@@ -677,7 +734,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "does not notify a city that is meeting demand", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       start_supervised!({CityEngine, city_id: city_id})
 
       broadcast_tick(1)
@@ -772,7 +829,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     test "a waste backlog is reported at 0% rather than a negative percentage",
          %{city_id: city_id} do
       # Exactly enough to place the ten houses, leaving no treasury to buy disposal.
-      StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 150.0}}})
+      StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 150.0}}})
       start_supervised!({CityEngine, city_id: city_id})
       Enum.each(0..9, fn x -> {:ok, _node} = CityEngine.place(city_id, x, 0, :residential) end)
 
@@ -795,7 +852,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # about growth. No `set_initial` here at all previously rode the stub's own
       # `{:error, :not_found}` default, which was harmless while a fresh city was 40x30 and
       # is not anymore.
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       :ok
     end
 
@@ -980,7 +1037,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       # An explicit 40x30 rather than a fresh city: this test places at (3, 4), out of
       # bounds on the 2x2 a fresh city starts as now, and it is about reload-on-reattach,
       # not grid size.
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(40, 30)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(40, 30)}})
       StubSnapshotRepository.echo_saves()
       {:ok, _pid} = CityRegistry.ensure_started(city_id)
       viewer = spawn(fn -> Process.sleep(:infinity) end)
@@ -1215,7 +1272,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   describe "grid growth" do
     setup %{city_id: city_id} do
       two =
-        CityMap.new(2, 2)
+        legacy_city(2, 2)
         |> CityMap.put_node(Node.new(0, 0, :park))
         |> CityMap.put_node(Node.new(1, 0, :park))
 
@@ -1256,7 +1313,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   describe "reset/1" do
-    test "clears the city, restores the grant, and returns to tick 0", %{city_id: city_id} do
+    test "clears the city, empties the treasury, and returns to unissued tick 0", %{
+      city_id: city_id
+    } do
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
       start_supervised!({CityEngine, city_id: city_id})
 
@@ -1265,7 +1324,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert city_map.nodes == %{}
       assert city_map.tick == 0
-      assert city_map.money == CityMap.opening_grant()
+      assert city_map.money == 0.0
+      assert city_map.municipal_bond == nil
       refute metrics.stalled
     end
 
@@ -1279,7 +1339,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert :ok = CityEngine.reset(city_id)
 
       # Newest first, so the save is ahead of the delete.
-      assert [{:save, ^city_id, 0}, {:delete, ^city_id} | _] = StubSnapshotRepository.calls()
+      assert [{:save, ^city_id, {0, 0}}, {:delete, ^city_id} | _] =
+               StubSnapshotRepository.calls()
     end
 
     test "still resets in memory when the snapshot delete fails", %{city_id: city_id} do
@@ -1317,7 +1378,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
     end
 
     test "a reset broadcasts the new city map, not a bare atom", %{city_id: city_id} do
-      StubSnapshotRepository.set_initial({:ok, {0, CityMap.new(12, 12)}})
+      StubSnapshotRepository.set_initial({:ok, {0, legacy_city(12, 12)}})
       start_supervised!({CityEngine, city_id: city_id})
       Phoenix.PubSub.subscribe(ArmchairMetropolist.PubSub, CityEngine.topic(city_id))
 
@@ -1336,6 +1397,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       start_supervised!({CityEngine, city_id: city_id})
 
       assert :ok = CityEngine.reset(city_id)
+      assert :ok = CityEngine.issue_municipal_bond(city_id, 250.0)
+      assert {:ok, _node} = CityEngine.place(city_id, 0, 0, :park)
 
       broadcast_tick(1)
 
@@ -1359,11 +1422,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       #
       # Five commercial blocks draw 45 traffic against the baseline's 20. Traffic is the
       # one shortfall the external market cannot buy away, so this remains a real deficit
-      # despite the reset city's opening grant.
+      # despite the reset city's newly authorized bond proceeds.
       StubSnapshotRepository.set_initial({:ok, {3, dead_city(3, 0.0)}})
       start_supervised!({CityEngine, city_id: city_id})
 
       assert :ok = CityEngine.reset(city_id)
+      assert :ok = CityEngine.issue_municipal_bond(city_id, 550.0)
 
       for {x, y} <- [{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}] do
         {:ok, _node} = CityEngine.place(city_id, x, y, :commercial)
@@ -1378,7 +1442,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # Ten commercial nodes and no producers: baseline capacity cannot cover the
   # demand, so every resource sits below full satisfaction.
   defp starved_city do
-    Enum.reduce(0..9, CityMap.new(40, 30), fn x, acc ->
+    Enum.reduce(0..9, legacy_city(40, 30), fn x, acc ->
       CityMap.put_node(acc, Node.new(x, 0, :commercial))
     end)
   end
@@ -1396,16 +1460,12 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   end
 
   # The treasury one `starve/1` caller needs. Ten commercial blocks at 40 each is 400 —
-  # exactly the opening grant, leaving nothing — so `starve/1` on its own just fits
+  # exactly the old 400 treasury fixture, leaving nothing — so `starve/1` on its own just fits
   # unaided. What does not fit is "re-arms once satisfaction recovers", which demolishes
   # and rebuilds all ten on top of that. Measured 2026-08-07 by reducing this seeding to
   # the plain grant: that one test fails and the other four `starve/1` callers pass.
   #
-  # (Until 2026-08-07 this said "well past the 150 opening grant, so without this the
-  # fourth `place` comes back `{:error, :insufficient_funds}`". The grant became 400 in
-  # d6642b6 and nothing re-derived the sentence, so it named both the wrong figure and
-  # the wrong failure — the fourth placement costs a cumulative 160 and has been
-  # affordable ever since.)
+  # This is grandfathered test state, not a new-city financing path.
   #
   # Seeded *empty*: only the balance is preloaded, so `starve/1`'s consumers are still
   # placed through the running engine. That is the property its own docstring calls
@@ -1418,7 +1478,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # construction or demolition cost moves is a fixture that breaks for reasons unrelated
   # to what it tests.
   defp seed_funded_city do
-    StubSnapshotRepository.set_initial({:ok, {0, %{CityMap.new(40, 30) | money: 10_000.0}}})
+    StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 10_000.0}}})
+  end
+
+  defp callable_bond_city do
+    {:ok, bond} = MunicipalBond.new(400.0)
+    bond = MunicipalBond.start(bond, 0)
+
+    bond =
+      Enum.reduce(20..39, bond, fn tick, current ->
+        MunicipalBond.service(current, tick, 10_000.0).bond
+      end)
+
+    %{CityMap.new() | tick: 40, revision: 3, money: 500.0, municipal_bond: bond}
   end
 
   # Polls `fun` until it returns truthy or 500ms have passed, returning the last
@@ -1445,7 +1517,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # `StubSnapshotRepository` tick so callers can assert the frozen tick never moves.
   defp dead_city(house_count, health) do
     city =
-      Enum.reduce(0..(house_count - 1)//1, CityMap.new(40, 30), fn x, map ->
+      Enum.reduce(0..(house_count - 1)//1, legacy_city(40, 30), fn x, map ->
         CityMap.put_node(map, %Node{
           Node.new(x, 0, :residential)
           | health: health,

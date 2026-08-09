@@ -52,16 +52,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert footnote =~ "20 traffic absorbed"
     end
 
-    # Two power plants at 80 each is 160, comfortably inside the 400 opening grant —
+    # Two power plants at 80 each is 160, comfortably inside this legacy fixture's treasury —
     # measured, this test passes with the tag removed, so the treasury is insulation
     # rather than necessity. It is kept because it pins a round balance that neither the
-    # grant nor the construction cost can move: `power_plant` would have to pass 200
-    # before two of them stopped fitting the grant unaided, and a test about legend
+    # treasury nor the construction cost can move: `power_plant` would have to pass 500
+    # before two of them stopped fitting the fixture unaided, and a test about legend
     # rendering should not start failing on a balance patch it has no opinion about.
     #
-    # (This comment said "past the 150 opening grant" until 2026-08-07. The grant became
-    # 400 in d6642b6 and nothing re-derived the sentence, so it went on asserting that
-    # 160 was *over* the grant — the arithmetic inverted, not just the figure.)
+    # This is grandfathered test state, not a new-city financing path.
     #
     # The type is not negotiable for this block: the `+120` and `+360` figures two of
     # these tests pin are power_plant capacity, so switching to a cheaper type would turn
@@ -126,10 +124,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       refute power =~ "font-semibold"
     end
 
-    # Three power plants at 80 each is 240, inside the 400 opening grant — measured, this
+    # Three power plants at 80 each is 240, inside the legacy fixture's treasury — measured, this
     # test passes with the tag removed too. Kept for the same reason as the block above,
     # and the margin here is the thinner of the two: `power_plant` passing 133 would take
-    # three of them past the grant, where two would still fit until 200.
+    # three of them past that balance, where two would still fit until 500.
     @tag treasury: 1_000.0
     test "placing blocks adds a city total beside the per-block figure", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
@@ -417,11 +415,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       assert has_element?(view, "#metrics-treasury")
 
-      # Through the accessor, as the reset assertion further down this file already does.
-      # A bare "150" here survived a grep for `opening_grant` and had to be found by
-      # running the suite.
-      assert view |> element("#metrics-treasury") |> render() =~
-               "Treasury: #{trunc(CityMap.opening_grant())}"
+      # This suite intentionally seeds a grandfathered city with 500 so legend tests do
+      # not depend on a player-facing issue choice.
+      assert view |> element("#metrics-treasury") |> render() =~ "Treasury: 500"
     end
 
     test "the metrics panel shows the landfill, floored", %{conn: conn} do
@@ -733,8 +729,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert view |> element(~s{[data-cell="residential-power"]}) |> render() =~ "-15"
     end
 
-    # Three houses at 15 each is 45, inside the opening grant, but the treasury is
-    # raised so the fixture does not depend on the grant's current value.
+    # Three houses at 15 each is 45, but the treasury is raised so the fixture does not
+    # depend on any player-facing financing choice.
     @tag treasury: 1_000.0
     test "a negative resource's city total flips too, not only the per-block figure",
          %{conn: conn} do
@@ -843,7 +839,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     })
   end
 
-  defp empty_city_metrics, do: SimulationMetrics.build(CityMap.new(40, 30), %{})
+  defp empty_city_metrics do
+    %{SimulationMetrics.build(legacy_city(40, 30), %{}) | bond: %{legacy: true}}
+  end
 
   # Waste supplied 40 against demand 50 with a 60 backlog: available -20 and
   # satisfaction -0.4, which renders -40% unclamped. Built by hand rather than

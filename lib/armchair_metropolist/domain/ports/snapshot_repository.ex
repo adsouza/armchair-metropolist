@@ -16,25 +16,25 @@ defmodule ArmchairMetropolist.Domain.Ports.SnapshotRepository do
   among — the name says `load` rather than `load_latest` for that reason.
   """
   @callback load(String.t()) ::
-              {:ok, {non_neg_integer(), CityMap.t()}} | {:error, term()}
+              {:ok, {CityMap.snapshot_order(), CityMap.t()}} | {:error, term()}
 
   @doc """
   Persist `city_map` under `city_id`.
 
-  Returns `{:stale, stored_tick}` and writes nothing when a snapshot at `tick` or
-  later is already stored. **That is not an error.** It is the guarantee that a
+  Returns `{:stale, stored_order}` and writes nothing when an equal or later
+  `{tick, revision}` is already stored. **That is not an error.** It is the guarantee that a
   crashed engine which hydrated from an older snapshot cannot overwrite newer work
   with older — the case `docs/superpowers/2026-07-30-follow-ups.md` records, and the
-  one the previous append-only layout protected against by ordering on tick rather
+  one the previous append-only layout protected against by ordering on simulation time rather
   than on write time. Adapters must honour it; callers rely on a save never moving a
   city backwards.
 
-  `tick` is passed separately because it is the adapter's business what to do with
-  it — the Postgres adapter stores it as a column, and the file adapter puts it in
-  its envelope. `city_map` carries the authoritative tick regardless.
+  The order is passed separately because it is the adapter's business what to do with
+  it — the Postgres adapter stores both values as columns, and the file adapter puts them
+  in its envelope. `city_map` carries the authoritative pair regardless.
   """
-  @callback save(String.t(), non_neg_integer(), CityMap.t()) ::
-              :ok | {:stale, non_neg_integer()} | {:error, term()}
+  @callback save(String.t(), CityMap.snapshot_order(), CityMap.t()) ::
+              :ok | {:stale, CityMap.snapshot_order()} | {:error, term()}
 
   @doc """
   Delete the city stored under `city_id`.

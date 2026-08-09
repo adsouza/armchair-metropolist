@@ -66,7 +66,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         money_ceiling: 31.0,
         insolvent: true,
         escape: {:demolish, :park, 10.0},
-        rescue_window: 8
+        rescue_window: 8,
+        bond: %{outstanding_principal: 200.0},
+        financing_locked: true,
+        financing_escape: {:redeem, 25.0},
+        financing_rescue_window: 3
       })
 
     assert metrics.amenity == 1.75
@@ -84,6 +88,10 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.insolvent
     assert metrics.escape == {:demolish, :park, 10.0}
     assert metrics.rescue_window == 8
+    assert metrics.bond == %{outstanding_principal: 200.0}
+    assert metrics.financing_locked
+    assert metrics.financing_escape == {:redeem, 25.0}
+    assert metrics.financing_rescue_window == 3
   end
 
   # A partial derived map is a programming error, not a request for defaults: the default

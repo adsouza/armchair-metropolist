@@ -20,6 +20,42 @@ and a refused click says what it wanted and what you have. Demolishing charges a
 fee, which is less than the cheapest block but is not nothing: a city with an empty
 treasury cannot tear anything down either.
 
+## Choose the bond before you build
+
+A new city has no grant and no spendable cash. First authorize one municipal bond issue;
+its proceeds become the treasury immediately. The issue is a fixed-term commitment, not a
+renewable credit line: there is one issue per city, and only Reset returns to the choice.
+
+<!-- generated:bonds -->
+| issue | proceeds | principal/tick | first interest | first payment | total interest | final payment |
+|---|---:|---:|---:|---:|---:|---:|
+| Lean | 250 | 2.50 | 1.25 | 3.75 | 63.13 | 2.51 |
+| **Balanced · recommended** | 400 | 4.00 | 2.00 | 6.00 | 101.00 | 4.02 |
+| Generous | 550 | 5.50 | 2.75 | 8.25 | 138.88 | 5.53 |
+<!-- /generated:bonds -->
+
+The first successful placement starts a **20-tick construction-period holiday**. Refused
+placements do not start it. The transitions to ticks 1 through 20 have no debt service;
+the transition to tick 21 takes the first payment. Authorizing the issue does not start
+the clock, so reading the grid is free.
+
+After the holiday, each tick reserves operating upkeep first, then bond debt service, then
+automatic imports. The legend's *money* column remains operating income minus upkeep: bond
+service is shown separately in the Municipal bond panel and never masquerades as a block's
+load. Interest is 0.5% of outstanding principal per servicing tick, while one hundredth of
+the original principal matures each tick. Payments decline as principal falls, and the
+100th servicing tick makes every remaining principal due.
+
+If cash is short, interest and serial principal remain past due. **Default pauses new
+construction**, but it does not remove blocks or stop demolition; later cash is applied to
+arrears before the current principal maturity. Optional redemption at par opens after 20
+servicing ticks, clears interest arrears first, and then reduces principal. Redeem 25 is a
+convenient partial action, while Redeem all uses the exact current balance.
+
+The simulation clock is the bond clock. A stalled city, an issued city whose first block has
+not been placed, and a city with no viewer advancing it accrue nothing. Closing the page does
+not create offline interest, and missed payments never extend the fixed maturity.
+
 ### The map grows with the city
 
 You start on a 2×2 grid — four cells. Place your third block and two more rows and
@@ -84,9 +120,9 @@ damage. The order is **one house, then producers, then the rest.**
 
 Money gives the same advice for a different reason. `residential` is the cheapest block at
 15 and earns without consuming any money. It does not support itself indefinitely anymore:
-the opening grant is buying its power until generation arrives. `commercial` earns thirty
+the bond proceeds are buying its power until generation arrives. `commercial` earns thirty
 times as much per tick, but placed by itself it has neither power nor workforce and decays
-while it earns, so its income stops. Spend the whole grant on things that cannot earn and
+while it earns, so its income stops. Spend the whole issue on things that cannot earn and
 the city has no way back — see "Running out of money" below.
 
 ### Position does not matter
@@ -190,9 +226,15 @@ fund the remaining support chain:
 | 7 | `park` | 20 | 280 | waste 54/54 | +9 |
 | 8 | `park` | 20 | 300 | waste 54/56 | +12 |
 
-Total 300, against an opening grant of 400. The finished city nets +12 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
+Total 300, against the recommended 400 bond issue. The finished city nets +12 per tick. Every stage is fully supplied on all five physical resources — the `tightest resource` column is demand against available supply, including purchases, so step 1's `15/15` is imported power.
 
-Measured: starting cold from the grant, this holds at full health with up to **6 ticks (6 s) between placements**. Slower than that and the treasury empties mid-sequence.
+| issue | principal | route | measured timing | first payment | total interest |
+|---|---:|---|---|---:|---:|
+| Lean | 250 | house → commerce → plant → transit, then save and grow | no fixed-gap route; save-and-grow verified | 3.75 | 63.13 |
+| **Balanced · recommended** | **400** | direct opening | up to **4 ticks (4 s)** physically; 3 ticks warning-free | **6.00** | **101.00** |
+| Generous | 550 | direct opening with more reaction time | up to **6 ticks (6 s)** physically; 5 ticks warning-free | 8.25 | 138.88 |
+
+All three issues have a 20-tick construction holiday, 100 servicing ticks, level principal, and 0.5% interest per servicing tick. The Lean route is different by design: assemble its four-block commercial core revenue-first, before a tick lands, then pause to fund the last four blocks.
 <!-- /generated:opening -->
 
 Read the `tightest resource` column downwards and you can watch the binding constraint
@@ -212,13 +254,17 @@ shortfall into enough headroom for the commercial core and later growth.
 
 ### If you need longer between clicks
 
-The only deadline is reaching commerce at step 4. Before then the first house imports power,
+The first deadline is reaching commerce at step 4. Before then the first house imports power,
 then the power plant and transit hub run upkeep and water-import deficits. The measured
-6-tick spacing above is the safe limit from a cold start. Once the four-block core is
-running, waiting increases the treasury instead of consuming it.
+physical upper bounds are four ticks for Balanced and six for Generous; use three and five,
+respectively, to keep the rescue warning quiet. Lean must click its
+house, commerce, plant and transit core before a tick lands, then save the entire remaining
+construction budget before continuing. Once
+the four-block core is running, operating cash flow rises, but debt service begins when the
+20-tick holiday ends and must be budgeted separately.
 
 <!-- generated:opening_pace -->
-After step 4, the transit-backed commercial core earns +6 per tick. There is no extra savings target for slower play: waiting funds the remaining blocks.
+After step 4, the transit-backed commercial core has +6 of operating cash flow per tick. Debt service is separate: the first Lean, Balanced and Generous payments are 3.75, 6.00 and 8.25. Lean can save at the core; Balanced initially breaks even after debt; Generous should use its larger construction reserve to finish the opening before service starts.
 <!-- /generated:opening_pace -->
 
 Until step 4, watch *Automatic purchases* as well as block prices: the market charge repeats
@@ -408,8 +454,9 @@ the house really is alive; what has died is your ability to act.
 
 The word for the underlying condition is **insolvent**, and it is the same one used above for a
 support set with no commercial block. Insolvency on its own is not a crisis — the documented
-opening sequence is insolvent at its second and third stages, which is exactly what the grant is
-for. It becomes fatal only when the treasury can no longer buy the way out.
+opening sequence is insolvent at its second and third stages, which is exactly what the
+construction-period reserve is for. It becomes fatal only when the treasury can no longer buy
+the way out.
 
 So the game warns you first. While a city is insolvent and the fix is slipping out of reach,
 the sidebar shows a **Rescue window** — how many ticks you have left before you can no longer
@@ -421,10 +468,10 @@ above: the escape has to be bought while there is still something to buy it with
 
 Once you change a city, a **Reset** button appears in the page header beside the theme toggle.
 It is available whether the city is thriving, rescuable, stalled or locked, so an economic
-softlock never traps you in that city. Reset clears every block, returns the treasury to the
-opening grant, sets the tick back to zero and discards the stored city. The button asks for
-confirmation because there is no undo; it stays hidden only while the city is equivalent to
-the untouched opening state.
+softlock never traps you in that city. Reset clears every block, returns the treasury to zero,
+sets the tick back to zero and discards the stored city. You then authorize a new bond issue.
+The button asks for confirmation because there is no undo; it stays hidden only while the city
+is equivalent to the untouched, unissued state.
 
 ## Reference
 
@@ -523,7 +570,7 @@ actually purchased, not the unfunded portion of a labour shortage, and clears ea
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-Demolishing anything costs 10, whatever it was. A new city starts with 400.
+Demolishing anything costs 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 municipal bond issue before construction. Those proceeds are debt, not a grant.
 <!-- /generated:costs -->
 
 ### Health and timing

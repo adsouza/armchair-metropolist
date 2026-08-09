@@ -70,12 +70,17 @@ defmodule ArmchairMetropolist.Domain.DomainPropertiesTest do
     end
   end
 
-  property "advance_tick neither creates nor destroys nodes, and tick increases" do
+  property "advance_tick preserves nodes and advances every non-stalled city" do
     check all(city <- CityGenerators.city()) do
       {next, _} = Calc.advance_tick(city)
       assert map_size(next.nodes) == map_size(city.nodes)
       assert Map.keys(next.nodes) |> Enum.sort() == Map.keys(city.nodes) |> Enum.sort()
-      assert next.tick == city.tick + 1
+
+      if Calc.metrics(city).stalled do
+        assert next.tick == city.tick
+      else
+        assert next.tick == city.tick + 1
+      end
     end
   end
 

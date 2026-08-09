@@ -28,6 +28,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
 
   import Ecto.Query
 
+  alias ArmchairMetropolist.Domain.Entities.CityMap
   alias ArmchairMetropolist.Infrastructure.Persistence.{CitySnapshot, Repo, SnapshotVocabulary}
 
   @impl true
@@ -41,13 +42,21 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
       nil ->
         {:error, :not_found}
 
-      %CitySnapshot{tick: tick, payload: payload, checksum: checksum} ->
-        decode(tick, payload, checksum)
+      %CitySnapshot{tick: tick, revision: revision, payload: payload, checksum: checksum} ->
+        decode({tick, revision}, payload, checksum)
     end
   end
 
   @impl true
-  def save(city_id, tick, city_map) do
+  def save(city_id, {_tick, _revision} = order, city_map) do
+    if CityMap.snapshot_order(city_map) != order do
+      {:error, :snapshot_order_mismatch}
+    else
+      persist(city_id, order, city_map)
+    end
+  end
+
+  defp persist(city_id, {tick, revision} = order, city_map) do
     payload = :erlang.term_to_binary(city_map, [:compressed])
     checksum = :crypto.hash(:md5, payload) |> Base.encode16()
 
@@ -64,14 +73,16 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
         Repo.one(from(s in CitySnapshot, where: s.city_id == ^city_id, lock: "FOR UPDATE"))
 
       case existing do
-        %CitySnapshot{tick: stored} when stored >= tick ->
-          {:stale, stored}
+        %CitySnapshot{tick: stored_tick, revision: stored_revision}
+        when {stored_tick, stored_revision} >= order ->
+          {:stale, {stored_tick, stored_revision}}
 
         _ ->
           changeset =
             CitySnapshot.changeset(existing || %CitySnapshot{}, %{
               city_id: city_id,
               tick: tick,
+              revision: revision,
               payload: payload,
               checksum: checksum
             })
@@ -119,7 +130,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
   # the payload is a row this application wrote to its own `city_snapshots` table,
   # not anything a user submits; reaching it requires database write access. The
   # checksum beside it detects corruption, not tampering.
-  defp decode(tick, payload, checksum) do
+  defp decode(order, payload, checksum) do
     if :crypto.hash(:md5, payload) |> Base.encode16() == checksum do
       # modernize/1 rewrites node types retired by a rename, so a row written
       # under the old vocabulary hydrates instead of crash-looping the engine.
@@ -128,7 +139,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotStore do
         |> :erlang.binary_to_term([:safe])
         |> SnapshotVocabulary.modernize()
 
-      {:ok, {tick, city_map}}
+      if CityMap.snapshot_order(city_map) == order do
+        {:ok, {order, city_map}}
+      else
+        {:error, :snapshot_order_mismatch}
+      end
     else
       {:error, :checksum_mismatch}
     end

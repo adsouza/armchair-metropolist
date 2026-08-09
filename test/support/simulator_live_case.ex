@@ -23,9 +23,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       import ExUnit.CaptureLog
       import Phoenix.LiveViewTest
 
-      alias ArmchairMetropolist.Domain.Entities.CityMap
-      alias ArmchairMetropolist.Domain.Entities.Node
-      alias ArmchairMetropolist.Domain.Entities.SimulationMetrics
+      alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node, SimulationMetrics}
       alias ArmchairMetropolist.Infrastructure.Simulation.CityEngine
       alias ArmchairMetropolist.Infrastructure.Simulation.CityRegistry
       alias ArmchairMetropolist.StubSnapshotRepository
@@ -91,19 +89,19 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # There is no other way to set it: the engine owns the money, the refusal is decided
       # against the engine's copy, and this file starts its engine in `setup` — before any
       # test body could seed anything. Untagged tests get `{:error, :not_found}` exactly as
-      # before, so the engine builds a fresh `CityMap` and they see the opening grant.
+      # before, so the engine builds a fresh, unissued `CityMap`.
       #
       # The city is seeded *empty*: only the balance is preloaded, so every node in every
       # test is still placed through the running engine.
       defp initial_snapshot(%{treasury: money}) do
-        {:ok, {0, %{CityMap.new(40, 30) | money: money}}}
+        {:ok, {0, %{legacy_city(40, 30) | money: money}}}
       end
 
-      # `@tag :roomy_city` seeds an explicit 40x30 carrying the ordinary opening grant, for tests
+      # `@tag :roomy_city` seeds an explicit 40x30 grandfathered city, for tests
       # whose subject has nothing to do with grid size and which place more blocks than a 2x2
       # holds. 40x30 is above the growth cap, so the grid cannot grow underneath them either --
       # which matters, because a growing grid changes the legal coordinate set between clicks.
-      defp initial_snapshot(%{roomy_city: true}), do: {:ok, {0, CityMap.new(40, 30)}}
+      defp initial_snapshot(%{roomy_city: true}), do: {:ok, {0, legacy_city(40, 30)}}
 
       # `@tag :stalled_city` seeds a city that is stalled *and* bankrupt: three dead
       # residential blocks have no free power and no treasury for imports, so they stay
@@ -123,7 +121,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # render at 512px, and this test would pin the wrong number while still passing.
       defp initial_snapshot(%{stalled_tiny_city: true}) do
         city =
-          Enum.reduce([{0, 0}, {1, 0}, {0, 1}], CityMap.new(), fn {x, y}, map ->
+          Enum.reduce([{0, 0}, {1, 0}, {0, 1}], legacy_city(), fn {x, y}, map ->
             CityMap.put_node(map, %Node{
               Node.new(x, y, :residential)
               | health: 0.0,
@@ -161,14 +159,65 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # affordable at the seeded balance, for both the 25 free nodes and the one placed live.
       defp initial_snapshot(%{crowded_six_by_six: true}) do
         city =
-          Enum.reduce(0..24, CityMap.new(6, 6), fn i, map ->
+          Enum.reduce(0..24, legacy_city(6, 6), fn i, map ->
             CityMap.put_node(map, Node.new(rem(i, 6), div(i, 6), :residential))
           end)
 
         {:ok, {0, %{city | money: 1_000.0}}}
       end
 
-      defp initial_snapshot(_context), do: {:error, :not_found}
+      defp initial_snapshot(%{callable_bond: true}) do
+        city = bond_city(:callable)
+        {:ok, {CityMap.snapshot_order(city), city}}
+      end
+
+      defp initial_snapshot(%{defaulted_bond: true}) do
+        city = bond_city(:defaulted)
+        {:ok, {CityMap.snapshot_order(city), city}}
+      end
+
+      defp initial_snapshot(%{redeemed_bond: true}) do
+        city = bond_city(:redeemed)
+        {:ok, {CityMap.snapshot_order(city), city}}
+      end
+
+      defp initial_snapshot(%{unissued_city: true}), do: {:error, :not_found}
+
+      defp initial_snapshot(_context), do: {:ok, {{0, 0}, legacy_city()}}
+
+      defp legacy_city(width \\ 2, height \\ 2) do
+        %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
+      end
+
+      defp bond_city(:callable) do
+        {:ok, bond} = MunicipalBond.new(400.0)
+        bond = MunicipalBond.start(bond, 0)
+
+        bond =
+          Enum.reduce(20..39, bond, fn tick, current ->
+            MunicipalBond.service(current, tick, 10_000.0).bond
+          end)
+
+        %{CityMap.new() | tick: 40, revision: 3, money: 500.0, municipal_bond: bond}
+      end
+
+      defp bond_city(:defaulted) do
+        {:ok, bond} = MunicipalBond.new(400.0)
+        bond = MunicipalBond.start(bond, 0)
+        bond = MunicipalBond.service(bond, 20, 0.0).bond
+
+        city =
+          CityMap.new()
+          |> CityMap.put_node(Node.new(0, 0, :residential))
+
+        %{city | tick: 21, revision: 4, money: 100.0, municipal_bond: bond}
+      end
+
+      defp bond_city(:redeemed) do
+        city = bond_city(:callable)
+        {:ok, bond} = MunicipalBond.redeem(city.municipal_bond, city.tick, 10_000.0)
+        %{city | revision: city.revision + 1, municipal_bond: bond}
+      end
 
       # Kept below every `initial_snapshot/1` clause, rather than between the two `:stalled_*`
       # ones, so the compiler sees all of that function's clauses grouped together.
@@ -180,7 +229,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       # it is compiled, so ungrouping these clauses now fails `mix precommit` outright.
       defp house_and_park(money) do
         city =
-          CityMap.new(40, 30)
+          legacy_city(40, 30)
           |> CityMap.put_node(Node.new(0, 0, :residential))
           |> CityMap.put_node(Node.new(1, 0, :park))
 
@@ -188,7 +237,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       end
 
       defp locked_city do
-        CityMap.new(40, 30)
+        legacy_city(40, 30)
         |> CityMap.put_node(Node.new(0, 0, :residential))
         |> CityMap.put_node(Node.new(1, 0, :power_plant))
         |> CityMap.put_node(Node.new(2, 0, :water_plant))
@@ -197,7 +246,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
 
       defp stalled_city(money, count \\ 3) do
         city =
-          Enum.reduce(0..(count - 1), CityMap.new(40, 30), fn x, map ->
+          Enum.reduce(0..(count - 1), legacy_city(40, 30), fn x, map ->
             CityMap.put_node(map, %Node{
               Node.new(x, 0, :residential)
               | health: 0.0,

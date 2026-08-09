@@ -9,6 +9,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.CitySnapshot do
   @primary_key {:city_id, :string, autogenerate: false}
   schema "city_snapshots" do
     field :tick, :integer
+    field :revision, :integer, default: 0
     field :payload, :binary
     field :checksum, :string
 
@@ -18,7 +19,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.CitySnapshot do
   @doc false
   def changeset(city_snapshot, attrs) do
     city_snapshot
-    |> cast(attrs, [:city_id, :tick, :payload, :checksum])
-    |> validate_required([:city_id, :tick, :payload, :checksum])
+    |> cast(attrs, [:city_id, :tick, :revision, :payload, :checksum])
+    |> validate_required([:city_id, :tick, :revision, :payload, :checksum])
   end
 end

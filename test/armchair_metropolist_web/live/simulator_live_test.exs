@@ -270,7 +270,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
 
   test "an affordable build flashes nothing", %{conn: conn} do
     # The positive case. Without it, the assertions above pass against a page that
-    # flashes on every click. No tag: the untouched 150 grant covers an 80 plant.
+    # flashes on every click. No tag: the grandfathered fixture covers an 80 plant.
     {:ok, view, _html} = live(conn, ~p"/")
 
     refute place(view, :power_plant, 1, 1) =~ "Not enough money"
