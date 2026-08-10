@@ -7,7 +7,7 @@ the rules — see [TESTING.md](../TESTING.md).
 
 ## The controls
 
-There are four things to click, and the middle two are the same gesture on the same
+There are four everyday controls, and the middle two are the same gesture on the same
 square — worth knowing, because nothing on screen separates them:
 
 * **click a type in the legend** — selects it for placing;
@@ -15,6 +15,10 @@ square — worth knowing, because nothing on screen separates them:
 * **click a placed block** — undoes it for a full refund during opening planning, then
   demolishes it after the simulation begins;
 * **click Begin sim** — ends opening planning and starts the city and bond clocks.
+
+Later, a prosperous city's labour unions can pause the clock with a contract ultimatum.
+That prompt is a real choice: accept permanently higher variable costs, or refuse and lose
+part of the local workforce to a strike. An active strike can be settled later from its banner.
 
 Placing charges the block's price and is refused
 outright if the treasury will not cover it — the legend dims the rows you cannot afford,
@@ -435,11 +439,14 @@ reserves net upkeep first and then splits the remaining import budget proportion
 every eligible shortage. If it can fund only half the total bill, power, water, disposal and
 labour each receive half of what they need.
 
-Inflation is the other large-city pressure. It is dormant through a treasury of **1,000**. Above
-that, every additional 1,000 raises construction, demolition, upkeep and market prices by 10%, up
-to a ×1.7 ceiling. The *Inflation* line in Metrics shows the active percentage, and every displayed
-construction price already includes it. Fixed bond principal and scheduled debt service are
-contractual, so inflation does not rewrite them.
+Organized labour is the other large-city pressure. The first wage demand arrives when the
+treasury rises above **1,000**, with another 10-point demand for every additional 1,000-money
+band, up to 70%. The clock pauses for each ultimatum. Accepting permanently raises construction,
+demolition, upkeep and market prices to the demanded wage level. Refusing preserves the current
+cost level but removes the same share of local labour in a strike, multiplying workforce supply
+just as injuries and disease do. The *Wage inflation* and *Workforce · Strike* lines show the two
+sides of the choice. Fixed bond principal and scheduled debt service are contractual, so wage
+inflation does not rewrite them.
 
 Only money already in the treasury can be imported with. Income produced during this tick
 arrives at its end and becomes spendable on the next one. That one-tick lag matters most at
@@ -664,7 +671,7 @@ Net upkeep is reserved before imports. If the remaining treasury cannot cover ev
 eligible shortage, the same percentage of each is purchased. Money earned during a tick
 becomes available for imports on the following tick. Commuter traffic is based on labour
 actually purchased, not the unfunded portion of a labour shortage, and clears each tick.
-The 1-money entries are base prices; active inflation multiplies them.
+The 1-money entries are base prices; accepted wage inflation multiplies them.
 
 ### What each type costs
 
@@ -682,7 +689,7 @@ The 1-money entries are base prices; active inflation multiplies them.
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-These are base construction prices. Once a running city's treasury exceeds 1000, inflation raises construction, demolition, upkeep and market prices by 10% per additional 1,000, up to ×1.7. Demolishing anything has a base cost of 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A structurally draining city may later receive one dynamically quoted commercial bridge when its treasury falls below the combined current cost of the commercial blocks needed to close its operating gap. The quote also covers six projected ticks of expenses.
+These are base construction prices. Once a running city's treasury exceeds 1000, unions demand 10% higher wages per additional 1,000, up to ×1.7. Accepting permanently raises construction, demolition, upkeep and market prices; refusing removes the same share of local labour in a strike. Demolishing anything has a base cost of 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A structurally draining city may later receive one dynamically quoted commercial bridge when its treasury falls below the combined current cost of the commercial blocks needed to close its operating gap. The quote also covers six projected ticks of expenses.
 <!-- /generated:costs -->
 
 ### Health and timing
@@ -699,7 +706,9 @@ These are base construction prices. Once a running city's treasury exceeds 1000,
 | excess labour before crime begins | **10** |
 | crime created beyond that allowance | **+0.2 per worker per tick** |
 | untreated crime that suppresses one commercial block's income | **20** |
-| inflation begins above a treasury of | **1000** |
+| first union wage demand begins above a treasury of | **1000** |
+| each accepted demand adds to variable costs | **+10%** |
+| each refused demand removes from local labour | **−10%** |
 | healthy traffic ceiling | **100% at no utilization, falling linearly to 80% at full utilization** |
 | injuries above that ceiling | **+1 per 10 excess traffic** |
 | disease outbreak | **+2 per residential; every 49 ticks with one home, 3 ticks sooner per additional home (minimum 10)** |

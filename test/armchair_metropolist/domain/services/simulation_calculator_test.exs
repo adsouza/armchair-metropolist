@@ -541,20 +541,34 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
     end
   end
 
-  describe "inflation" do
-    test "is dormant through the threshold" do
-      city = %{legacy_city() | money: Calc.inflation_threshold()}
+  describe "union wage demands and strikes" do
+    test "prosperity opens a demand without automatically raising prices" do
+      city = %{legacy_city() | money: Calc.union_demand_threshold()}
 
       assert Calc.inflation_multiplier(city) == 1.0
       assert Calc.construction_cost(city, :commercial) == 40.0
       assert Calc.demolition_cost(city) == 10.0
       assert Calc.market_prices(city) == Calc.market_prices()
+
+      prosperous = %{city | money: Calc.union_demand_threshold() + 0.01}
+
+      assert Calc.inflation_multiplier(prosperous) == 1.0
+      assert Calc.construction_cost(prosperous, :commercial) == 40.0
+
+      assert Calc.union_demand(prosperous) == %{
+               level: 1,
+               pending: true,
+               current_wage_percent: 0,
+               demanded_wage_percent: 10,
+               strike_percent: 10
+             }
     end
 
-    test "gradually raises construction, demolition, upkeep and market prices" do
+    test "an accepted wage demand raises construction, demolition, upkeep and market prices" do
       city = %{
         map_with([Node.new(0, 0, :power_plant)])
-        | money: Calc.inflation_threshold() + 1_000.0
+        | money: Calc.union_demand_threshold() + 1_000.0,
+          union_wage_level: 1
       }
 
       assert_in_delta Calc.inflation_multiplier(city), 1.1, 0.001
@@ -564,12 +578,34 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.market_prices(city) == %{power: 1.1, water: 1.1, waste: 1.1, labour: 1.1}
     end
 
-    test "caps the multiplier at seventy percent above base cost" do
-      city = %{legacy_city() | money: 1_000_000.0}
+    test "the seventh accepted demand is the seventy-percent ceiling" do
+      city = %{legacy_city() | money: 1_000_000.0, union_wage_level: 7}
 
       assert Calc.inflation_multiplier(city) == 1.7
       assert Calc.construction_cost(city, :school) == 204.0
       assert Calc.demolition_cost(city) == 17.0
+    end
+
+    test "refusing the demand reduces local labour like a health burden" do
+      city = %{
+        map_with([Node.new(0, 0, :residential)])
+        | money: 500.0,
+          union_strike_level: 1
+      }
+
+      metrics = Calc.metrics(city)
+
+      assert metrics.union_labour_multiplier == 0.9
+      assert metrics.health_labour_multiplier == 1.0
+      assert_in_delta metrics.resources.labour.supplied, 4.5, 0.001
+      assert_in_delta metrics.by_type.residential.actual_capacity.labour, 4.5, 0.001
+    end
+
+    test "a pending demand pauses the simulation until the player decides" do
+      city = %{legacy_city() | money: Calc.union_demand_threshold() + 0.01}
+
+      assert Calc.advance_tick(city) == {city, %{}}
+      assert Calc.metrics(city).treasury_delta == 0.0
     end
   end
 
@@ -1064,6 +1100,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       # Kills a gate that reads bare bankruptcy: this city at an empty treasury earns
       # 1/tick against no upkeep and is over the line in ten ticks.
       refute Calc.metrics(map_with([Node.new(0, 0, :residential)])).insolvent
+    end
+
+    test "accepted wage costs remain part of the structural upkeep floor" do
+      nodes =
+        [Node.new(0, 0, :commercial)] ++
+          for x <- 1..10, do: Node.new(x, 0, :park)
+
+      base = map_with(nodes)
+      refute Calc.metrics(base).insolvent
+
+      metrics = Calc.metrics(%{base | union_wage_level: 1})
+
+      assert metrics.resources.money.demanded == 33.0
+      assert metrics.money_ceiling == 30.0
+      assert metrics.insolvent
+      assert metrics.escape == {:demolish, :park, 11.0}
     end
 
     test "a city whose shop is merely sick is solvent, though it is draining today" do

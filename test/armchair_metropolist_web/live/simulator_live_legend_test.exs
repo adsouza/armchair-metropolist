@@ -77,11 +77,44 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert view |> element("#metrics-crime") |> render() =~ "Crime: 0.0 · commerce ×1.0"
     end
 
-    @tag treasury: 2_000.0
-    test "shows active inflation and its adjusted construction prices", %{conn: conn} do
+    @tag treasury: 2_000.0, union_wage_level: 1
+    test "shows accepted wage inflation and its adjusted construction prices", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert view |> element("#metrics-inflation") |> render() =~ "Inflation: +10%"
+      assert view |> element("#metrics-inflation") |> render() =~ "Wage inflation: +10%"
+      assert view |> element(~s{[data-cell="commercial-cost"]}) |> render() =~ "44"
+    end
+
+    @tag treasury: 1_000.01
+    test "makes the player choose higher wages or a local-labour strike", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, ~s{#union-demand-dialog[role="dialog"][aria-modal="true"]})
+
+      assert view |> element("#union-demand-dialog") |> render() =~
+               "The simulation clock is paused until you choose."
+
+      assert view |> element("#accept-union-demand") |> render() =~ "Accept · +10% costs"
+      assert view |> element("#reject-union-demand") |> render() =~ "Refuse · −10% labour"
+
+      view |> element("#reject-union-demand") |> render_click()
+
+      refute has_element?(view, "#union-demand-dialog")
+      assert has_element?(view, "#union-strike-panel")
+
+      assert view |> element("#union-strike-panel") |> render() =~
+               "10% of local labour is unavailable"
+
+      assert view
+             |> element(~s{#metrics-workforce [data-workforce-multiplier="union"]})
+             |> render() =~ "Strike ×0.9"
+
+      assert view |> element(~s{[data-cell="commercial-cost"]}) |> render() =~ "40"
+
+      view |> element("#settle-union-strike") |> render_click()
+
+      refute has_element?(view, "#union-strike-panel")
+      assert view |> element("#metrics-inflation") |> render() =~ "Wage inflation: +10%"
       assert view |> element(~s{[data-cell="commercial-cost"]}) |> render() =~ "44"
     end
 

@@ -69,6 +69,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert city.municipal_bond.interest_arrears == 2.25
     assert city.municipal_bond.principal_arrears == 4.0
     assert city.commercial_bond == nil
+    assert city.union_wage_level == 1
+    assert city.union_strike_level == 2
   end
 
   test "modernize/1 leaves a current-vocabulary city untouched" do
@@ -136,6 +138,22 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert SnapshotVocabulary.modernize(decoded).commercial_bond == nil
   end
 
+  test "modernize/1 supplies no union settlement for an older payload" do
+    SnapshotVocabulary.ensure_loaded!()
+
+    decoded =
+      @pre_rename_fixture
+      |> File.read!()
+      |> :erlang.binary_to_term([:safe])
+
+    refute Map.has_key?(decoded, :union_wage_level)
+    refute Map.has_key?(decoded, :union_strike_level)
+
+    modernized = SnapshotVocabulary.modernize(decoded)
+    assert modernized.union_wage_level == 0
+    assert modernized.union_strike_level == 0
+  end
+
   test "modernize/1 does not reset a waste_stock the city already carries" do
     # The mutation this exists to catch is `Map.put` where `Map.put_new` belongs.
     # It passes the test above, and silently wipes a real backlog on every hydrate
@@ -167,6 +185,8 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
              :injury_stock,
              :disease_stock,
              :crime_stock,
+             :union_wage_level,
+             :union_strike_level,
              :revision,
              :municipal_bond,
              :commercial_bond

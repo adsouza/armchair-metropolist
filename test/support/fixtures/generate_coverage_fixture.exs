@@ -33,6 +33,15 @@ bond = %{
 }
 
 path = "test/support/fixtures/city_snapshot_vocabulary_coverage.bin"
-payload = %{city | tick: 21, revision: 7, municipal_bond: bond}
+
+payload = %{
+  city
+  | tick: 21,
+    revision: 7,
+    municipal_bond: bond,
+    union_wage_level: 1,
+    union_strike_level: 2
+}
+
 File.write!(path, :erlang.term_to_binary(payload, [:compressed]))
 IO.puts("wrote #{path}")

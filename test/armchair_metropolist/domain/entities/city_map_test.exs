@@ -16,6 +16,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.injury_stock == 0.0
       assert map.disease_stock == 0.0
       assert map.crime_stock == 0.0
+      assert map.union_wage_level == 0
+      assert map.union_strike_level == 0
       assert map.municipal_bond == nil
       assert map.commercial_bond == nil
     end

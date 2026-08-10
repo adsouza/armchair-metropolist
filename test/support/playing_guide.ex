@@ -630,9 +630,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
         [
           "",
           "These are base construction prices. Once a running city's treasury exceeds " <>
-            "#{num(Calc.inflation_threshold())}, inflation raises construction, demolition, " <>
-            "upkeep and market prices by #{num(inflation_step_percent())}% per additional " <>
-            "1,000, up to ×#{num(inflation_ceiling())}. Demolishing anything has a base " <>
+            "#{num(Calc.union_demand_threshold())}, unions demand #{num(union_step_percent())}% " <>
+            "higher wages per additional 1,000, up to ×#{num(wage_ceiling())}. Accepting " <>
+            "permanently raises construction, demolition, upkeep and market prices; refusing " <>
+            "removes the same share of local labour in a strike. Demolishing anything has a base " <>
             "cost of #{num(Node.demolition_cost())}, whatever it was. " <>
             "A new city starts with no cash; authorize a 250, 400 or 550 opening municipal " <>
             "bond issue before construction. Those proceeds are debt, not a grant. " <>
@@ -822,7 +823,9 @@ defmodule ArmchairMetropolist.PlayingGuide do
         "| excess labour before crime begins | **#{num(Calc.crime_free_excess_labour())}** |",
         "| crime created beyond that allowance | **+#{num(Calc.crime_per_excess_labour())} per worker per tick** |",
         "| untreated crime that suppresses one commercial block's income | **#{num(Calc.crime_burden_tolerance_per_commercial())}** |",
-        "| inflation begins above a treasury of | **#{num(Calc.inflation_threshold())}** |",
+        "| first union wage demand begins above a treasury of | **#{num(Calc.union_demand_threshold())}** |",
+        "| each accepted demand adds to variable costs | **+#{num(union_step_percent())}%** |",
+        "| each refused demand removes from local labour | **−#{num(union_strike_step_percent())}%** |",
         "| healthy traffic ceiling | **#{num(Calc.initial_healthy_traffic_ratio() * 100)}% at no utilization, falling linearly to #{num(Calc.minimum_healthy_traffic_ratio() * 100)}% at full utilization** |",
         "| injuries above that ceiling | **+1 per #{num(1.0 / Calc.injuries_per_excess_traffic())} excess traffic** |",
         "| disease outbreak | **+#{num(Calc.disease_per_residential())} per residential; every #{Calc.disease_outbreak_interval(1)} ticks with one home, #{Calc.disease_outbreak_interval(1) - Calc.disease_outbreak_interval(2)} ticks sooner per additional home (minimum #{Calc.disease_outbreak_interval(20)})** |",
@@ -916,13 +919,18 @@ defmodule ArmchairMetropolist.PlayingGuide do
     Float.round(labour_supplied(city_with(residential: 4, school: 20)) / base, 4)
   end
 
-  defp inflation_step_percent do
-    city = %{city_with([]) | money: Calc.inflation_threshold() + 1_000.0}
+  defp union_step_percent do
+    city = %{city_with([]) | union_wage_level: 1}
     Float.round((Calc.inflation_multiplier(city) - 1.0) * 100.0, 4)
   end
 
-  defp inflation_ceiling do
-    city = %{city_with([]) | money: 1_000_000.0}
+  defp union_strike_step_percent do
+    city = %{city_with([]) | union_strike_level: 1}
+    Float.round((1.0 - Calc.union_labour_multiplier(city)) * 100.0, 4)
+  end
+
+  defp wage_ceiling do
+    city = %{city_with([]) | union_wage_level: 7}
     Calc.inflation_multiplier(city)
   end
 

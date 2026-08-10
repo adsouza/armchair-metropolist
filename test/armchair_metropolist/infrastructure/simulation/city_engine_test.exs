@@ -179,6 +179,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       loaded = CityEngine.normalize_city_map(round_tripped)
 
       assert loaded.money == 0.0
+      assert loaded.union_wage_level == 0
+      assert loaded.union_strike_level == 0
       assert loaded.municipal_bond == MunicipalBond.legacy()
       assert loaded.tick == 7
       assert map_size(loaded.nodes) == 1
@@ -241,6 +243,37 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
       assert city_map.tick == 2
       assert metrics.tick == 2
+    end
+  end
+
+  describe "union negotiations" do
+    test "a pending demand freezes ticks until the serialized choice is persisted", %{
+      city_id: city_id
+    } do
+      city = %{legacy_city(40, 30) | money: 1_000.01}
+      StubSnapshotRepository.set_initial({:ok, {CityMap.snapshot_order(city), city}})
+      start_supervised!({CityEngine, city_id: city_id})
+      subscribe_simulation(city_id)
+
+      assert {:ok, %{metrics: %{union_demand: %{pending: true}}}} =
+               CityEngine.snapshot(city_id)
+
+      broadcast_tick(1)
+
+      assert {:ok, %{city_map: %{tick: 0}}} = CityEngine.snapshot(city_id)
+      refute_receive {:city_delta, _}, 50
+
+      assert :ok = CityEngine.resolve_union_demand(city_id, :reject)
+
+      assert_receive {:city_metrics,
+                      %{union_demand: %{pending: false}, union_labour_multiplier: 0.9}}
+
+      assert [{^city_id, {0, 1}, saved}] = StubSnapshotRepository.saves()
+      assert saved.union_wage_level == 0
+      assert saved.union_strike_level == 1
+
+      broadcast_tick(2)
+      assert {:ok, %{city_map: %{tick: 1}}} = CityEngine.snapshot(city_id)
     end
   end
 
@@ -789,6 +822,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
         |> CityMap.put_node(Node.new(20, 0, :hospital))
         |> Map.put(:disease_stock, 100.0)
         |> Map.put(:money, 10_000.0)
+        |> Map.put(:union_wage_level, 7)
 
       StubSnapshotRepository.set_initial({:ok, {0, city}})
       start_supervised!({CityEngine, city_id: city_id})
@@ -1555,7 +1589,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
   # construction or demolition cost moves is a fixture that breaks for reasons unrelated
   # to what it tests.
   defp seed_funded_city do
-    StubSnapshotRepository.set_initial({:ok, {0, %{legacy_city(40, 30) | money: 10_000.0}}})
+    city = %{legacy_city(40, 30) | money: 10_000.0, union_wage_level: 7}
+    StubSnapshotRepository.set_initial({:ok, {0, city}})
   end
 
   defp callable_bond_city do

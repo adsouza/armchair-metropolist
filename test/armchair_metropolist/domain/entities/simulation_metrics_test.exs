@@ -72,6 +72,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.education_marginal_labour == 0.0
     assert metrics.education_labour == 0.0
     assert metrics.health_labour_multiplier == 1.0
+    assert metrics.union_labour_multiplier == 1.0
+    assert metrics.union_demand == nil
     assert metrics.crime_money_multiplier == 1.0
     assert metrics.inflation_multiplier == 1.0
   end
@@ -86,6 +88,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         education_marginal_labour: 4.0,
         education_labour: 10.0,
         health_labour_multiplier: 0.6,
+        union_labour_multiplier: 0.8,
+        union_demand: %{
+          level: 2,
+          pending: false,
+          current_wage_percent: 0,
+          demanded_wage_percent: 20,
+          strike_percent: 20
+        },
         crime_money_multiplier: 0.75,
         inflation_multiplier: 1.1,
         construction_costs: Map.new(Node.types(), &{&1, Node.construction_cost(&1) + 1.0}),
@@ -120,6 +130,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.education_marginal_labour == 4.0
     assert metrics.education_labour == 10.0
     assert metrics.health_labour_multiplier == 0.6
+    assert metrics.union_labour_multiplier == 0.8
+    assert metrics.union_demand.level == 2
     assert metrics.crime_money_multiplier == 0.75
     assert metrics.inflation_multiplier == 1.1
     assert metrics.demolition_cost == 11.0
@@ -179,6 +191,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
           education_marginal_labour: 4.0,
           education_labour: 10.0,
           health_labour_multiplier: 0.6,
+          union_labour_multiplier: 0.8,
+          union_demand: nil,
           crime_money_multiplier: 0.75,
           inflation_multiplier: 1.1,
           construction_costs: Map.new(Node.types(), &{&1, Node.construction_cost(&1)}),

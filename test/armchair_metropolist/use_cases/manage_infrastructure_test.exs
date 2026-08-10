@@ -87,8 +87,8 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :insufficient_funds} = ManageInfrastructure.place(map, 1, 1, :park)
     end
 
-    test "debits the inflation-adjusted construction cost" do
-      city = %{legacy_city(40, 30) | money: 2_000.0}
+    test "debits the accepted-wage-adjusted construction cost" do
+      city = %{legacy_city(40, 30) | money: 2_000.0, union_wage_level: 1}
       cost = SimulationCalculator.construction_cost(city, :commercial)
 
       assert cost == 44.0
@@ -185,8 +185,8 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert map.money == 90.0
     end
 
-    test "debits the inflation-adjusted demolition cost" do
-      city = %{legacy_city(40, 30) | money: 2_000.0}
+    test "debits the accepted-wage-adjusted demolition cost" do
+      city = %{legacy_city(40, 30) | money: 2_000.0, union_wage_level: 1}
       {:ok, {city, _}} = ManageInfrastructure.place(city, 1, 1, :park)
       cost = SimulationCalculator.demolition_cost(city)
 

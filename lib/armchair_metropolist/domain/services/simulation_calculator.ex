@@ -9,18 +9,18 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        previous tick (only money and waste use the generic carryover ledger;
        injuries, disease and crime are folded into their next-tick treatment demand).
        Labour is multiplied by the health-weighted park and school multipliers, then
-       reduced by the city's existing injury and disease burden. With no housing,
-       labour supply is 0.0 regardless of parks or schools. Existing crime similarly
-       scales down commercial money capacity.
+       reduced by the city's existing injury and disease burden and any active union
+       strike. With no housing, labour supply is 0.0 regardless of parks or schools.
+       Existing crime similarly scales down commercial money capacity.
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
        This asymmetry is what makes failures cascade rather than self-correct. Money
-       loads are multiplied by inflation once the treasury crosses its threshold.
+       loads are multiplied by wage inflation after the city accepts a union demand.
     3. Node upkeep is reserved, then scheduled opening-bond service and any
        commercial-bridge service are paid from the remaining balance. Current-tick
        income can service debt.
     4. Power, water, waste disposal and labour shortfalls are bought from the
-       external market at its inflation-adjusted unit price. Only treasury carried into the
+       external market at its wage-adjusted unit price. Only treasury carried into the
        tick is spendable, after reserving upkeep and debt service. If it cannot cover
        every shortfall, the same fraction of each is bought; traffic is never
        purchasable. Each unit of imported labour adds one unit of commuter
@@ -55,9 +55,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
    14. Labour supply more than ten above demand creates crime. The untreated remainder
        after health-scaled police-station and school capacity becomes the next crime stock;
        that stock suppresses commercial income on the following tick.
-   15. A running city with more than 1,000 in its treasury pays a gradually rising
-       multiplier on construction, demolition, upkeep and imports, capped at 1.7x. Fixed
-       bond principal and debt-service schedules are not repriced.
+   15. A running city whose treasury rises above 1,000 receives a union wage demand for
+       each additional 1,000-money band, up to seven demands. The clock pauses for the
+       decision. Accepting makes the requested 10%-per-band rise in construction,
+       demolition, upkeep and import costs permanent; refusing preserves the current wage
+       level but removes the same share of local labour in a strike. Fixed bond principal
+       and debt-service schedules are not repriced.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -161,13 +164,16 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @education_per_housing 1.0
   @max_education_ratio 0.25
 
-  # Inflation is dormant in ordinary cities. Above 1,000 in the treasury, every additional
-  # 1,000 raises variable costs by 10%, up to a 1.7x ceiling. The multiplier is derived from
-  # the pre-tick balance, so it rises and falls gradually with the city's accumulated cash
-  # rather than becoming another independently drifting stock.
-  @inflation_threshold 1_000.0
-  @inflation_per_money 0.0001
-  @max_inflation_multiplier 1.7
+  # Prosperity gives organized labour leverage, but it does not silently change prices.
+  # Crossing 1,000 opens the first demand; every further full 1,000 opens another, through
+  # level seven. Each level is a ten-point choice: accept it as a permanent variable-cost
+  # increase, or leave that share of local workers unavailable in a strike. The two stored
+  # levels make a resolved demand durable while the treasury-derived target remains a pure
+  # prompt that cannot drift from the balance which caused it.
+  @union_demand_threshold 1_000.0
+  @money_per_union_level 1_000.0
+  @union_raise_per_level 0.1
+  @max_union_level 7
 
   # How far ahead `rescue_window/3` will project before giving up and reporting `nil`.
   #
@@ -210,17 +216,62 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec market_prices() :: %{Node.resource() => float()}
   def market_prices, do: @market_prices
 
-  @doc "The current price multiplier caused by a treasury above the inflation threshold."
+  @doc "The permanent variable-cost multiplier from accepted union wage demands."
   @spec inflation_multiplier(CityMap.t()) :: float()
-  def inflation_multiplier(%CityMap{
-        municipal_bond: %MunicipalBond{original_principal: principal, started_at_tick: nil}
-      })
-      when principal > 0.0,
-      do: 1.0
+  def inflation_multiplier(%CityMap{union_wage_level: level}),
+    do: Float.round(1.0 + level * @union_raise_per_level, 1)
 
-  def inflation_multiplier(%CityMap{money: money}) do
-    (1.0 + max(0.0, money - @inflation_threshold) * @inflation_per_money)
-    |> min(@max_inflation_multiplier)
+  @doc "The union negotiation currently requiring attention, or an active strike."
+  @spec union_demand(CityMap.t()) :: map() | nil
+  def union_demand(%CityMap{} = city_map) do
+    treasury_level = treasury_union_level(city_map.money)
+    resolved_level = max(city_map.union_wage_level, city_map.union_strike_level)
+    active_strike? = city_map.union_strike_level > city_map.union_wage_level
+
+    cond do
+      treasury_level > resolved_level ->
+        union_demand(city_map, treasury_level, true)
+
+      active_strike? ->
+        union_demand(city_map, city_map.union_strike_level, false)
+
+      true ->
+        nil
+    end
+  end
+
+  @doc "Share of local labour still available after an active union strike."
+  @spec union_labour_multiplier(CityMap.t()) :: float()
+  def union_labour_multiplier(%CityMap{} = city_map) do
+    withheld_levels = max(0, city_map.union_strike_level - city_map.union_wage_level)
+
+    max(
+      1.0 - withheld_levels * @union_raise_per_level,
+      1.0 - @max_union_level * @union_raise_per_level
+    )
+  end
+
+  defp union_demand(city_map, level, pending?) do
+    wage_level = city_map.union_wage_level
+
+    %{
+      level: level,
+      pending: pending?,
+      current_wage_percent: wage_level * 10,
+      demanded_wage_percent: level * 10,
+      strike_percent: max(0, level - wage_level) * 10
+    }
+  end
+
+  defp treasury_union_level(money) when money <= @union_demand_threshold, do: 0
+
+  defp treasury_union_level(money) do
+    money
+    |> Kernel.-(@union_demand_threshold)
+    |> Kernel./(@money_per_union_level)
+    |> Float.ceil()
+    |> trunc()
+    |> min(@max_union_level)
   end
 
   @doc "The whole-money construction charge at the city's current inflation level."
@@ -242,9 +293,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     Map.new(@market_prices, fn {resource, price} -> {resource, price * multiplier} end)
   end
 
-  @doc "Treasury level above which inflation begins."
-  @spec inflation_threshold() :: float()
-  def inflation_threshold, do: @inflation_threshold
+  @doc "Treasury level above which the first union wage demand begins."
+  @spec union_demand_threshold() :: float()
+  def union_demand_threshold, do: @union_demand_threshold
 
   @doc "Excess labour the city can absorb before crime begins accumulating."
   @spec crime_free_excess_labour() :: float()
@@ -320,13 +371,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   defp tick_plan(city_map, inflation_multiplier) do
     nodes = CityMap.nodes(city_map)
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
+    union_labour_multiplier = union_labour_multiplier(city_map)
+    labour_availability_multiplier = health_labour_multiplier * union_labour_multiplier
     education_multiplier = education_multiplier(nodes)
     crime_money_multiplier = crime_money_multiplier(city_map, nodes)
 
     supply =
       total_supply(
         nodes,
-        health_labour_multiplier,
+        labour_availability_multiplier,
         education_multiplier,
         crime_money_multiplier
       )
@@ -473,16 +526,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     plan = tick_plan(city_map)
     stats = plan.resources
     stalled = stalled?(nodes, stats, city_map.waste_stock)
+    union_demand = union_demand(city_map)
+    paused = stalled or match?(%{pending: true}, union_demand)
     operating = solvency(city_map, nodes, stats, stalled)
     financing = financing(city_map, nodes, plan.bond_quote, stalled)
-    bond = if plan.bond_quote, do: Map.put(plan.bond_quote, :paused, stalled), else: nil
+    bond = if plan.bond_quote, do: Map.put(plan.bond_quote, :paused, paused), else: nil
 
     commercial_bond =
       if plan.commercial_bond_quote,
-        do: Map.put(plan.commercial_bond_quote, :paused, stalled),
+        do: Map.put(plan.commercial_bond_quote, :paused, paused),
         else: nil
 
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
+    union_labour_multiplier = union_labour_multiplier(city_map)
+    labour_availability_multiplier = health_labour_multiplier * union_labour_multiplier
     education_multiplier = education_multiplier(nodes)
     crime_money_multiplier = crime_money_multiplier(city_map, nodes)
     inflation_multiplier = inflation_multiplier(city_map)
@@ -497,12 +554,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     derived =
       %{
         amenity: labour_multiplier(nodes),
-        amenity_marginal_labour: marginal_amenity_labour(nodes, health_labour_multiplier),
-        amenity_labour: placed_amenity_labour(nodes, health_labour_multiplier),
+        amenity_marginal_labour: marginal_amenity_labour(nodes, labour_availability_multiplier),
+        amenity_labour: placed_amenity_labour(nodes, labour_availability_multiplier),
         education: education_multiplier,
-        education_marginal_labour: marginal_education_labour(nodes, health_labour_multiplier),
-        education_labour: placed_education_labour(nodes, health_labour_multiplier),
+        education_marginal_labour:
+          marginal_education_labour(nodes, labour_availability_multiplier),
+        education_labour: placed_education_labour(nodes, labour_availability_multiplier),
         health_labour_multiplier: health_labour_multiplier,
+        union_labour_multiplier: union_labour_multiplier,
+        union_demand: union_demand,
         crime_money_multiplier: crime_money_multiplier,
         inflation_multiplier: inflation_multiplier,
         construction_costs: Map.new(Node.types(), &{&1, construction_cost(city_map, &1)}),
@@ -536,7 +596,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # same value, so a forged click cannot borrow in any other state.
   defp commercial_bond_offer(city_map, nodes) do
     commercial_cost = construction_cost(city_map, :commercial)
-    commercial_blocks = commercial_blocks_needed(nodes)
+    commercial_blocks = commercial_blocks_needed(city_map, nodes)
     construction_budget = commercial_blocks * commercial_cost
 
     eligible? =
@@ -574,12 +634,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
-  defp commercial_blocks_needed(nodes) do
-    gap = base_money_demand(nodes) - rated_money_capacity(nodes)
+  defp commercial_blocks_needed(city_map, nodes) do
+    multiplier = inflation_multiplier(city_map)
+    gap = base_money_demand(nodes) * multiplier - rated_money_capacity(nodes)
 
     if gap > 0.0 do
       gap
-      |> Kernel./(money_net(:commercial))
+      |> Kernel./(money_net(:commercial, multiplier))
       |> Float.ceil()
       |> trunc()
     else
@@ -591,9 +652,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     plan = tick_plan(city_map, inflation_multiplier)
     nodes = CityMap.nodes(city_map)
 
-    if clock_paused?(city_map) or stalled?(nodes, plan.resources, city_map.waste_stock),
-      do: city_map,
-      else: elem(advance_tick(city_map, plan), 0)
+    # The projection balance is an accounting probe, not real prosperity. It must not
+    # manufacture a union negotiation and freeze the six-tick expense measurement.
+    if simulation_not_started?(city_map) or
+         stalled?(nodes, plan.resources, city_map.waste_stock),
+       do: city_map,
+       else: elem(advance_tick(city_map, plan), 0)
   end
 
   # The solvency group: the rated money ceiling, whether it falls short of upkeep, the
@@ -610,12 +674,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # health-scaled `supplied` instead would condemn any city whose earners are merely sick:
   # measured, a house beside a 5%-health shop and a park reads 2.5 against 3 of upkeep and
   # recovers to 9832 within 400 ticks.
-  defp solvency(city_map, nodes, _stats, stalled) do
+  defp solvency(city_map, nodes, stats, stalled) do
     ceiling = rated_money_capacity(nodes)
-    # Inflation and crime can both recede without changing the node set, so neither can
-    # prove permanent insolvency. Compare against the base upkeep floor here; current
-    # inflated demand remains visible in the resource ledger and treasury projection.
-    gap = base_money_demand(nodes) - ceiling
+    # Accepted wages are contractual and do not fall when the treasury does, so their
+    # higher upkeep belongs in the structural floor. Crime still affects only effective
+    # income and can recede without a node change, which is why the ceiling stays rated.
+    gap = Map.fetch!(stats, :money).demanded - ceiling
 
     if gap > 0.0 do
       escape = escape(city_map, nodes, gap)
@@ -632,10 +696,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   defp financing(city_map, nodes, bond_quote, stalled) do
-    locked = financing_locked?(city_map.money, nodes, bond_quote)
+    multiplier = inflation_multiplier(city_map)
+    locked = financing_locked?(city_map.money, nodes, bond_quote, multiplier)
 
     if locked do
-      escape = financing_escape(city_map, nodes, bond_quote)
+      escape = financing_escape(city_map, nodes, bond_quote, multiplier)
 
       %{
         financing_locked: true,
@@ -651,12 +716,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
-  defp financing_locked?(_money, _nodes, nil), do: false
+  defp financing_locked?(_money, _nodes, nil, _multiplier), do: false
 
-  defp financing_locked?(money, nodes, bond_quote) do
+  defp financing_locked?(money, nodes, bond_quote, multiplier) do
     if bond_quote.callable and bond_quote.redemption_amount > 0.0 do
       {interest_arrears, principal} = optimistic_redemption(money, bond_quote)
-      surplus = rated_money_surplus(nodes)
+      surplus = rated_money_surplus(nodes, multiplier)
       debt_remains? = interest_arrears > 0.0 or principal > 0.0
 
       debt_remains? and surplus <= MunicipalBond.interest_rate() * principal
@@ -676,12 +741,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     }
   end
 
-  defp rated_money_surplus(nodes) do
-    demand = base_money_demand(nodes)
+  defp rated_money_surplus(nodes, multiplier) do
+    demand = base_money_demand(nodes) * multiplier
     max(0.0, rated_money_capacity(nodes) - demand)
   end
 
-  defp financing_escape(city_map, nodes, bond_quote) do
+  defp financing_escape(city_map, nodes, bond_quote, multiplier) do
     placement_candidates =
       if not bond_quote.defaulted and length(nodes) < city_map.width * city_map.height do
         for type <- Node.types(),
@@ -690,7 +755,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
             candidate_recovers?(
               city_map.money - cost,
               [Node.new(0, 0, type) | nodes],
-              bond_quote
+              bond_quote,
+              multiplier
             ),
             do: {:place, type, cost}
       else
@@ -708,7 +774,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
           candidate_recovers?(
             city_map.money - current_demolition_cost,
             remove_first_type(nodes, type),
-            bond_quote
+            bond_quote,
+            multiplier
           )
       end)
       |> Enum.map(&{:demolish, &1, current_demolition_cost})
@@ -722,8 +789,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
-  defp candidate_recovers?(money, nodes, bond_quote) do
-    not financing_locked?(money, nodes, bond_quote)
+  defp candidate_recovers?(money, nodes, bond_quote, multiplier) do
+    not financing_locked?(money, nodes, bond_quote, multiplier)
   end
 
   defp remove_first_type(nodes, type) do
@@ -746,7 +813,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         projected.money < price ->
           {:halt, elapsed}
 
-        not financing_locked?(projected.money, nodes, quote) ->
+        not financing_locked?(
+          projected.money,
+          nodes,
+          quote,
+          inflation_multiplier(projected)
+        ) ->
           {:halt, nil}
 
         elapsed == @runway_horizon or projected_stall?(projected) ->
@@ -811,9 +883,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       stalled?(nodes, tick_plan(city_map).resources, city_map.waste_stock)
   end
 
-  defp clock_paused?(%CityMap{municipal_bond: nil}), do: true
+  defp clock_paused?(%CityMap{} = city_map) do
+    simulation_not_started?(city_map) or
+      match?(%{pending: true}, union_demand(city_map))
+  end
 
-  defp clock_paused?(%CityMap{municipal_bond: bond}), do: MunicipalBond.planning?(bond)
+  defp simulation_not_started?(%CityMap{municipal_bond: nil}), do: true
+
+  defp simulation_not_started?(%CityMap{municipal_bond: bond}),
+    do: MunicipalBond.planning?(bond)
 
   # Rated rather than effective: `Node.capacity/1`, not `Node.effective_capacity/1`.
   defp rated_money_capacity(nodes) do
@@ -834,7 +912,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # demolition. `min_by` is still the right shape: it is what makes the *placement* choice
   # (a house at 15 where +1 is enough, the shop at 40 where it is not) come out cheapest.
   defp escape(city_map, nodes, gap) do
-    candidates = placements(city_map, nodes, gap) ++ demolitions(city_map, nodes, gap)
+    multiplier = inflation_multiplier(city_map)
+
+    candidates =
+      placements(city_map, nodes, gap, multiplier) ++
+        demolitions(city_map, nodes, gap, multiplier)
 
     case Enum.min_by(candidates, &elem(&1, 2), fn -> nil end) do
       nil ->
@@ -850,10 +932,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # follow — the real route is a demolition and *then* a construction, which is two actions
   # and a different price. Without this the banner would name the shop on a grid with nowhere
   # to put it.
-  defp placements(city_map, nodes, gap) do
+  defp placements(city_map, nodes, gap, multiplier) do
     if length(nodes) < city_map.width * city_map.height do
       for type <- Node.types(),
-          money_net(type) >= gap,
+          money_net(type, multiplier) >= gap,
           do: {:place, type, construction_cost(city_map, type)}
     else
       []
@@ -862,18 +944,19 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   # Only types actually standing in the city — `escape/3` must not offer to demolish
   # something that is not there.
-  defp demolitions(city_map, nodes, gap) do
+  defp demolitions(city_map, nodes, gap, multiplier) do
     nodes
     |> Enum.map(& &1.type)
     |> Enum.uniq()
-    |> Enum.filter(&(-money_net(&1) >= gap))
+    |> Enum.filter(&(-money_net(&1, multiplier) >= gap))
     |> Enum.map(&{:demolish, &1, demolition_cost(city_map)})
   end
 
   # Positive for a type that earns more than it costs to run, negative for one that is a net
   # drain. Reads both tables because a type can appear in either or both.
-  defp money_net(type) do
-    Map.get(Node.capacity(type), :money, 0.0) - Map.get(Node.load(type), :money, 0.0)
+  defp money_net(type, multiplier) do
+    Map.get(Node.capacity(type), :money, 0.0) -
+      Map.get(Node.load(type), :money, 0.0) * multiplier
   end
 
   defp base_money_demand(nodes) do
@@ -889,14 +972,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   defp inflated_charge(base, multiplier), do: Float.ceil(base * multiplier)
 
   # Baseline capacity plus health-scaled capacity from every node, with labour then
-  # scaled by the park amenity.
+  # scaled by the park and school multipliers, then by the combined health/strike
+  # availability of the local workforce.
   #
   # Applied here rather than in `resource_stats/1` so there is exactly one labour supply
   # figure: satisfaction, deficit, health decay, the deficit notification and the
   # Tightest line all read this and cannot disagree about it.
   defp total_supply(
          nodes,
-         health_labour_multiplier,
+         labour_availability_multiplier,
          education_multiplier,
          crime_money_multiplier
        ) do
@@ -908,7 +992,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       end)
 
     Map.update!(supply, :labour, fn labour ->
-      labour * labour_multiplier(nodes) * education_multiplier * health_labour_multiplier
+      labour * labour_multiplier(nodes) * education_multiplier * labour_availability_multiplier
     end)
   end
 
@@ -957,9 +1041,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # The probe park's coordinates are arbitrary. `total_supply/2` reduces over a list and
   # never reads position or identity, so a duplicate id cannot collide here — but this
   # list must not be put back into a CityMap.
-  defp marginal_amenity_labour(nodes, health_labour_multiplier) do
-    labour_supply([Node.new(0, 0, :park) | nodes], health_labour_multiplier) -
-      labour_supply(nodes, health_labour_multiplier)
+  defp marginal_amenity_labour(nodes, labour_availability_multiplier) do
+    labour_supply([Node.new(0, 0, :park) | nodes], labour_availability_multiplier) -
+      labour_supply(nodes, labour_availability_multiplier)
   end
 
   # What the parks *already placed* are contributing to labour supply — the counterpart to
@@ -974,25 +1058,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # Removing the parks changes nothing else about labour. Parks produce no labour, and
   # `total_supply/2` derives the multiplier from the nodes it is given, so the second term
   # is exactly the unamplified housing supply.
-  defp placed_amenity_labour(nodes, health_labour_multiplier) do
-    labour_supply(nodes, health_labour_multiplier) -
-      labour_supply(Enum.reject(nodes, &(&1.type == :park)), health_labour_multiplier)
+  defp placed_amenity_labour(nodes, labour_availability_multiplier) do
+    labour_supply(nodes, labour_availability_multiplier) -
+      labour_supply(Enum.reject(nodes, &(&1.type == :park)), labour_availability_multiplier)
   end
 
-  defp marginal_education_labour(nodes, health_labour_multiplier) do
-    labour_supply([Node.new(0, 0, :school) | nodes], health_labour_multiplier) -
-      labour_supply(nodes, health_labour_multiplier)
+  defp marginal_education_labour(nodes, labour_availability_multiplier) do
+    labour_supply([Node.new(0, 0, :school) | nodes], labour_availability_multiplier) -
+      labour_supply(nodes, labour_availability_multiplier)
   end
 
-  defp placed_education_labour(nodes, health_labour_multiplier) do
-    labour_supply(nodes, health_labour_multiplier) -
-      labour_supply(Enum.reject(nodes, &(&1.type == :school)), health_labour_multiplier)
+  defp placed_education_labour(nodes, labour_availability_multiplier) do
+    labour_supply(nodes, labour_availability_multiplier) -
+      labour_supply(Enum.reject(nodes, &(&1.type == :school)), labour_availability_multiplier)
   end
 
-  defp labour_supply(nodes, health_labour_multiplier) do
+  defp labour_supply(nodes, labour_availability_multiplier) do
     nodes
     |> total_supply(
-      health_labour_multiplier,
+      labour_availability_multiplier,
       education_multiplier(nodes),
       1.0
     )

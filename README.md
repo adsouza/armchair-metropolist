@@ -198,9 +198,9 @@ worker, so market staffing can turn a labour solution into a congestion problem.
 
 Large cities face two additional pressures. More than 10 excess workers creates persistent
 crime, which suppresses commercial income until schools or police stations reduce it. Schools
-cost more than police stations but also multiply housing labour, much like parks. A treasury
-above 1,000 triggers inflation, gradually raising construction, demolition, upkeep and import
-prices up to 70% above their base cost.
+cost more than police stations but also multiply housing labour, much like parks. Above 1,000 in
+the treasury, labour unions pause the clock to demand higher wages. Accepting permanently raises
+variable costs; refusing starts a strike that reduces local labour until the city settles.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and

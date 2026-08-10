@@ -315,6 +315,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply, assign(socket, :health_tutorial, nil)}
   end
 
+  def handle_event("accept_union_demand", _params, socket) do
+    resolve_union_demand(socket, :accept)
+  end
+
+  def handle_event("reject_union_demand", _params, socket) do
+    resolve_union_demand(socket, :reject)
+  end
+
+  defp resolve_union_demand(socket, response) do
+    case CityEngine.resolve_union_demand(socket.assigns.city_id, response) do
+      :ok -> {:noreply, socket}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, union_error(reason))}
+    end
+  end
+
   defp redeem_bond(socket, action) do
     case CityEngine.redeem_municipal_bond(socket.assigns.city_id, action) do
       :ok -> {:noreply, socket}
@@ -462,6 +477,74 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         </section>
       </div>
 
+      <div
+        :if={@metrics.union_demand && @metrics.union_demand.pending}
+        id="union-demand-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="union-demand-title"
+        class="fixed inset-0 z-40 grid place-items-center bg-base-content/45 p-4 backdrop-blur-sm"
+      >
+        <section class="w-full max-w-xl overflow-hidden rounded-3xl border border-warning/50 bg-base-100 shadow-2xl">
+          <div class="border-b border-base-300 bg-warning/10 px-6 py-5 sm:px-7">
+            <div class="flex items-start gap-4">
+              <div class="grid size-12 shrink-0 place-items-center rounded-2xl bg-warning/20 text-warning-content">
+                <.icon name="hero-megaphone" class="size-6" />
+              </div>
+              <div>
+                <p class="text-xs font-bold uppercase tracking-[0.22em] text-warning-content">
+                  Contract ultimatum
+                </p>
+                <h2 id="union-demand-title" class="mt-1 text-2xl font-semibold tracking-tight">
+                  Workers demand higher wages
+                </h2>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-6 sm:px-7">
+            <p class="leading-relaxed opacity-80">
+              The unions want wages to move from {wage_level_label(
+                @metrics.union_demand.current_wage_percent
+              )} to {wage_level_label(@metrics.union_demand.demanded_wage_percent)}.
+              Accepting makes construction, demolition, upkeep, and import prices {@metrics.union_demand.demanded_wage_percent}% above base. Refusing starts a
+              strike and removes {@metrics.union_demand.strike_percent}% of local labour.
+            </p>
+
+            <div class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 text-sm">
+              <p class="flex items-center gap-2 font-semibold">
+                <.icon name="hero-pause-circle" class="size-5 text-warning" />
+                The simulation clock is paused until you choose.
+              </p>
+              <p class="mt-1 opacity-65">
+                Bond service, upkeep, health changes, and market purchases are paused too.
+              </p>
+            </div>
+
+            <div class="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                id="reject-union-demand"
+                type="button"
+                class="btn btn-outline min-h-12 border-error/60 text-error transition hover:-translate-y-0.5"
+                phx-click="reject_union_demand"
+                disabled={not @commands_enabled?}
+              >
+                Refuse · −{@metrics.union_demand.strike_percent}% labour
+              </button>
+              <button
+                id="accept-union-demand"
+                type="button"
+                class="btn btn-warning min-h-12 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                phx-click="accept_union_demand"
+                disabled={not @commands_enabled?}
+              >
+                Accept · +{@metrics.union_demand.demanded_wage_percent}% costs
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <%!-- The chrome in Layouts.app already shows the wordmark, so rendering it
             again here just duplicated it. Kept as sr-only rather than deleted:
             the page still needs exactly one h1 for screen readers. --%>
@@ -476,6 +559,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       />
 
       <div :if={not is_nil(@metrics.bond)} id="financed-simulator">
+        <.union_strike_panel
+          :if={
+            @metrics.union_demand && not @metrics.union_demand.pending &&
+              @metrics.union_labour_multiplier < 1.0
+          }
+          demand={@metrics.union_demand}
+          commands_enabled?={@commands_enabled?}
+        />
+
         <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
 
         <.planning_panel
@@ -638,15 +730,60 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             injuries. Disease outbreaks begin every 49 ticks with one residential block and arrive
             three ticks sooner per additional block, down to every 10 ticks. More than 10 idle workers
             creates crime, which reduces commercial income until schools or police stations clear it.
-            Labour's total includes park and school multipliers plus the health-burden penalty; their own
-            rows carry those bonuses. Above 1,000 in the treasury, inflation gradually raises construction,
-            demolition, upkeep and market prices. Shortfalls in power, water, waste disposal and labour are bought automatically for 1 money per unit
+            Labour's total includes park and school multipliers plus health and strike penalties; their own
+            rows carry those bonuses. Above 1,000 in the treasury, unions demand 10% higher wages
+            per additional 1,000: accepting permanently raises variable costs, while refusing reduces local labour.
+            Shortfalls in power, water, waste disposal and labour are bought automatically for 1 money per unit
             while the treasury can pay; purchased units count toward supplied totals. Each imported
             labour unit adds one traffic demand, and traffic itself cannot be bought.
           </p>
         </section>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :demand, :map, required: true
+  attr :commands_enabled?, :boolean, required: true
+
+  defp union_strike_panel(assigns) do
+    ~H"""
+    <section
+      id="union-strike-panel"
+      class="mb-4 overflow-hidden rounded-2xl border border-error/40 bg-error/5 shadow-sm"
+    >
+      <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div class="flex max-w-3xl items-start gap-4">
+          <div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-error/10 text-error">
+            <.icon name="hero-no-symbol" class="size-6" />
+          </div>
+          <div>
+            <p class="text-xs font-bold uppercase tracking-[0.2em] text-error">
+              Strike in progress
+            </p>
+            <h2 class="mt-1 text-xl font-semibold tracking-tight">
+              {@demand.strike_percent}% of local labour is unavailable
+            </h2>
+            <p class="mt-2 text-sm leading-relaxed opacity-75">
+              Imported workers can cover the gap at the usual traffic cost. Accept the union's {wage_level_label(
+                @demand.demanded_wage_percent
+              )} wage demand to restore the local
+              workforce; the higher variable costs will be permanent.
+            </p>
+          </div>
+        </div>
+
+        <button
+          id="settle-union-strike"
+          type="button"
+          class="btn btn-error min-h-11 shrink-0 text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+          phx-click="accept_union_demand"
+          disabled={not @commands_enabled?}
+        >
+          Settle at +{@demand.demanded_wage_percent}% costs
+        </button>
+      </div>
+    </section>
     """
   end
 
@@ -1251,8 +1388,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     new_amenity = 1.0 + min(parks / housing, 1.0)
     unboosted_current = current_labour / metrics.amenity
 
-    (unboosted_current + base_labour * metrics.health_labour_multiplier) * new_amenity
+    (unboosted_current +
+       base_labour * metrics.health_labour_multiplier * metrics.union_labour_multiplier) *
+      new_amenity
   end
+
+  defp wage_level_label(0), do: "base wages"
+  defp wage_level_label(percent), do: "#{percent}% above base"
 
   defp power_goal_body(0, _supplied, _demanded) do
     "Start with enough local generation to support the first blocks you plan to add."
@@ -1395,7 +1537,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         "Debt service begins after Begin sim"
 
       bond.paused ->
-        "Payments paused while the city is stalled"
+        "Payments paused while the simulation clock is stopped"
 
       bond.opening_period_remaining > 0 ->
         "Debt service begins in #{bond.opening_period_remaining} ticks"
@@ -1447,6 +1589,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp financing_error(:not_eligible),
     do: "The commercial bridge is no longer available for this city."
+
+  defp union_error(:no_demand), do: "There is no union demand to resolve."
+  defp union_error(:already_resolved), do: "That union demand has already been resolved."
+  defp union_error(:invalid_response), do: "Choose whether to accept or refuse the wage demand."
 
   defp quick_start_error(:financing_required),
     do: "Authorize a municipal bond issue before using quick start."
@@ -1729,7 +1875,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             "font-semibold text-orange-700 dark:text-orange-300"
         ]}
       >
-        Inflation: +{round((@metrics.inflation_multiplier - 1.0) * 100)}%
+        Wage inflation: +{round((@metrics.inflation_multiplier - 1.0) * 100)}%
       </p>
       <div id="metrics-workforce" class="leading-snug">
         <p>Workforce</p>
@@ -1741,6 +1887,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         </p>
         <p data-workforce-multiplier="health" class="pl-3 tabular-nums">
           Health ×{Float.round(@metrics.health_labour_multiplier, 2)}
+        </p>
+        <p data-workforce-multiplier="union" class="pl-3 tabular-nums">
+          Strike ×{Float.round(@metrics.union_labour_multiplier, 2)}
         </p>
       </div>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>

@@ -108,6 +108,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   alias ArmchairMetropolist.UseCases.QuickStart
   alias ArmchairMetropolist.UseCases.RedeemMunicipalBond
   alias ArmchairMetropolist.UseCases.ResetCity
+  alias ArmchairMetropolist.UseCases.ResolveUnionDemand
   alias ArmchairMetropolist.UseCases.SummarizeCity
 
   require Logger
@@ -187,6 +188,10 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
 
   @doc "Redeem 25 or the full callable municipal bond balance."
   def redeem_municipal_bond(city_id, action), do: call(city_id, {:redeem_bond, action})
+
+  @doc "Accept a pending union wage demand, reject it, or settle an active strike."
+  def resolve_union_demand(city_id, response),
+    do: call(city_id, {:resolve_union_demand, response})
 
   @doc """
   Remove the node at `(x, y)`.
@@ -438,6 +443,19 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
     end
   end
 
+  def handle_call({:resolve_union_demand, response}, _from, state) do
+    case ResolveUnionDemand.execute(state.city_map, response) do
+      {:ok, city_map} ->
+        metrics = summarize(city_map)
+        save(state.city_id, city_map)
+        broadcast(state.city_id, {:city_metrics, metrics})
+        {:reply, :ok, %{state | city_map: city_map, metrics: metrics}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call(:reset, _from, state) do
     {:ok, %{city_map: city_map, metrics: metrics}} = ResetCity.execute(state.city_map)
 
@@ -508,6 +526,13 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   end
 
   def handle_info({:tick, _clock_pulse}, %{metrics: %{stalled: true}} = state) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:tick, _clock_pulse},
+        %{metrics: %{union_demand: %{pending: true}}} = state
+      ) do
     {:noreply, state}
   end
 

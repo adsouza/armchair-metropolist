@@ -28,6 +28,7 @@ defmodule ArmchairMetropolist.UseCases.IssueMunicipalBond do
   defp pristine?(city_map) do
     city_map.tick == 0 and city_map.revision == 0 and map_size(city_map.nodes) == 0 and
       city_map.money == 0.0 and city_map.waste_stock == 0.0 and city_map.injury_stock == 0.0 and
-      city_map.disease_stock == 0.0
+      city_map.disease_stock == 0.0 and city_map.union_wage_level == 0 and
+      city_map.union_strike_level == 0
   end
 end

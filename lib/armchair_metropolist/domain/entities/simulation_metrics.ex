@@ -31,6 +31,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           runway_ticks: pos_integer()
         }
 
+  @type union_demand :: %{
+          level: pos_integer(),
+          pending: boolean(),
+          current_wage_percent: non_neg_integer(),
+          demanded_wage_percent: pos_integer(),
+          strike_percent: pos_integer()
+        }
+
   @typedoc """
   Two satisfaction figures, on two different bases. `satisfaction` is computed
   over `supplied + carried + purchased` — the balance-inclusive figure that drives health
@@ -93,6 +101,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
           education_marginal_labour: float(),
           education_labour: float(),
           health_labour_multiplier: float(),
+          union_labour_multiplier: float(),
+          union_demand: union_demand() | nil,
           crime_money_multiplier: float(),
           inflation_multiplier: float(),
           construction_costs: %{Node.node_type() => float()},
@@ -155,6 +165,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
     education_marginal_labour: 0.0,
     education_labour: 0.0,
     health_labour_multiplier: 1.0,
+    union_labour_multiplier: 1.0,
+    union_demand: nil,
     crime_money_multiplier: 1.0,
     inflation_multiplier: 1.0,
     construction_costs: Map.new(Node.types(), &{&1, Node.construction_cost(&1)}),
@@ -197,6 +209,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
             education_marginal_labour: 0.0,
             education_labour: 0.0,
             health_labour_multiplier: 1.0,
+            union_labour_multiplier: 1.0,
+            union_demand: nil,
             crime_money_multiplier: 1.0,
             inflation_multiplier: 1.0,
             construction_costs: %{},
@@ -223,7 +237,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   `derived` carries `:amenity` (the park multiplier on labour supply),
   `:amenity_marginal_labour` (what one more park would add to it), `:amenity_labour`
   (what the *already placed* parks are contributing), `:health_labour_multiplier`
-  (what remains after injuries and disease), the equivalent education figures for schools,
+  (what remains after injuries and disease), `:union_labour_multiplier` and the current
+  union negotiation or strike, the equivalent education figures for schools,
   the crime multiplier on commercial income, inflation and its live action prices, and
   `:stalled` (whether the city has reached a health fixpoint).
 
@@ -261,7 +276,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       by_type:
         build_by_type(
           nodes,
-          Map.fetch!(derived, :health_labour_multiplier),
+          Map.fetch!(derived, :health_labour_multiplier) *
+            Map.fetch!(derived, :union_labour_multiplier),
           Map.fetch!(derived, :crime_money_multiplier),
           Map.fetch!(derived, :inflation_multiplier)
         ),
@@ -280,6 +296,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
       education_marginal_labour: Map.fetch!(derived, :education_marginal_labour),
       education_labour: Map.fetch!(derived, :education_labour),
       health_labour_multiplier: Map.fetch!(derived, :health_labour_multiplier),
+      union_labour_multiplier: Map.fetch!(derived, :union_labour_multiplier),
+      union_demand: Map.fetch!(derived, :union_demand),
       crime_money_multiplier: Map.fetch!(derived, :crime_money_multiplier),
       inflation_multiplier: Map.fetch!(derived, :inflation_multiplier),
       construction_costs: Map.fetch!(derived, :construction_costs),

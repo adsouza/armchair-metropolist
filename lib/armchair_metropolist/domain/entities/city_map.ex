@@ -16,6 +16,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           injury_stock: float(),
           disease_stock: float(),
           crime_stock: float(),
+          union_wage_level: non_neg_integer(),
+          union_strike_level: non_neg_integer(),
           municipal_bond: MunicipalBond.t() | nil,
           commercial_bond: MunicipalBond.t() | nil
         }
@@ -79,6 +81,8 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             injury_stock: 0.0,
             disease_stock: 0.0,
             crime_stock: 0.0,
+            union_wage_level: 0,
+            union_strike_level: 0,
             municipal_bond: nil,
             commercial_bond: nil
 

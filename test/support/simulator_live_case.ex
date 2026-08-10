@@ -96,8 +96,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       #
       # The city is seeded *empty*: only the balance is preloaded, so every node in every
       # test is still placed through the running engine.
-      defp initial_snapshot(%{treasury: money}) do
-        {:ok, {0, %{legacy_city(40, 30) | money: money}}}
+      defp initial_snapshot(%{treasury: money} = context) do
+        city = %{
+          legacy_city(40, 30)
+          | money: money,
+            union_wage_level: Map.get(context, :union_wage_level, 0),
+            union_strike_level: Map.get(context, :union_strike_level, 0)
+        }
+
+        {:ok, {0, city}}
       end
 
       # `@tag :roomy_city` seeds an explicit 40x30 grandfathered city, for tests
