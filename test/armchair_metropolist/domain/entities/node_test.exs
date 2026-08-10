@@ -15,7 +15,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "types/0" do
-    test "lists all eight node types" do
+    test "lists all ten node types" do
       assert Enum.sort(Node.types()) ==
                Enum.sort([
                  :power_plant,
@@ -25,7 +25,9 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                  :residential,
                  :commercial,
                  :park,
-                 :hospital
+                 :hospital,
+                 :police_station,
+                 :school
                ])
     end
   end
@@ -46,7 +48,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "resources/0" do
-    test "lists the eight resources in display order" do
+    test "lists the nine resources in display order" do
       assert Node.resources() == [
                :power,
                :water,
@@ -54,6 +56,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                :traffic,
                :injuries,
                :disease,
+               :crime,
                :labour,
                :money
              ]
@@ -61,8 +64,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "negative_resources/0" do
-    test "names the four resources where a rising figure is bad" do
-      assert Node.negative_resources() == [:waste, :traffic, :injuries, :disease]
+    test "names the five resources where a rising figure is bad" do
+      assert Node.negative_resources() == [:waste, :traffic, :injuries, :disease, :crime]
     end
 
     test "every negative resource is a resource" do
@@ -86,7 +89,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       negatives = Enum.filter(Node.resources(), &Node.negative_resource?/1)
       positives = Enum.reject(Node.resources(), &Node.negative_resource?/1)
 
-      assert negatives == [:waste, :traffic, :injuries, :disease]
+      assert negatives == [:waste, :traffic, :injuries, :disease, :crime]
       assert positives == [:power, :water, :labour, :money]
     end
   end
@@ -157,6 +160,28 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                labour: 4.0,
                money: 6.0
              }
+
+      assert Node.capacity(:police_station) == %{crime: 12.0}
+
+      assert Node.load(:police_station) == %{
+               power: 12.0,
+               water: 6.0,
+               waste: 4.0,
+               traffic: 3.0,
+               labour: 3.0,
+               money: 5.0
+             }
+
+      assert Node.capacity(:school) == %{crime: 6.0}
+
+      assert Node.load(:school) == %{
+               power: 18.0,
+               water: 12.0,
+               waste: 8.0,
+               traffic: 6.0,
+               labour: 4.0,
+               money: 8.0
+             }
     end
 
     # Guards the invariant SimulationCalculator's decay rule depends on:
@@ -179,6 +204,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.load(:water_plant)[:labour] == 1.0
       assert Node.load(:park)[:labour] == 1.0
       assert Node.load(:hospital)[:labour] == 4.0
+      assert Node.load(:police_station)[:labour] == 3.0
+      assert Node.load(:school)[:labour] == 4.0
 
       # The one exemption, and the whole reason the rule is statable.
       refute Map.has_key?(Node.load(:residential), :labour),
@@ -216,7 +243,11 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.construction_cost(:commercial) == 40.0
       assert Node.construction_cost(:park) == 20.0
       assert Node.construction_cost(:hospital) == 100.0
+      assert Node.construction_cost(:police_station) == 70.0
+      assert Node.construction_cost(:school) == 120.0
       assert Node.construction_cost(:residential) == 15.0
+
+      assert Node.construction_cost(:school) > Node.construction_cost(:police_station)
     end
 
     test "every type has a construction cost" do

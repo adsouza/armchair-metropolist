@@ -15,6 +15,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.waste_stock == 0.0
       assert map.injury_stock == 0.0
       assert map.disease_stock == 0.0
+      assert map.crime_stock == 0.0
       assert map.municipal_bond == nil
       assert map.commercial_bond == nil
     end
@@ -176,7 +177,14 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
         |> CityMap.put_node(Node.new(1, 1, :power_plant))
         |> CityMap.debit(100.0)
 
-      city = %{city | tick: 412, waste_stock: 5.0, injury_stock: 6.0, disease_stock: 7.0}
+      city = %{
+        city
+        | tick: 412,
+          waste_stock: 5.0,
+          injury_stock: 6.0,
+          disease_stock: 7.0,
+          crime_stock: 8.0
+      }
 
       reset = CityMap.reset(city)
 
@@ -191,6 +199,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert reset.waste_stock == 0.0
       assert reset.injury_stock == 0.0
       assert reset.disease_stock == 0.0
+      assert reset.crime_stock == 0.0
       assert reset.municipal_bond == nil
       assert reset.commercial_bond == nil
     end

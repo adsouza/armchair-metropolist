@@ -629,7 +629,11 @@ defmodule ArmchairMetropolist.PlayingGuide do
         rows ++
         [
           "",
-          "Demolishing anything costs #{num(Node.demolition_cost())}, whatever it was. " <>
+          "These are base construction prices. Once a running city's treasury exceeds " <>
+            "#{num(Calc.inflation_threshold())}, inflation raises construction, demolition, " <>
+            "upkeep and market prices by #{num(inflation_step_percent())}% per additional " <>
+            "1,000, up to ×#{num(inflation_ceiling())}. Demolishing anything has a base " <>
+            "cost of #{num(Node.demolition_cost())}, whatever it was. " <>
             "A new city starts with no cash; authorize a 250, 400 or 550 opening municipal " <>
             "bond issue before construction. Those proceeds are debt, not a grant. " <>
             "A qualifying healthy city may later receive one dynamically quoted commercial " <>
@@ -811,6 +815,12 @@ defmodule ArmchairMetropolist.PlayingGuide do
         "| health lost per tick, per unit of shortfall | **−#{num(decay_rate())} × (1 − satisfaction)** |",
         "| labour supply, multiplied per park per housing block | **+#{num(amenity_coefficient())} × (parks ÷ housing)** |",
         "| that multiplier's ceiling, at #{num(amenity_cap_ratio())} park per housing block | **×#{num(amenity_ceiling())}** |",
+        "| labour supply, multiplied per school per housing block | **+#{num(education_coefficient())} × (schools ÷ housing)** |",
+        "| that multiplier's ceiling, at #{num(education_cap_ratio())} school per housing block | **×#{num(education_ceiling())}** |",
+        "| excess labour before crime begins | **#{num(Calc.crime_free_excess_labour())}** |",
+        "| crime created beyond that allowance | **+#{num(Calc.crime_per_excess_labour())} per worker per tick** |",
+        "| untreated crime that suppresses one commercial block's income | **#{num(Calc.crime_burden_tolerance_per_commercial())}** |",
+        "| inflation begins above a treasury of | **#{num(Calc.inflation_threshold())}** |",
         "| healthy traffic ceiling | **#{num(Calc.initial_healthy_traffic_ratio() * 100)}% at no utilization, falling linearly to #{num(Calc.minimum_healthy_traffic_ratio() * 100)}% at full utilization** |",
         "| injuries above that ceiling | **+1 per #{num(1.0 / Calc.injuries_per_excess_traffic())} excess traffic** |",
         "| disease outbreak | **+#{num(Calc.disease_per_residential())} per residential; every #{Calc.disease_outbreak_interval(1)} ticks with one home, #{Calc.disease_outbreak_interval(1) - Calc.disease_outbreak_interval(2)} ticks sooner per additional home (minimum #{Calc.disease_outbreak_interval(20)})** |",
@@ -879,6 +889,39 @@ defmodule ArmchairMetropolist.PlayingGuide do
     base = labour_supplied(city_with(residential: 2))
 
     Float.round(labour_supplied(city_with(residential: 2, park: 20)) / base, 4)
+  end
+
+  defp education_coefficient do
+    base = labour_supplied(city_with(residential: 4))
+    educated = labour_supplied(city_with(residential: 4, school: 1))
+
+    Float.round((educated / base - 1.0) / 0.25, 4)
+  end
+
+  defp education_cap_ratio do
+    housing = 8
+
+    Enum.find_value(1..40, fn schools ->
+      here = labour_supplied(city_with(residential: housing, school: schools))
+      next = labour_supplied(city_with(residential: housing, school: schools + 1))
+
+      if here == next, do: Float.round(schools / housing, 4)
+    end)
+  end
+
+  defp education_ceiling do
+    base = labour_supplied(city_with(residential: 4))
+    Float.round(labour_supplied(city_with(residential: 4, school: 20)) / base, 4)
+  end
+
+  defp inflation_step_percent do
+    city = %{city_with([]) | money: Calc.inflation_threshold() + 1_000.0}
+    Float.round((Calc.inflation_multiplier(city) - 1.0) * 100.0, 4)
+  end
+
+  defp inflation_ceiling do
+    city = %{city_with([]) | money: 1_000_000.0}
+    Calc.inflation_multiplier(city)
   end
 
   defp labour_supplied(city) do

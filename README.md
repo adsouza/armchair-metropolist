@@ -3,12 +3,12 @@
 An urban infrastructure simulation game.
 
 A city of power plants, water plants, industrial and commercial blocks, transit hubs,
-parks and residential blocks ticks forward in real time. Each tick recomputes six
-resources — power, water, waste, traffic, labour and money — as demand against
+parks, hospitals, schools, police stations and residential blocks ticks forward in real time.
+Each tick recomputes nine resources — power, water, waste, traffic, injuries, disease,
+crime, labour and money — as demand against
 capacity; starved nodes lose health and eventually go offline, which removes their
-contribution and starves the rest of the city further. Money is the one resource
-whose surplus survives the tick boundary, so a city can read fully satisfied on the
-other five and still be quietly going broke. Power, water, waste disposal and labour
+contribution and starves the rest of the city further. Money carries forward as a treasury;
+waste, injuries, disease and crime carry forward as persistent burdens. Power, water, waste disposal and labour
 shortfalls are automatically purchased for 1 money per unit while the treasury can pay;
 traffic must always be handled locally.
 
@@ -183,7 +183,7 @@ stays healthy by quietly draining the bond-funded treasury until you build gener
 plant stops those imports but has its own recurring operating cost of 5 per tick.
 
 The slow one is insolvency. Water has a free baseline of 30, waste disposal has 40, while
-traffic starts at 20; power, labour and money have none, and a city opens with a one-off
+traffic starts at 30; power, labour and money have none, and a city opens with a one-off
 choice of a 250, 400 or 550 municipal bond issue. The proceeds arrive immediately, then level
 principal and interest are serviced over a fixed term after the construction holiday. A support set
 without a commercial block cannot cover its own upkeep, so the treasury drains for
@@ -191,10 +191,16 @@ the whole game while every other resource reads 100% satisfied — commercial is
 of the ratio, not an optional extra.
 
 Upkeep is not the only call on the treasury: placing a block charges its price (15 for
-a house, up to 80 for a power plant) and demolishing charges a flat 10, and either
+a house, up to 120 for a school) and demolishing starts at 10, and either
 gesture is refused outright when the balance will not cover it. Below 10, neither is
 possible at all. Imported labour also adds one unit of unpurchasable traffic demand per
 worker, so market staffing can turn a labour solution into a congestion problem.
+
+Large cities face two additional pressures. More than 10 excess workers creates persistent
+crime, which suppresses commercial income until schools or police stations reduce it. Schools
+cost more than police stations but also multiply housing labour, much like parks. A treasury
+above 1,000 triggers inflation, gradually raising construction, demolition, upkeep and import
+prices up to 70% above their base cost.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and

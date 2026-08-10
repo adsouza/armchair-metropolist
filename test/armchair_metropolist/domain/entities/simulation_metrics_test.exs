@@ -48,6 +48,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.disease_stock == 12.0
   end
 
+  test "carries the city's crime stock" do
+    metrics = SimulationMetrics.build(%{CityMap.new(40, 30) | crime_stock: 9.5}, %{})
+    assert metrics.crime_stock == 9.5
+  end
+
   # An empty grid is the default startup state (spec 6.4 hydration fallback),
   # so avg_health must not divide by zero.
   test "an empty city yields zero average health rather than raising" do
@@ -63,7 +68,12 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity == 1.0
     assert metrics.amenity_marginal_labour == 0.0
     assert metrics.amenity_labour == 0.0
+    assert metrics.education == 1.0
+    assert metrics.education_marginal_labour == 0.0
+    assert metrics.education_labour == 0.0
     assert metrics.health_labour_multiplier == 1.0
+    assert metrics.crime_money_multiplier == 1.0
+    assert metrics.inflation_multiplier == 1.0
   end
 
   test "carries the derived figures it is given" do
@@ -72,7 +82,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         amenity: 1.75,
         amenity_marginal_labour: 5.0,
         amenity_labour: 15.0,
+        education: 1.2,
+        education_marginal_labour: 4.0,
+        education_labour: 10.0,
         health_labour_multiplier: 0.6,
+        crime_money_multiplier: 0.75,
+        inflation_multiplier: 1.1,
+        construction_costs: Map.new(Node.types(), &{&1, Node.construction_cost(&1) + 1.0}),
+        demolition_cost: 11.0,
+        cheapest_action_cost: 11.0,
         market_spend: 12.0,
         treasury_delta: -7.5,
         imported_labour_traffic: 7.0,
@@ -92,7 +110,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.amenity == 1.75
     assert metrics.amenity_marginal_labour == 5.0
     assert metrics.amenity_labour == 15.0
+    assert metrics.education == 1.2
+    assert metrics.education_marginal_labour == 4.0
+    assert metrics.education_labour == 10.0
     assert metrics.health_labour_multiplier == 0.6
+    assert metrics.crime_money_multiplier == 0.75
+    assert metrics.inflation_multiplier == 1.1
+    assert metrics.demolition_cost == 11.0
+    assert metrics.cheapest_action_cost == 11.0
     assert metrics.market_spend == 12.0
     assert metrics.treasury_delta == -7.5
     assert metrics.imported_labour_traffic == 7.0
@@ -142,7 +167,15 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         Map.new(
           amenity: 1.75,
           amenity_marginal_labour: 5.0,
+          education: 1.2,
+          education_marginal_labour: 4.0,
+          education_labour: 10.0,
           health_labour_multiplier: 0.6,
+          crime_money_multiplier: 0.75,
+          inflation_multiplier: 1.1,
+          construction_costs: Map.new(Node.types(), &{&1, Node.construction_cost(&1)}),
+          demolition_cost: 10.0,
+          cheapest_action_cost: 10.0,
           market_spend: 0.0,
           treasury_delta: 0.0,
           imported_labour_traffic: 0.0,
@@ -219,6 +252,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
       assert Map.has_key?(by_type.transit_hub.load, :power)
       refute Map.has_key?(by_type.transit_hub.load, :water)
       refute Map.has_key?(by_type.transit_hub.rated_capacity, :water)
+      refute Map.has_key?(by_type.industrial.load, :money)
     end
 
     test "an empty city reports every type at zero rather than an empty map" do

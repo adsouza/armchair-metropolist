@@ -112,11 +112,23 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert modernized.disease_stock == 0.0
   end
 
+  test "modernize/1 supplies crime_stock for a payload written before the field existed" do
+    SnapshotVocabulary.ensure_loaded!()
+
+    decoded =
+      @pre_rename_fixture
+      |> File.read!()
+      |> :erlang.binary_to_term([:safe])
+
+    refute Map.has_key?(decoded, :crime_stock)
+    assert SnapshotVocabulary.modernize(decoded).crime_stock == 0.0
+  end
+
   test "modernize/1 supplies no commercial bridge for an older payload" do
     SnapshotVocabulary.ensure_loaded!()
 
     decoded =
-      @coverage_fixture
+      @pre_rename_fixture
       |> File.read!()
       |> :erlang.binary_to_term([:safe])
 
@@ -141,6 +153,11 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert modernized.disease_stock == 13.0
   end
 
+  test "modernize/1 does not reset a crime stock the city already carries" do
+    city = %{CityMap.new(40, 30) | crime_stock: 11.0}
+    assert SnapshotVocabulary.modernize(city).crime_stock == 11.0
+  end
+
   test "added_fields names every CityMap field an older release could not decode" do
     # `waste_stock` was added 2026-08-07. A field absent from this list is one a
     # rolled-back binary will fail to decode, so the list is pinned rather than
@@ -149,6 +166,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
              :waste_stock,
              :injury_stock,
              :disease_stock,
+             :crime_stock,
              :revision,
              :municipal_bond,
              :commercial_bond

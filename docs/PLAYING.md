@@ -123,8 +123,8 @@ more of the problem. A dash means the type does not touch that resource at all,
 which is different from netting to zero. The totals row gives city-wide demand, supply
 and satisfaction, per tick. Water supply has a free baseline of 30, waste absorption has 40;
 traffic absorption starts at 30. Power, labour and money have no free baseline, deliberately —
-see below. Injuries and disease are persistent stocks shown outside this matrix. When the city is
-short of power, water, waste
+see below. Injuries, disease and crime are persistent stocks shown outside this matrix. When the
+city is short of power, water, waste
 disposal or labour, it automatically buys the missing amount for **1 money per unit**.
 Each totals cell turns orange at 10% headroom or less and red once available supply no longer
 meets demand; purchased capacity counts as available supply in that warning.
@@ -143,8 +143,9 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 ### Choose an opening approach
 
 **Every block needs staff except the homes the staff live in.** Power plants, water
-plants, transit hubs, hospitals, parks, industry and commerce all draw labour; `residential` is the
-only thing that produces it locally. Imported labour can bridge the gap while the treasury
+plants, transit hubs, hospitals, parks, police stations, schools, industry and commerce all
+draw labour; `residential` is the only thing that produces it locally. Imported labour can
+bridge the gap while the treasury
 lasts, but housing is the cheaper durable source and imported workers add commuter traffic.
 
 Opening planning removes the need for a single click order. A housing-first plan supplies
@@ -188,7 +189,7 @@ The city starts with free baseline capacity of 30 water, 40 waste disposal and 3
 but **zero power**. The market keeps an unsupported house at 100% satisfaction by buying
 all 15 power it needs.
 
-Waste, injuries and disease keep score. Whatever waste you emit past absorption
+Waste, injuries, disease and crime keep score. Whatever waste you emit past absorption
 stays in the ground as a **Landfill**, shown in the metrics panel, and is added to
 the next tick's load. Injuries and disease likewise persist until hospital capacity
 treats them. Traffic itself still clears at the tick boundary, but its healthy threshold falls
@@ -197,18 +198,26 @@ above that moving threshold creates one injury per ten excess trips. With one re
 outbreaks occur every 49 ticks; every additional
 residential block shortens that interval by three ticks, down to a 10-tick minimum. Each outbreak
 adds two disease cases per residential block. The Metrics panel shows both untreated stocks.
-The first time either stock becomes positive during a play session, the goal box explains the
+The first time either health stock becomes positive during a play session, the goal box explains the
 cause and response. It stays out of the way when the city already has a hospital.
 
-Injuries and disease are not separate legend columns because only hospitals directly change
-them. The hospital row instead states the per-block treatment rate, while Metrics shows both
-untreated stocks.
+Injuries, disease and crime are not separate legend columns because only their treatment blocks
+directly change them. The hospital, police-station and school rows state their per-block treatment
+rates, while Metrics shows each untreated stock.
 
-Those stocks suppress the workforce before the next resource calculation. Ten untreated
+Injuries and disease suppress the workforce before the next resource calculation. Ten untreated
 cases per effective residential block reduce local labour to zero, with smaller burdens
-reducing every residential block proportionally. Parks multiply what remains; they cannot
-amplify sick or injured workers back into the workforce. A healthy hospital treats ten
+reducing every residential block proportionally. Parks and schools multiply what remains; they
+cannot amplify sick or injured workers back into the workforce. A healthy hospital treats ten
 injuries and ten disease cases per tick, and treatment falls with the hospital's health.
+
+Crime is a large-city pressure. The first **10 workers left after all labour demand is met** are
+harmless; beyond that allowance, every five excess workers add one crime per tick. Crime persists
+until health-scaled school or police capacity clears it. A healthy police station removes 12 crime
+per tick, while a healthy school removes 6. Untreated crime reduces every commercial block's money
+production: 20 crime per effective commercial block cuts it to zero, with smaller burdens reducing
+income proportionally. The *Crime* line in Metrics shows both the stock and the current commerce
+multiplier.
 
 Power, labour and money have no free baseline; they arrive only once you build for them or
 pay the market. One residential block draws `power 15` and earns 1, for a net treasury
@@ -254,8 +263,10 @@ Without imports, every possible fourth block needs some additional local capacit
 | `hospital` | labour 15/5 |
 | `industrial` | labour 23/5 |
 | `park` | water 58/30 |
+| `police_station` | labour 14/5 |
 | `power_plant` | labour 12/5 |
 | `residential` | water 52/30 |
+| `school` | labour 15/6.25 |
 | `transit_hub` | labour 13/5 |
 | `water_plant` | labour 12/5 |
 <!-- /generated:opening_wall -->
@@ -356,7 +367,7 @@ housing, though: a producer placed on an empty grid must buy its staff until hou
 exists, and those imported workers consume traffic capacity. See "Choose an opening approach"
 above.
 
-**Place one node at a time and watch the panel.** Because the eight resources are
+**Place one node at a time and watch the panel.** Because the nine resources are
 coupled — a power plant needs water, a water plant needs power — adding a producer to
 fix one shortfall creates demand elsewhere. The binding constraint moves rather than
 disappearing.
@@ -375,7 +386,7 @@ up locked and unplayable; see "When the city stops" below.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
-plants, transit hubs, hospitals, parks, industry and commerce all draw labour, and residential is the
+plants, transit hubs, hospitals, parks, police stations, schools, industry and commerce all draw labour, and residential is the
 only local source. A support set with fewer homes must import its missing workers; the
 minimum is where the whole economy, including that market bill, remains sustainable.
 
@@ -402,24 +413,30 @@ Waste disposal deserves special attention: buying disposal can clear the current
 but every unprocessed unit that remains carries into the next tick. A partial disposal
 budget slows the spiral; it does not erase it.
 
-**Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on the parks costs more.** The
+**Damage that falls evenly costs workforce in step with the housing; damage that falls hardest on parks or schools costs more.** The
 multiplier is a ratio, and both sides are scaled by health, so damage that falls evenly
-on housing and parks cancels out — the workforce shrinks in step with the housing, no
-faster. What moves the multiplier is *uneven* damage: let the parks rot while the housing
+on housing and its multipliers cancels out — the workforce shrinks in step with the housing, no
+faster. What moves a multiplier is *uneven* damage: let the parks or schools rot while the housing
 holds and the bonus shrinks, and the labour column falls faster than the block count
 suggests. Read the *Workforce* line in the metrics rather than counting parks on the grid,
-because it is the ratio that matters, not the total.
+because the health-weighted ratios matter, not the raw totals.
 
 Health returns at a flat rate once conditions are met, so a node at zero is back to
 full in 100 ticks.
 
 ## Running out of money
 
-The treasury pays three different bills: construction, demolition, and automatic imports.
-Construction and demolition are one-off charges; imports repeat every tick. The market
+The treasury pays four kinds of bills: construction, demolition, block upkeep, and automatic imports.
+Construction and demolition are one-off charges; upkeep and imports repeat every tick. The market
 reserves net upkeep first and then splits the remaining import budget proportionally across
 every eligible shortage. If it can fund only half the total bill, power, water, disposal and
 labour each receive half of what they need.
+
+Inflation is the other large-city pressure. It is dormant through a treasury of **1,000**. Above
+that, every additional 1,000 raises construction, demolition, upkeep and market prices by 10%, up
+to a ×1.7 ceiling. The *Inflation* line in Metrics shows the active percentage, and every displayed
+construction price already includes it. Fixed bond principal and scheduled debt service are
+contractual, so inflation does not rewrite them.
 
 Only money already in the treasury can be imported with. Income produced during this tick
 arrives at its end and becomes spendable on the next one. That one-tick lag matters most at
@@ -548,16 +565,16 @@ is equivalent to the untouched, unissued state.
 Available with no infrastructure placed at all.
 
 <!-- generated:baseline -->
-| power | water | waste | traffic | injuries | disease | labour | money |
-|---|---|---|---|---|---|---|---|
-| 0 | 30 | 40 | 30 | 0 | 0 | 0 | 0 |
+| power | water | waste | traffic | injuries | disease | crime | labour | money |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 30 | 40 | 30 | 0 | 0 | 0 | 0 | 0 |
 <!-- /generated:baseline -->
 
 ### Per-block effect, scaled by health
 
 Each figure is one block's effect on that resource, scaled by the block's health — a plant
 at 50% health delivers half. Power, water, labour and money are goods: you want them to
-rise. Waste, traffic, injuries and disease are bads: you want them to fall.
+rise. Waste, traffic, injuries, disease and crime are bads: you want them to fall.
 
 <!-- generated:production -->
 | type | effect |
@@ -566,8 +583,10 @@ rise. Waste, traffic, injuries and disease are bads: you want them to fall.
 | `hospital` | injuries -10, disease -10 |
 | `industrial` | waste -90 |
 | `park` | waste -8 |
+| `police_station` | crime -12 |
 | `power_plant` | power +120 |
 | `residential` | labour +5, money +1 |
+| `school` | crime -6 |
 | `transit_hub` | traffic -60 |
 | `water_plant` | water +100 |
 
@@ -580,16 +599,18 @@ The other side of the ledger, and it is **never** scaled by health. This is the 
 behind every death spiral: a dying block draws its full power and emits its full waste.
 
 <!-- generated:consumption -->
-| type | power | water | waste | traffic | injuries | disease | labour | money |
-|---|---|---|---|---|---|---|---|---|
-| `commercial` | -22 | -8 | +14 | +9 | — | — | -8 | — |
-| `hospital` | -20 | -15 | +10 | +4 | — | — | -4 | -6 |
-| `industrial` | -40 | -25 | — | +8 | — | — | -12 | — |
-| `park` | — | -18 | — | +2 | — | — | -1 | -3 |
-| `power_plant` | — | -20 | +12 | +3 | — | — | -1 | -5 |
-| `residential` | -15 | -12 | +10 | +6 | — | — | — | — |
-| `transit_hub` | -8 | — | +2 | — | — | — | -2 | -4 |
-| `water_plant` | -25 | — | +6 | +2 | — | — | -1 | -5 |
+| type | power | water | waste | traffic | injuries | disease | crime | labour | money |
+|---|---|---|---|---|---|---|---|---|---|
+| `commercial` | -22 | -8 | +14 | +9 | — | — | — | -8 | — |
+| `hospital` | -20 | -15 | +10 | +4 | — | — | — | -4 | -6 |
+| `industrial` | -40 | -25 | — | +8 | — | — | — | -12 | — |
+| `park` | — | -18 | — | +2 | — | — | — | -1 | -3 |
+| `police_station` | -12 | -6 | +4 | +3 | — | — | — | -3 | -5 |
+| `power_plant` | — | -20 | +12 | +3 | — | — | — | -1 | -5 |
+| `residential` | -15 | -12 | +10 | +6 | — | — | — | — | — |
+| `school` | -18 | -12 | +8 | +6 | — | — | — | -4 | -8 |
+| `transit_hub` | -8 | — | +2 | — | — | — | — | -2 | -4 |
+| `water_plant` | -25 | — | +6 | +2 | — | — | — | -1 | -5 |
 <!-- /generated:consumption -->
 
 `hospital` removes ten injuries and ten disease cases per tick at full health. That
@@ -597,6 +618,12 @@ treatment is capacity, so a hospital at 50% health removes five of each while st
 drawing its full utilities, staffing and upkeep. Injuries and disease cannot be bought
 away on the market; durable cities must include enough healthy hospitals to clear both
 ordinary traffic injuries and periodic outbreak spikes.
+
+`police_station` and `school` remove crime in the same health-scaled way. Police are the focused,
+cheaper response: 70 to build for 12 crime treatment. Schools cost more at 120 and treat 6 crime,
+but also multiply the labour supplied by housing. One healthy school adds five gross workers until
+the city reaches **one school per four residential blocks**; at that ratio the school multiplier
+caps at ×1.25. Schools still consume four staff themselves, so the labour cell shows their net value.
 
 `park` is how you get more workers out of the housing you already have. It produces no
 labour itself — a city with no residential blocks has no workforce for a park to
@@ -629,11 +656,13 @@ while still costing everything.
 | traffic | — | no | — |
 | injuries | — | no | requires hospitals |
 | disease | — | no | requires hospitals |
+| crime | — | no | requires schools or police stations |
 
 Net upkeep is reserved before imports. If the remaining treasury cannot cover every
 eligible shortage, the same percentage of each is purchased. Money earned during a tick
 becomes available for imports on the following tick. Commuter traffic is based on labour
 actually purchased, not the unfunded portion of a labour shortage, and clears each tick.
+The 1-money entries are base prices; active inflation multiplies them.
 
 ### What each type costs
 
@@ -644,12 +673,14 @@ actually purchased, not the unfunded portion of a labour shortage, and clears ea
 | `hospital` | 100 |
 | `industrial` | 60 |
 | `park` | 20 |
+| `police_station` | 70 |
 | `power_plant` | 80 |
 | `residential` | 15 |
+| `school` | 120 |
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-Demolishing anything costs 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A qualifying healthy city may later receive one dynamically quoted commercial bridge covering the gap to 40 plus six projected ticks of expenses.
+These are base construction prices. Once a running city's treasury exceeds 1000, inflation raises construction, demolition, upkeep and market prices by 10% per additional 1,000, up to ×1.7. Demolishing anything has a base cost of 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A qualifying healthy city may later receive one dynamically quoted commercial bridge covering the gap to 40 plus six projected ticks of expenses.
 <!-- /generated:costs -->
 
 ### Health and timing
@@ -661,6 +692,12 @@ Demolishing anything costs 10, whatever it was. A new city starts with no cash; 
 | health lost per tick, per unit of shortfall | **−6 × (1 − satisfaction)** |
 | labour supply, multiplied per park per housing block | **+1 × (parks ÷ housing)** |
 | that multiplier's ceiling, at 1 park per housing block | **×2** |
+| labour supply, multiplied per school per housing block | **+1 × (schools ÷ housing)** |
+| that multiplier's ceiling, at 0.25 school per housing block | **×1.25** |
+| excess labour before crime begins | **10** |
+| crime created beyond that allowance | **+0.2 per worker per tick** |
+| untreated crime that suppresses one commercial block's income | **20** |
+| inflation begins above a treasury of | **1000** |
 | healthy traffic ceiling | **100% at no utilization, falling linearly to 80% at full utilization** |
 | injuries above that ceiling | **+1 per 10 excess traffic** |
 | disease outbreak | **+2 per residential; every 49 ticks with one home, 3 ticks sooner per additional home (minimum 10)** |

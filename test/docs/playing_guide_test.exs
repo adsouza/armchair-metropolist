@@ -73,7 +73,7 @@ defmodule ArmchairMetropolist.PlayingGuideTest do
 
     # Positive case first: the replacement framing must actually be present, so this
     # fails if the sentence is deleted outright rather than reworded.
-    assert guide =~ "Waste, traffic, injuries and disease are bads"
+    assert guide =~ "Waste, traffic, injuries, disease and crime are bads"
 
     # And the instruction it replaced must be gone. Alone, this refute would pass
     # against a guide with the whole reference section deleted.

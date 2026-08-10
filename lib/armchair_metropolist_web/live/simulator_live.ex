@@ -42,13 +42,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     residential: "🏘️",
     commercial: "🛍️",
     park: "🌳",
-    hospital: "🏥"
+    hospital: "🏥",
+    police_station: "🚓",
+    school: "🏫"
   }
 
-  # Injuries and disease are persistent city stocks rather than broadly exchanged
-  # resources: only hospitals directly remove them. Giving each its own matrix column
-  # leaves almost every row empty, so the legend keeps the six resources that support
-  # useful read-down comparisons and summarizes hospital treatment in that row instead.
+  # Injuries, disease and crime are persistent city stocks rather than broadly exchanged
+  # resources. Giving each its own matrix column leaves almost every row empty, so the
+  # legend keeps the six resources that support useful read-down comparisons and summarizes
+  # treatment in the hospital, police-station and school rows instead.
   @legend_resources [:power, :water, :waste, :traffic, :labour, :money]
 
   # Stable legend reservations, measured in the browser against the largest ordinary
@@ -252,7 +254,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         {:noreply, socket}
 
       {:error, :insufficient_funds} ->
-        {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics.money))}
+        {:noreply, put_flash(socket, :error, unaffordable(type, socket.assigns.metrics))}
 
       {:error, :financing_required} ->
         {:noreply, put_flash(socket, :error, "Authorize a municipal bond issue before building.")}
@@ -279,8 +281,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         {:noreply, socket}
 
       {:error, :insufficient_funds} ->
-        {:noreply,
-         put_flash(socket, :error, unaffordable_demolition(socket.assigns.metrics.money))}
+        {:noreply, put_flash(socket, :error, unaffordable_demolition(socket.assigns.metrics))}
 
       {:error, _reason} ->
         {:noreply, socket}
@@ -631,13 +632,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           <p :if={@legend_detail} class="text-xs leading-relaxed opacity-60">
             Totals include free capacity belonging to no type: 30 water supplied, 40 waste
             absorbed and 30 traffic absorbed. Power, labour and money have no free baseline.
-            Injuries and disease are tracked as stocks in Metrics rather than as sparse columns;
-            the hospital row shows its treatment rate. Traffic's healthy threshold falls from 100%
+            Injuries, disease and crime are tracked as stocks in Metrics rather than as sparse
+            columns; the treatment rows show their reduction rates. Traffic's healthy threshold falls from 100%
             of capacity at zero utilization to 80% at full utilization; demand above it creates
             injuries. Disease outbreaks begin every 49 ticks with one residential block and arrive
-            three ticks sooner per additional block, down to every 10 ticks. Labour's total includes
-            park amenity and the health-burden penalty; park's own row carries its amenity. Shortfalls
-            in power, water, waste disposal and labour are bought automatically for 1 money per unit
+            three ticks sooner per additional block, down to every 10 ticks. More than 10 idle workers
+            creates crime, which reduces commercial income until schools or police stations clear it.
+            Labour's total includes park and school multipliers plus the health-burden penalty; their own
+            rows carry those bonuses. Above 1,000 in the treasury, inflation gradually raises construction,
+            demolition, upkeep and market prices. Shortfalls in power, water, waste disposal and labour are bought automatically for 1 money per unit
             while the treasury can pay; purchased units count toward supplied totals. Each imported
             labour unit adds one traffic demand, and traffic itself cannot be bought.
           </p>
@@ -921,8 +924,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
       <p :if={@variant == :dead} class="text-xs opacity-80">
         Every block is dead and starving, so the clock has stopped. Building costs at least {trunc(
-          Node.cheapest_construction_cost()
-        )} and demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
+          cheapest_construction_cost(@metrics)
+        )} and demolishing costs {trunc(@metrics.demolition_cost)}, and the treasury holds {trunc(
           @metrics.money
         )} — so
         nothing can restart it. <strong>Reset</strong>
@@ -935,8 +938,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@variant == :locked} class="text-xs opacity-80">
         Upkeep is {round(@metrics.resources.money.demanded)} a tick and this city could earn at
         most {round(@metrics.money_ceiling)} with every block at full health, so the treasury
-        can never rise again. Building costs at least {trunc(Node.cheapest_construction_cost())} and
-        demolishing costs {trunc(Node.demolition_cost())}, and the treasury holds {trunc(
+        can never rise again. Building costs at least {trunc(cheapest_construction_cost(@metrics))} and
+        demolishing costs {trunc(@metrics.demolition_cost)}, and the treasury holds {trunc(
           @metrics.money
         )}. <strong>Reset</strong>
         in the header clears the grid and returns to bond authorization. This cannot be undone.
@@ -1321,7 +1324,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # tick counter advances in the background.
   defp show_reset?(metrics) do
     metrics.bond != nil or metrics.node_count > 0 or metrics.money != 0.0 or
-      metrics.waste_stock != 0.0 or metrics.injury_stock != 0.0 or metrics.disease_stock != 0.0
+      metrics.waste_stock != 0.0 or metrics.injury_stock != 0.0 or
+      metrics.disease_stock != 0.0 or metrics.crime_stock != 0.0
   end
 
   defp issue_name(250.0), do: "Lean"
@@ -1455,8 +1459,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # The six columnar resources are fixed and identical on every row, including where a
   # type does not touch one. Aligned columns are the feature: the question a player has
   # is "water is short, who is drinking it?", answered by reading one column down all
-  # eight block types. Injuries and disease do not earn columns because only one type
-  # directly changes them; hospital treatment is a compact annotation in that type row.
+  # ten block types. The three stock resources do not earn columns because only their
+  # treatment types directly change them; treatment is a compact annotation in those rows.
   attr :metrics, :map, required: true
   attr :node_types, :list, required: true
   attr :selected_type, :atom, required: true
@@ -1527,6 +1531,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   <.icon name="hero-plus-circle" class="size-3" />
                   <span>-10 injuries/disease</span>
                 </div>
+                <div
+                  :if={@detail and type in [:police_station, :school]}
+                  id={"#{type}-crime-treatment-summary"}
+                  class="ml-2 mt-0.5 flex items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-300"
+                  title="At full health; crime reduction scales with block health"
+                >
+                  <.icon name="hero-shield-check" class="size-3" />
+                  <span>-{trunc(Node.capacity(type).crime)} crime</span>
+                </div>
               </td>
               <td data-cell={"#{type}-count"} class="text-right tabular-nums">
                 {@metrics.by_type[type].count}
@@ -1536,7 +1549,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 class="text-right tabular-nums"
                 title={cost_title(@metrics, type)}
               >
-                {trunc(Node.construction_cost(type))}
+                {trunc(@metrics.construction_costs[type])}
               </td>
               <.resource_cell
                 :for={resource <- @resources}
@@ -1546,6 +1559,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 stats={@metrics.by_type[type]}
                 amenity_marginal_labour={@metrics.amenity_marginal_labour}
                 amenity_labour={@metrics.amenity_labour}
+                education_marginal_labour={@metrics.education_marginal_labour}
+                education_labour={@metrics.education_labour}
+                inflation_multiplier={@metrics.inflation_multiplier}
               />
             </tr>
           </tbody>
@@ -1609,10 +1625,10 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # floored, and because every cost is a whole number `trunc(money) >= cost` exactly when
   # `money >= cost` — which is what keeps the greyed row and the printed balance
   # consistent.
-  defp affordable?(money, type), do: money >= Node.construction_cost(type)
+  defp affordable?(metrics, type), do: metrics.money >= metrics.construction_costs[type]
 
   defp construction_available?(metrics, type) do
-    not bond_defaulted?(metrics) and affordable?(metrics.money, type)
+    not bond_defaulted?(metrics) and affordable?(metrics, type)
   end
 
   # The row is dimmed, which is a visual-only signal; the title carries the same fact for
@@ -1620,13 +1636,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # unaffordable type is harmless and is often what a player wants while waiting for
   # income.
   defp cost_title(metrics, type) do
-    cost = trunc(Node.construction_cost(type))
+    cost = trunc(metrics.construction_costs[type])
 
     cond do
       bond_defaulted?(metrics) ->
         "bond payment missed — clear the past-due balance through debt service before building"
 
-      affordable?(metrics.money, type) ->
+      affordable?(metrics, type) ->
         "costs #{cost}"
 
       true ->
@@ -1691,12 +1707,38 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p id="metrics-landfill">Landfill: {trunc(@metrics.waste_stock)}</p>
       <p id="metrics-injuries">Injuries: {Float.round(@metrics.injury_stock, 1)}</p>
       <p id="metrics-disease">Disease: {Float.round(@metrics.disease_stock, 1)}</p>
-      <p id="metrics-workforce">
-        Workforce: parks ×{Float.round(@metrics.amenity, 2)}, health ×{Float.round(
-          @metrics.health_labour_multiplier,
+      <p
+        id="metrics-crime"
+        class={[
+          @metrics.crime_stock > 0.0 && "font-semibold text-red-700 dark:text-red-300"
+        ]}
+      >
+        Crime: {Float.round(@metrics.crime_stock, 1)} · commerce ×{Float.round(
+          @metrics.crime_money_multiplier,
           2
         )}
       </p>
+      <p
+        id="metrics-inflation"
+        class={[
+          @metrics.inflation_multiplier > 1.0 &&
+            "font-semibold text-orange-700 dark:text-orange-300"
+        ]}
+      >
+        Inflation: +{round((@metrics.inflation_multiplier - 1.0) * 100)}%
+      </p>
+      <div id="metrics-workforce" class="leading-snug">
+        <p>Workforce</p>
+        <p data-workforce-multiplier="parks" class="pl-3 tabular-nums">
+          Parks ×{Float.round(@metrics.amenity, 2)}
+        </p>
+        <p data-workforce-multiplier="schools" class="pl-3 tabular-nums">
+          Schools ×{Float.round(@metrics.education, 2)}
+        </p>
+        <p data-workforce-multiplier="health" class="pl-3 tabular-nums">
+          Health ×{Float.round(@metrics.health_labour_multiplier, 2)}
+        </p>
+      </div>
       <p :if={@tightest} id="metrics-tightest">{tightest_text(@tightest)}</p>
       <%!-- `trunc/1`, not `round/1`: this figure is spendable, and rounding it up makes
             the page contradict itself — a balance of 79.6 would read 80 while an 80-cost
@@ -1917,17 +1959,32 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :stats, :map, required: true
   attr :amenity_marginal_labour, :float, required: true
   attr :amenity_labour, :float, required: true
+  attr :education_marginal_labour, :float, required: true
+  attr :education_labour, :float, required: true
+  attr :inflation_multiplier, :float, required: true
 
   defp resource_cell(assigns) do
     assigns =
       assigns
       |> assign(
         :marginal,
-        marginal_cell(assigns.type, assigns.resource, assigns.amenity_marginal_labour)
+        marginal_cell(
+          assigns.type,
+          assigns.resource,
+          assigns.amenity_marginal_labour,
+          assigns.education_marginal_labour,
+          assigns.inflation_multiplier
+        )
       )
       |> assign(
         :total,
-        total_cell(assigns.type, assigns.resource, assigns.stats, assigns.amenity_labour)
+        total_cell(
+          assigns.type,
+          assigns.resource,
+          assigns.stats,
+          assigns.amenity_labour,
+          assigns.education_labour
+        )
       )
 
     ~H"""
@@ -1967,13 +2024,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # type would do": the amenity another park would add, net of the labour it would draw.
   # Past parity that is negative, which is the honest figure — over-provisioning parks
   # costs labour rather than merely stopping helping.
-  defp marginal_cell(:park, :labour, amenity_marginal_labour) do
+  defp marginal_cell(:park, :labour, amenity_marginal_labour, _education, _inflation) do
     signed(amenity_marginal_labour - Map.get(Node.load(:park), :labour, 0.0))
   end
 
-  defp marginal_cell(type, resource, _amenity_marginal_labour) do
+  defp marginal_cell(:school, :labour, _amenity, education_marginal_labour, _inflation) do
+    signed(education_marginal_labour - Map.get(Node.load(:school), :labour, 0.0))
+  end
+
+  defp marginal_cell(type, resource, _amenity, _education, inflation_multiplier) do
     capacity = Map.get(Node.capacity(type), resource)
-    load = Map.get(Node.load(type), resource)
+    load = inflated_load(type, resource, inflation_multiplier)
 
     if is_nil(capacity) and is_nil(load) do
       "—"
@@ -1990,7 +2051,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # `nil` rather than a string when nothing is placed: the total of nothing is zero and
   # saying so is noise, and the per-block line above already carries the row's meaning.
-  defp total_cell(_type, _resource, %{count: 0}, _amenity_labour), do: nil
+  defp total_cell(_type, _resource, %{count: 0}, _amenity_labour, _education_labour),
+    do: nil
 
   # The mirror of `marginal_cell/3`'s park clause, and needed for the same reason: park's
   # labour effect is in neither capacity table nor load table, so the general
@@ -2005,11 +2067,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   #
   # `load` is already scaled by count in `build_by_type/1`, so this nets whole-row
   # against whole-row.
-  defp total_cell(:park, :labour, stats, amenity_labour) do
+  defp total_cell(:park, :labour, stats, amenity_labour, _education_labour) do
     signed(amenity_labour - Map.get(stats.load, :labour, 0.0))
   end
 
-  defp total_cell(_type, resource, stats, _amenity_labour) do
+  defp total_cell(:school, :labour, stats, _amenity_labour, education_labour) do
+    signed(education_labour - Map.get(stats.load, :labour, 0.0))
+  end
+
+  defp total_cell(_type, resource, stats, _amenity_labour, _education_labour) do
     capacity = Map.get(stats.rated_capacity, resource)
     actual = Map.get(stats.actual_capacity, resource)
     load = Map.get(stats.load, resource)
@@ -2035,6 +2101,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           else: "#{signed(rated_net)} → #{signed(actual_net)}"
     end
   end
+
+  defp inflated_load(type, :money, inflation_multiplier) do
+    case Map.get(Node.load(type), :money) do
+      nil -> nil
+      load -> load * inflation_multiplier
+    end
+  end
+
+  defp inflated_load(type, resource, _inflation_multiplier),
+    do: Map.get(Node.load(type), resource)
 
   # `resources` is populated from mount via SummarizeCity, so there is no empty-map
   # case to guard here beyond ordinary defensiveness.
@@ -2135,14 +2211,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   # via the legend's own `select_type` buttons — one per member of `Node.types/0` — so
   # only a hand-crafted event bypassing the UI could produce a type this handler does not
   # recognize, and silence is the right response to that.
-  defp unaffordable(type, money) do
-    "Not enough money: #{type} costs #{trunc(Node.construction_cost(type))}, " <>
-      "treasury holds #{trunc(money)}."
+  defp unaffordable(type, metrics) do
+    "Not enough money: #{type} costs #{trunc(metrics.construction_costs[type])}, " <>
+      "treasury holds #{trunc(metrics.money)}."
   end
 
-  defp unaffordable_demolition(money) do
-    "Not enough money: demolishing costs #{trunc(Node.demolition_cost())}, " <>
-      "treasury holds #{trunc(money)}."
+  defp unaffordable_demolition(metrics) do
+    "Not enough money: demolishing costs #{trunc(metrics.demolition_cost)}, " <>
+      "treasury holds #{trunc(metrics.money)}."
+  end
+
+  defp cheapest_construction_cost(metrics) do
+    metrics.construction_costs |> Map.values() |> Enum.min()
   end
 
   defp demolition_title(node, metrics) do

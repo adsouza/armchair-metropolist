@@ -162,7 +162,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.FileSnapshotStoreTest d
     refute output =~ "VACUOUS",
            "the entity modules were already loaded, so this test proves nothing:\n#{output}"
 
-    assert output == "OK tick=137 revision=9 nodes=8 w=17 h=11",
+    assert output == "OK tick=137 revision=9 nodes=10 w=17 h=11",
            "cold-VM load lost the city: #{output}"
   end
 

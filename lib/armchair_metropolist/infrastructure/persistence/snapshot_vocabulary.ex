@@ -78,6 +78,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     :waste_stock,
     :injury_stock,
     :disease_stock,
+    :crime_stock,
     :revision,
     :municipal_bond,
     :commercial_bond
@@ -128,6 +129,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     |> Map.put_new(:waste_stock, 0.0)
     |> Map.put_new(:injury_stock, 0.0)
     |> Map.put_new(:disease_stock, 0.0)
+    |> Map.put_new(:crime_stock, 0.0)
     |> Map.put_new(:revision, 0)
     |> Map.put_new(
       :municipal_bond,

@@ -2,6 +2,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   @moduledoc "Use case: place, remove, and query city infrastructure nodes."
 
   alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
+  alias ArmchairMetropolist.Domain.Services.SimulationCalculator
 
   @doc """
   Place a new node of `type` at `(x, y)` on `city_map`.
@@ -28,6 +29,11 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
              | :bond_default
              | :insufficient_funds}
   def place(city_map, x, y, type) do
+    cost =
+      if type in Node.types(),
+        do: SimulationCalculator.construction_cost(city_map, type),
+        else: nil
+
     cond do
       not CityMap.in_bounds?(city_map, x, y) ->
         {:error, :out_of_bounds}
@@ -45,7 +51,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           MunicipalBond.defaulted?(city_map.commercial_bond) ->
         {:error, :bond_default}
 
-      city_map.money < Node.construction_cost(type) ->
+      city_map.money < cost ->
         {:error, :insufficient_funds}
 
       true ->
@@ -54,7 +60,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
         city_map =
           city_map
           |> CityMap.put_node(node)
-          |> CityMap.debit(Node.construction_cost(type))
+          |> CityMap.debit(cost)
           # After the put, so the occupancy test counts the node just placed. Growth lives
           # here rather than in `CityMap.put_node/2` because `put_node/2` is a primitive
           # that sets one key: a growth policy inside it would reach every caller,
@@ -79,29 +85,30 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           {:ok, {CityMap.t(), String.t()}} | {:error, :empty | :insufficient_funds}
   def demolish(city_map, x, y) do
     node = CityMap.get_node(city_map, x, y)
+    cost = SimulationCalculator.demolition_cost(city_map)
 
     cond do
       is_nil(node) ->
         {:error, :empty}
 
       not MunicipalBond.planning?(city_map.municipal_bond) and
-          city_map.money < Node.demolition_cost() ->
+          city_map.money < cost ->
         {:error, :insufficient_funds}
 
       true ->
         city_map =
           city_map
           |> CityMap.delete_node(x, y)
-          |> settle_demolition(node)
+          |> settle_demolition(node, cost)
           |> CityMap.increment_revision()
 
         {:ok, {city_map, node.id}}
     end
   end
 
-  defp settle_demolition(%CityMap{municipal_bond: bond} = city_map, node) do
+  defp settle_demolition(%CityMap{municipal_bond: bond} = city_map, node, cost) do
     if MunicipalBond.planning?(bond),
       do: CityMap.credit(city_map, Node.construction_cost(node.type)),
-      else: CityMap.debit(city_map, Node.demolition_cost())
+      else: CityMap.debit(city_map, cost)
   end
 end

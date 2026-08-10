@@ -93,6 +93,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
                traffic: 30.0,
                injuries: 0.0,
                disease: 0.0,
+               crime: 0.0,
                labour: 0.0,
                money: 0.0
              }
@@ -471,6 +472,104 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       {next, _delta} = Calc.advance_tick(two_hospitals)
       assert next.injury_stock == 5.0
       assert next.disease_stock == 5.0
+    end
+  end
+
+  describe "crime, schools and police stations" do
+    test "crime is normally zero and begins only beyond the excess-labour allowance" do
+      one_home = map_with([Node.new(0, 0, :residential)])
+      five_homes = map_with(for(x <- 0..4, do: Node.new(x, 0, :residential)))
+
+      assert Calc.resource_stats(one_home).crime.demanded == 0.0
+
+      # 25 supplied, no labour demand, and the first 10 excess workers are harmless.
+      assert Calc.resource_stats(five_homes).crime.demanded == 3.0
+
+      {next, _delta} = Calc.advance_tick(five_homes)
+      assert next.crime_stock == 3.0
+    end
+
+    test "police stations and schools both reduce persistent crime" do
+      city =
+        %{map_with([Node.new(0, 0, :commercial)]) | crime_stock: 25.0}
+
+      police = CityMap.put_node(city, Node.new(1, 0, :police_station))
+      school = CityMap.put_node(city, Node.new(1, 0, :school))
+      both = CityMap.put_node(police, Node.new(2, 0, :school))
+
+      assert Calc.resource_stats(police).crime.deficit == 13.0
+      assert Calc.resource_stats(school).crime.deficit == 19.0
+      assert Calc.resource_stats(both).crime.deficit == 7.0
+    end
+
+    test "crime suppresses every commercial block's money production" do
+      city = map_with([Node.new(0, 0, :commercial), Node.new(1, 0, :commercial)])
+
+      clear = Calc.metrics(city)
+      burdened = Calc.metrics(%{city | crime_stock: 20.0})
+
+      assert clear.resources.money.supplied == 60.0
+      assert clear.crime_money_multiplier == 1.0
+      assert burdened.resources.money.supplied == 30.0
+      assert burdened.crime_money_multiplier == 0.5
+      assert burdened.by_type.commercial.actual_capacity.money == 30.0
+    end
+
+    test "one school per four homes caps the education multiplier at 1.25" do
+      homes = for x <- 0..3, do: Node.new(x, 0, :residential)
+      city = map_with([Node.new(4, 0, :school) | homes])
+      metrics = Calc.metrics(city)
+
+      assert metrics.education == 1.25
+      assert metrics.resources.labour.supplied == 25.0
+      assert metrics.education_labour == 5.0
+      assert metrics.education_marginal_labour == 0.0
+    end
+
+    test "the school multiplier is health-weighted" do
+      homes = for x <- 0..3, do: Node.new(x, 0, :residential)
+
+      school = %Node{
+        Node.new(4, 0, :school)
+        | health: 50.0,
+          status: :degraded
+      }
+
+      metrics = Calc.metrics(map_with([school | homes]))
+      assert metrics.education == 1.125
+      assert metrics.resources.labour.supplied == 22.5
+    end
+  end
+
+  describe "inflation" do
+    test "is dormant through the threshold" do
+      city = %{legacy_city() | money: Calc.inflation_threshold()}
+
+      assert Calc.inflation_multiplier(city) == 1.0
+      assert Calc.construction_cost(city, :commercial) == 40.0
+      assert Calc.demolition_cost(city) == 10.0
+      assert Calc.market_prices(city) == Calc.market_prices()
+    end
+
+    test "gradually raises construction, demolition, upkeep and market prices" do
+      city = %{
+        map_with([Node.new(0, 0, :power_plant)])
+        | money: Calc.inflation_threshold() + 1_000.0
+      }
+
+      assert_in_delta Calc.inflation_multiplier(city), 1.1, 0.001
+      assert Calc.construction_cost(city, :power_plant) == 88.0
+      assert Calc.demolition_cost(city) == 11.0
+      assert_in_delta Calc.resource_stats(city).money.demanded, 5.5, 0.001
+      assert Calc.market_prices(city) == %{power: 1.1, water: 1.1, waste: 1.1, labour: 1.1}
+    end
+
+    test "caps the multiplier at seventy percent above base cost" do
+      city = %{legacy_city() | money: 1_000_000.0}
+
+      assert Calc.inflation_multiplier(city) == 1.7
+      assert Calc.construction_cost(city, :school) == 204.0
+      assert Calc.demolition_cost(city) == 17.0
     end
   end
 

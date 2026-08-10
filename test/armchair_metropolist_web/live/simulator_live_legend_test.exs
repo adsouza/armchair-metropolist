@@ -42,7 +42,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert table =~ "[&amp;_td]:px-1"
     end
 
-    test "keeps health stocks out of the matrix and summarizes hospital treatment",
+    test "keeps stock resources out of the matrix and summarizes their treatment",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -50,9 +50,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       refute has_element?(view, ~s{[data-cell="hospital-disease"]})
       refute has_element?(view, ~s{[data-total="injuries"]})
       refute has_element?(view, ~s{[data-total="disease"]})
+      refute has_element?(view, ~s{[data-cell="police_station-crime"]})
+      refute has_element?(view, ~s{[data-cell="school-crime"]})
+      refute has_element?(view, ~s{[data-total="crime"]})
 
       treatment = view |> element("#hospital-treatment-summary") |> render()
       assert treatment =~ "-10 injuries/disease"
+      assert view |> element("#police_station-crime-treatment-summary") |> render() =~ "-12 crime"
+      assert view |> element("#school-crime-treatment-summary") |> render() =~ "-6 crime"
+    end
+
+    test "shows crime at its normal zero baseline", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert view |> element("#metrics-crime") |> render() =~ "Crime: 0.0 · commerce ×1.0"
+    end
+
+    @tag treasury: 2_000.0
+    test "shows active inflation and its adjusted construction prices", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert view |> element("#metrics-inflation") |> render() =~ "Inflation: +10%"
+      assert view |> element(~s{[data-cell="commercial-cost"]}) |> render() =~ "44"
     end
 
     test "wraps the totals footnote and reports the free baselines", %{conn: conn} do
@@ -692,7 +711,36 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       # 2 housing, 1 park is ratio 0.5, below the cap: one more park adds L*k = 5 labour
       # and draws 1 of its own.
       assert view |> element(~s{[data-cell="park-labour"]}) |> render() =~ "+4"
-      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: parks ×1.5"
+
+      assert view
+             |> element(~s{#metrics-workforce [data-workforce-multiplier="parks"]})
+             |> render() =~ "Parks ×1.5"
+
+      for multiplier <- ~w(parks schools health) do
+        assert has_element?(
+                 view,
+                 ~s{#metrics-workforce > p.pl-3[data-workforce-multiplier="#{multiplier}"]}
+               )
+      end
+    end
+
+    @tag :roomy_city
+    test "school's labour cell shows its multiplier net of school staffing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for x <- 1..4, do: place(view, :residential, x, 1)
+      place(view, :school, 1, 2)
+
+      # Four homes supply 20 labour. One school reaches the 0.25 ratio cap, adds five
+      # gross workers, and consumes four itself, for a net +1.
+      assert view |> element(~s{[data-cell="school-labour"]}) |> render() =~ "+1"
+
+      assert view |> element(~s{[data-cell="school-labour"] .font-semibold}) |> render() =~
+               "+1"
+
+      assert view
+             |> element(~s{#metrics-workforce [data-workforce-multiplier="schools"]})
+             |> render() =~ "Schools ×1.25"
     end
 
     # ×1.5 does not pin the precision: `Float.round(1.5, 1)` and `Float.round(1.5, 2)` both
@@ -706,7 +754,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       for x <- 1..3, do: place(view, :residential, x, 1)
       place(view, :park, 1, 2)
 
-      assert view |> element("#metrics-workforce") |> render() =~ "Workforce: parks ×1.33"
+      assert view
+             |> element(~s{#metrics-workforce [data-workforce-multiplier="parks"]})
+             |> render() =~ "Parks ×1.33"
     end
 
     # The bold half of the cell, which is the figure a player's eye lands on. It answers a

@@ -3,6 +3,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
   use ExUnitProperties
 
   alias ArmchairMetropolist.Domain.Entities.{CityMap, MunicipalBond, Node}
+  alias ArmchairMetropolist.Domain.Services.SimulationCalculator
   alias ArmchairMetropolist.UseCases.ManageInfrastructure
 
   setup do: {:ok, map: legacy_city(40, 30)}
@@ -84,6 +85,15 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       map = %{legacy_city(40, 30) | money: 19.0}
 
       assert {:error, :insufficient_funds} = ManageInfrastructure.place(map, 1, 1, :park)
+    end
+
+    test "debits the inflation-adjusted construction cost" do
+      city = %{legacy_city(40, 30) | money: 2_000.0}
+      cost = SimulationCalculator.construction_cost(city, :commercial)
+
+      assert cost == 44.0
+      assert {:ok, {placed, _node}} = ManageInfrastructure.place(city, 1, 1, :commercial)
+      assert placed.money == 2_000.0 - cost
     end
 
     test "reports occupancy before affordability" do
@@ -173,6 +183,16 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       {:ok, {map, _id}} = ManageInfrastructure.demolish(map, 1, 1)
 
       assert map.money == 90.0
+    end
+
+    test "debits the inflation-adjusted demolition cost" do
+      city = %{legacy_city(40, 30) | money: 2_000.0}
+      {:ok, {city, _}} = ManageInfrastructure.place(city, 1, 1, :park)
+      cost = SimulationCalculator.demolition_cost(city)
+
+      assert cost == 11.0
+      assert {:ok, {demolished, _id}} = ManageInfrastructure.demolish(city, 1, 1)
+      assert demolished.money == city.money - cost
     end
 
     test "refuses an unaffordable demolition" do

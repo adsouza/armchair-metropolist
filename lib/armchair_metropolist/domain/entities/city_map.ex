@@ -15,6 +15,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           waste_stock: float(),
           injury_stock: float(),
           disease_stock: float(),
+          crime_stock: float(),
           municipal_bond: MunicipalBond.t() | nil,
           commercial_bond: MunicipalBond.t() | nil
         }
@@ -77,6 +78,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             waste_stock: 0.0,
             injury_stock: 0.0,
             disease_stock: 0.0,
+            crime_stock: 0.0,
             municipal_bond: nil,
             commercial_bond: nil
 

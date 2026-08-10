@@ -2,7 +2,15 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   @moduledoc "A single piece of placed city infrastructure."
 
   @type resource ::
-          :power | :water | :waste | :traffic | :injuries | :disease | :labour | :money
+          :power
+          | :water
+          | :waste
+          | :traffic
+          | :injuries
+          | :disease
+          | :crime
+          | :labour
+          | :money
   @type node_type ::
           :power_plant
           | :water_plant
@@ -12,6 +20,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
           | :commercial
           | :park
           | :hospital
+          | :police_station
+          | :school
   @type status :: :online | :degraded | :offline
 
   @type t :: %__MODULE__{
@@ -34,7 +44,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # rather than derived from the tables below: those are maps, and `Map.keys/1`
   # order is an implementation detail of the term, whereas this order is a display
   # decision the legend depends on.
-  @resources [:power, :water, :waste, :traffic, :injuries, :disease, :labour, :money]
+  @resources [:power, :water, :waste, :traffic, :injuries, :disease, :crime, :labour, :money]
 
   # The status vocabulary. Must stay in step with `status_for/1`'s clauses;
   # the `statuses/0` test derives its expectation from that function so the
@@ -56,7 +66,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # design commitment, and a derivation would let a table edit silently change which
   # resources are bads. The *sign convention* is not here — that is presentation,
   # and it lives beside `signed/1` in the LiveView.
-  @negative_resources [:waste, :traffic, :injuries, :disease]
+  @negative_resources [:waste, :traffic, :injuries, :disease, :crime]
 
   # Capacity tables — the health-scaled side of the ledger.
   @capacity_table %{
@@ -67,7 +77,9 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     residential: %{labour: 5.0, money: 1.0},
     commercial: %{money: 30.0},
     park: %{waste: 8.0},
-    hospital: %{injuries: 10.0, disease: 10.0}
+    hospital: %{injuries: 10.0, disease: 10.0},
+    police_station: %{crime: 12.0},
+    school: %{crime: 6.0}
   }
 
   # Load tables — the side that is never scaled by health.
@@ -79,7 +91,23 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     residential: %{power: 15.0, water: 12.0, waste: 10.0, traffic: 6.0},
     commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0, labour: 8.0},
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0},
-    hospital: %{power: 20.0, water: 15.0, waste: 10.0, traffic: 4.0, labour: 4.0, money: 6.0}
+    hospital: %{power: 20.0, water: 15.0, waste: 10.0, traffic: 4.0, labour: 4.0, money: 6.0},
+    police_station: %{
+      power: 12.0,
+      water: 6.0,
+      waste: 4.0,
+      traffic: 3.0,
+      labour: 3.0,
+      money: 5.0
+    },
+    school: %{
+      power: 18.0,
+      water: 12.0,
+      waste: 8.0,
+      traffic: 6.0,
+      labour: 4.0,
+      money: 8.0
+    }
   }
 
   # What each type costs to build. A third table beside capacity and load, so
@@ -97,6 +125,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     commercial: 40.0,
     park: 20.0,
     hospital: 100.0,
+    police_station: 70.0,
+    school: 120.0,
     residential: 15.0
   }
 

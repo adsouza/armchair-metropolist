@@ -7,21 +7,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     1. `supply(r)` is the baseline capacity plus every node's *health-scaled*
        capacity for `r`, plus whatever balance `r` carried over from the
        previous tick (only money and waste use the generic carryover ledger;
-       injuries and disease are folded into their next-tick treatment demand).
-       Labour is then
-       multiplied by the **park amenity** — `1 + k × min(parks/housing, cap)`,
-       both sides health-weighted — so parks raise the workforce their housing
-       supplies without producing labour themselves — and reduced by the city's
-       existing injury and disease burden. With no housing the multiplier is 1.0
-       and labour supply is 0.0 regardless of parks.
+       injuries, disease and crime are folded into their next-tick treatment demand).
+       Labour is multiplied by the health-weighted park and school multipliers, then
+       reduced by the city's existing injury and disease burden. With no housing,
+       labour supply is 0.0 regardless of parks or schools. Existing crime similarly
+       scales down commercial money capacity.
     2. `demand(r)` is every node's *full* load for `r` — deliberately
        **not** scaled by health. Broken infrastructure still draws resources.
-       This asymmetry is what makes failures cascade rather than self-correct.
+       This asymmetry is what makes failures cascade rather than self-correct. Money
+       loads are multiplied by inflation once the treasury crosses its threshold.
     3. Node upkeep is reserved, then scheduled opening-bond service and any
        commercial-bridge service are paid from the remaining balance. Current-tick
        income can service debt.
     4. Power, water, waste disposal and labour shortfalls are bought from the
-       external market for one money per unit. Only treasury carried into the
+       external market at its inflation-adjusted unit price. Only treasury carried into the
        tick is spendable, after reserving upkeep and debt service. If it cannot cover
        every shortfall, the same fraction of each is bought; traffic is never
        purchasable. Each unit of imported labour adds one unit of commuter
@@ -53,6 +52,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
        outbreak is also proportional to the number of residential blocks. The
        untreated remainder after health-scaled hospital capacity becomes the next
        tick's injury and disease stocks.
+   14. Labour supply more than ten above demand creates crime. The untreated remainder
+       after health-scaled police-station and school capacity becomes the next crime stock;
+       that stock suppresses commercial income on the following tick.
+   15. A running city with more than 1,000 in its treasury pays a gradually rising
+       multiplier on construction, demolition, upkeep and imports, capped at 1.7x. Fixed
+       bond principal and debt-service schedules are not repriced.
 
   Resource statistics are computed **once from the pre-tick map** and applied
   to every node, so within a single tick all nodes see identical city-wide
@@ -78,6 +83,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     traffic: 30.0,
     injuries: 0.0,
     disease: 0.0,
+    crime: 0.0,
     labour: 0.0,
     money: 0.0
   }
@@ -123,6 +129,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # while still applying one shared multiplier to every residential block.
   @health_burden_tolerance_per_housing 10.0
 
+  # A modest labour reserve is harmless; beyond it, workers left without productive work
+  # create a persistent crime burden. Five excess workers create one crime per tick. Crime
+  # then suppresses commercial income on the same stock-per-effective-block basis that
+  # injuries and disease use for housing labour.
+  @crime_free_excess_labour 10.0
+  @crime_per_excess_labour 0.2
+  @crime_burden_tolerance_per_commercial 20.0
+
   # The park amenity: parks per housing block multiply labour supply. Both values are
   # measured, not chosen — see docs/superpowers/specs/2026-08-05-park-amenity-design.md
   # §4.
@@ -139,6 +153,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # binds gently in large ones.
   @amenity_per_housing 1.0
   @max_amenity_ratio 1.0
+
+  # Schools multiply the same housing labour pool as parks, but serve a broader catchment:
+  # the bonus caps at one effective school per four effective homes. Below the cap, one
+  # healthy school adds the same five gross workers as one healthy park; its higher build
+  # and operating costs pay for the additional crime reduction it provides.
+  @education_per_housing 1.0
+  @max_education_ratio 0.25
+
+  # Inflation is dormant in ordinary cities. Above 1,000 in the treasury, every additional
+  # 1,000 raises variable costs by 10%, up to a 1.7x ceiling. The multiplier is derived from
+  # the pre-tick balance, so it rises and falls gradually with the city's accumulated cash
+  # rather than becoming another independently drifting stock.
+  @inflation_threshold 1_000.0
+  @inflation_per_money 0.0001
+  @max_inflation_multiplier 1.7
 
   # How far ahead `rescue_window/3` will project before giving up and reporting `nil`.
   #
@@ -180,6 +209,54 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @doc "The money price of one externally purchased unit, by eligible resource."
   @spec market_prices() :: %{Node.resource() => float()}
   def market_prices, do: @market_prices
+
+  @doc "The current price multiplier caused by a treasury above the inflation threshold."
+  @spec inflation_multiplier(CityMap.t()) :: float()
+  def inflation_multiplier(%CityMap{
+        municipal_bond: %MunicipalBond{original_principal: principal, started_at_tick: nil}
+      })
+      when principal > 0.0,
+      do: 1.0
+
+  def inflation_multiplier(%CityMap{money: money}) do
+    (1.0 + max(0.0, money - @inflation_threshold) * @inflation_per_money)
+    |> min(@max_inflation_multiplier)
+  end
+
+  @doc "The whole-money construction charge at the city's current inflation level."
+  @spec construction_cost(CityMap.t(), Node.node_type()) :: float()
+  def construction_cost(city_map, type) do
+    inflated_charge(Node.construction_cost(type), inflation_multiplier(city_map))
+  end
+
+  @doc "The whole-money demolition charge at the city's current inflation level."
+  @spec demolition_cost(CityMap.t()) :: float()
+  def demolition_cost(city_map) do
+    inflated_charge(Node.demolition_cost(), inflation_multiplier(city_map))
+  end
+
+  @doc "External-market prices at the city's current inflation level."
+  @spec market_prices(CityMap.t()) :: %{Node.resource() => float()}
+  def market_prices(city_map) do
+    multiplier = inflation_multiplier(city_map)
+    Map.new(@market_prices, fn {resource, price} -> {resource, price * multiplier} end)
+  end
+
+  @doc "Treasury level above which inflation begins."
+  @spec inflation_threshold() :: float()
+  def inflation_threshold, do: @inflation_threshold
+
+  @doc "Excess labour the city can absorb before crime begins accumulating."
+  @spec crime_free_excess_labour() :: float()
+  def crime_free_excess_labour, do: @crime_free_excess_labour
+
+  @doc "Crime created per worker beyond the free excess-labour allowance."
+  @spec crime_per_excess_labour() :: float()
+  def crime_per_excess_labour, do: @crime_per_excess_labour
+
+  @doc "Crime burden per effective commercial block that suppresses all commercial income."
+  @spec crime_burden_tolerance_per_commercial() :: float()
+  def crime_burden_tolerance_per_commercial, do: @crime_burden_tolerance_per_commercial
 
   @doc "Traffic demand added by one externally purchased unit of labour."
   @spec imported_labour_traffic_per_unit() :: float()
@@ -230,7 +307,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @doc """
   Supply, purchases, demand, deficit and satisfaction for every resource in the city.
 
-  Always returns an entry for all eight resources, even on an empty map. A node's
+  Always returns an entry for all nine resources, even on an empty map. A node's
   capacity is scaled by that node's health; load is not scaled at all. The free
   baseline folded into `supplied` is scaled by nothing — it belongs to no node. Market
   capacity is reported separately as `purchased`.
@@ -238,11 +315,23 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec resource_stats(CityMap.t()) :: %{Node.resource() => SimulationMetrics.resource_stats()}
   def resource_stats(city_map), do: tick_plan(city_map).resources
 
-  defp tick_plan(city_map) do
+  defp tick_plan(city_map), do: tick_plan(city_map, inflation_multiplier(city_map))
+
+  defp tick_plan(city_map, inflation_multiplier) do
     nodes = CityMap.nodes(city_map)
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
-    supply = total_supply(nodes, health_labour_multiplier)
-    demand = total_demand(nodes)
+    education_multiplier = education_multiplier(nodes)
+    crime_money_multiplier = crime_money_multiplier(city_map, nodes)
+
+    supply =
+      total_supply(
+        nodes,
+        health_labour_multiplier,
+        education_multiplier,
+        crime_money_multiplier
+      )
+
+    demand = total_demand(nodes, inflation_multiplier)
 
     raw_stats =
       Map.new(@resources, fn resource ->
@@ -281,9 +370,10 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     # Current-tick income can service the bond, but only treasury carried into the tick
     # can fund imports. The second bound reserves both node upkeep and debt first.
     purchase_budget = min(city_map.money, cash_after_upkeep_and_bond)
-    purchases = market_purchases(raw_stats, purchase_budget)
+    purchases = market_purchases(raw_stats, purchase_budget, inflation_multiplier)
     raw_stats = add_imported_labour_traffic(raw_stats, purchases)
     raw_stats = add_health_burden_demand(raw_stats, city_map)
+    raw_stats = add_crime_burden_demand(raw_stats, city_map, purchases)
 
     resources =
       Map.new(raw_stats, fn {resource, stats} ->
@@ -308,7 +398,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       commercial_bond_quote: MunicipalBond.quote(city_map.commercial_bond, city_map.tick),
       bond_payment: opening_service.payment + commercial_service.payment,
       cash_after_upkeep_and_bond: cash_after_upkeep_and_bond,
-      market_spend: market_spend(resources)
+      market_spend: market_spend(resources, inflation_multiplier)
     }
   end
 
@@ -358,6 +448,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     waste_stock = Map.fetch!(stats, :waste).deficit
     injury_stock = Map.fetch!(stats, :injuries).deficit
     disease_stock = Map.fetch!(stats, :disease).deficit
+    crime_stock = Map.fetch!(stats, :crime).deficit
 
     {%{
        city_map
@@ -367,6 +458,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
          waste_stock: waste_stock,
          injury_stock: injury_stock,
          disease_stock: disease_stock,
+         crime_stock: crime_stock,
          municipal_bond: plan.next_bond,
          commercial_bond: plan.next_commercial_bond
      }, delta}
@@ -391,6 +483,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         else: nil
 
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
+    education_multiplier = education_multiplier(nodes)
+    crime_money_multiplier = crime_money_multiplier(city_map, nodes)
+    inflation_multiplier = inflation_multiplier(city_map)
 
     treasury_delta =
       if stalled or clock_paused?(city_map) do
@@ -404,7 +499,16 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         amenity: labour_multiplier(nodes),
         amenity_marginal_labour: marginal_amenity_labour(nodes, health_labour_multiplier),
         amenity_labour: placed_amenity_labour(nodes, health_labour_multiplier),
+        education: education_multiplier,
+        education_marginal_labour: marginal_education_labour(nodes, health_labour_multiplier),
+        education_labour: placed_education_labour(nodes, health_labour_multiplier),
         health_labour_multiplier: health_labour_multiplier,
+        crime_money_multiplier: crime_money_multiplier,
+        inflation_multiplier: inflation_multiplier,
+        construction_costs: Map.new(Node.types(), &{&1, construction_cost(city_map, &1)}),
+        demolition_cost: demolition_cost(city_map),
+        cheapest_action_cost:
+          min(demolition_cost(city_map), construction_cost(city_map, cheapest_type())),
         market_spend: plan.market_spend,
         # The exact movement the next clock pulse will apply. Keeping this beside the
         # tick plan means the UI does not have to reconstruct debt priority, purchase
@@ -429,7 +533,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # block's construction cost has already slipped out of reach. The server-side use case
   # reads this same value, so a forged click cannot borrow in any other state.
   defp commercial_bond_offer(city_map, nodes, stats, operating, stalled) do
-    commercial_cost = Node.construction_cost(:commercial)
+    commercial_cost = construction_cost(city_map, :commercial)
 
     eligible? =
       is_nil(city_map.commercial_bond) and not is_nil(city_map.municipal_bond) and
@@ -444,12 +548,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         end)
 
     if eligible? do
+      projection_inflation = inflation_multiplier(city_map)
+
       projected =
         Enum.reduce(
           1..@commercial_bridge_runway_ticks,
           %{city_map | money: @commercial_bridge_projection_balance},
           fn
-            _tick, current -> elem(advance_tick(current), 0)
+            _tick, current -> projected_tick(current, projection_inflation)
           end
         )
 
@@ -468,6 +574,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
+  defp projected_tick(city_map, inflation_multiplier) do
+    plan = tick_plan(city_map, inflation_multiplier)
+    nodes = CityMap.nodes(city_map)
+
+    if clock_paused?(city_map) or stalled?(nodes, plan.resources, city_map.waste_stock),
+      do: city_map,
+      else: elem(advance_tick(city_map, plan), 0)
+  end
+
   # The solvency group: the rated money ceiling, whether it falls short of upkeep, the
   # cheapest way out and how long the treasury can still buy it.
   #
@@ -482,9 +597,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # health-scaled `supplied` instead would condemn any city whose earners are merely sick:
   # measured, a house beside a 5%-health shop and a park reads 2.5 against 3 of upkeep and
   # recovers to 9832 within 400 ticks.
-  defp solvency(city_map, nodes, stats, stalled) do
+  defp solvency(city_map, nodes, _stats, stalled) do
     ceiling = rated_money_capacity(nodes)
-    gap = Map.fetch!(stats, :money).demanded - ceiling
+    # Inflation and crime can both recede without changing the node set, so neither can
+    # prove permanent insolvency. Compare against the base upkeep floor here; current
+    # inflated demand remains visible in the resource ledger and treasury projection.
+    gap = base_money_demand(nodes) - ceiling
 
     if gap > 0.0 do
       escape = escape(city_map, nodes, gap)
@@ -546,7 +664,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   defp rated_money_surplus(nodes) do
-    demand = Enum.reduce(nodes, 0.0, &(&2 + Map.get(Node.load(&1.type), :money, 0.0)))
+    demand = base_money_demand(nodes)
     max(0.0, rated_money_capacity(nodes) - demand)
   end
 
@@ -554,7 +672,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     placement_candidates =
       if not bond_quote.defaulted and length(nodes) < city_map.width * city_map.height do
         for type <- Node.types(),
-            cost = Node.construction_cost(type),
+            cost = construction_cost(city_map, type),
             city_map.money >= cost,
             candidate_recovers?(
               city_map.money - cost,
@@ -566,25 +684,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         []
       end
 
+    current_demolition_cost = demolition_cost(city_map)
+
     demolition_candidates =
       nodes
       |> Enum.map(& &1.type)
       |> Enum.uniq()
       |> Enum.filter(fn type ->
-        cost = Node.demolition_cost()
-
-        city_map.money >= cost and
+        city_map.money >= current_demolition_cost and
           candidate_recovers?(
-            city_map.money - cost,
+            city_map.money - current_demolition_cost,
             remove_first_type(nodes, type),
             bond_quote
           )
       end)
-      |> Enum.map(&{:demolish, &1, Node.demolition_cost()})
+      |> Enum.map(&{:demolish, &1, current_demolition_cost})
 
     case Enum.min_by(placement_candidates ++ demolition_candidates, &elem(&1, 2), fn -> nil end) do
-      nil -> {:multiple, Node.cheapest_action_cost()}
-      candidate -> candidate
+      nil ->
+        {:multiple, min(demolition_cost(city_map), construction_cost(city_map, cheapest_type()))}
+
+      candidate ->
+        candidate
     end
   end
 
@@ -700,11 +821,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # demolition. `min_by` is still the right shape: it is what makes the *placement* choice
   # (a house at 15 where +1 is enough, the shop at 40 where it is not) come out cheapest.
   defp escape(city_map, nodes, gap) do
-    candidates = placements(city_map, nodes, gap) ++ demolitions(nodes, gap)
+    candidates = placements(city_map, nodes, gap) ++ demolitions(city_map, nodes, gap)
 
     case Enum.min_by(candidates, &elem(&1, 2), fn -> nil end) do
-      nil -> {:multiple, Node.cheapest_action_cost()}
-      action -> action
+      nil ->
+        {:multiple, min(demolition_cost(city_map), construction_cost(city_map, cheapest_type()))}
+
+      action ->
+        action
     end
   end
 
@@ -717,7 +841,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     if length(nodes) < city_map.width * city_map.height do
       for type <- Node.types(),
           money_net(type) >= gap,
-          do: {:place, type, Node.construction_cost(type)}
+          do: {:place, type, construction_cost(city_map, type)}
     else
       []
     end
@@ -725,12 +849,12 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   # Only types actually standing in the city — `escape/3` must not offer to demolish
   # something that is not there.
-  defp demolitions(nodes, gap) do
+  defp demolitions(city_map, nodes, gap) do
     nodes
     |> Enum.map(& &1.type)
     |> Enum.uniq()
     |> Enum.filter(&(-money_net(&1) >= gap))
-    |> Enum.map(&{:demolish, &1, Node.demolition_cost()})
+    |> Enum.map(&{:demolish, &1, demolition_cost(city_map)})
   end
 
   # Positive for a type that earns more than it costs to run, negative for one that is a net
@@ -739,20 +863,39 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     Map.get(Node.capacity(type), :money, 0.0) - Map.get(Node.load(type), :money, 0.0)
   end
 
+  defp base_money_demand(nodes) do
+    Enum.reduce(nodes, 0.0, fn node, total ->
+      total + Map.get(Node.load(node.type), :money, 0.0)
+    end)
+  end
+
+  defp cheapest_type do
+    Enum.min_by(Node.types(), &Node.construction_cost/1)
+  end
+
+  defp inflated_charge(base, multiplier), do: Float.ceil(base * multiplier)
+
   # Baseline capacity plus health-scaled capacity from every node, with labour then
   # scaled by the park amenity.
   #
   # Applied here rather than in `resource_stats/1` so there is exactly one labour supply
   # figure: satisfaction, deficit, health decay, the deficit notification and the
   # Tightest line all read this and cannot disagree about it.
-  defp total_supply(nodes, health_labour_multiplier) do
+  defp total_supply(
+         nodes,
+         health_labour_multiplier,
+         education_multiplier,
+         crime_money_multiplier
+       ) do
     supply =
       Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
-        Enum.reduce(Node.effective_capacity(node), acc, &add_resource/2)
+        node
+        |> effective_capacity(crime_money_multiplier)
+        |> Enum.reduce(acc, &add_resource/2)
       end)
 
     Map.update!(supply, :labour, fn labour ->
-      labour * labour_multiplier(nodes) * health_labour_multiplier
+      labour * labour_multiplier(nodes) * education_multiplier * health_labour_multiplier
     end)
   end
 
@@ -773,6 +916,21 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     if housing > 0.0 do
       parks = effective_count(nodes, :park)
       1.0 + @amenity_per_housing * min(parks / housing, @max_amenity_ratio)
+    else
+      1.0
+    end
+  end
+
+  # Effective schools per effective housing block, capped at one school per four homes.
+  # Like parks, both sides are health-weighted so a neglected school loses its benefit.
+  defp education_multiplier(nodes) do
+    housing = effective_count(nodes, :residential)
+
+    if housing > 0.0 do
+      schools = effective_count(nodes, :school)
+
+      1.0 +
+        @education_per_housing * min(schools / housing, @max_education_ratio)
     else
       1.0
     end
@@ -808,8 +966,24 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       labour_supply(Enum.reject(nodes, &(&1.type == :park)), health_labour_multiplier)
   end
 
+  defp marginal_education_labour(nodes, health_labour_multiplier) do
+    labour_supply([Node.new(0, 0, :school) | nodes], health_labour_multiplier) -
+      labour_supply(nodes, health_labour_multiplier)
+  end
+
+  defp placed_education_labour(nodes, health_labour_multiplier) do
+    labour_supply(nodes, health_labour_multiplier) -
+      labour_supply(Enum.reject(nodes, &(&1.type == :school)), health_labour_multiplier)
+  end
+
   defp labour_supply(nodes, health_labour_multiplier) do
-    nodes |> total_supply(health_labour_multiplier) |> Map.fetch!(:labour)
+    nodes
+    |> total_supply(
+      health_labour_multiplier,
+      education_multiplier(nodes),
+      1.0
+    )
+    |> Map.fetch!(:labour)
   end
 
   defp health_labour_multiplier(city_map, nodes) do
@@ -823,6 +997,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
+  defp crime_money_multiplier(city_map, nodes) do
+    commercial = effective_count(nodes, :commercial)
+
+    if commercial > 0.0 do
+      max(
+        0.0,
+        1.0 - city_map.crime_stock / (commercial * @crime_burden_tolerance_per_commercial)
+      )
+    else
+      1.0
+    end
+  end
+
+  defp effective_capacity(%{type: :commercial} = node, crime_money_multiplier) do
+    Map.update!(Node.effective_capacity(node), :money, &(&1 * crime_money_multiplier))
+  end
+
+  defp effective_capacity(node, _crime_money_multiplier), do: Node.effective_capacity(node)
+
   # Counted by health rather than by node: a park at 40% health is 0.4 of a park.
   defp effective_count(nodes, type) do
     Enum.reduce(nodes, 0.0, fn
@@ -832,20 +1025,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   # Full load from every node, regardless of that node's health.
-  defp total_demand(nodes) do
+  defp total_demand(nodes, inflation_multiplier) do
     Enum.reduce(nodes, @no_resources, fn node, acc ->
       node.type
       |> Node.load()
+      |> inflate_money_load(inflation_multiplier)
       |> Enum.reduce(acc, &add_resource/2)
     end)
   end
 
+  defp inflate_money_load(load, multiplier) do
+    Map.update(load, :money, 0.0, &(&1 * multiplier))
+  end
+
   # When the budget cannot cover every shortage, fund the same fraction of each one.
   # A sequential allocation would turn resource display order into a gameplay priority.
-  defp market_purchases(stats, budget) do
+  defp market_purchases(stats, budget, inflation_multiplier) do
     required_cost =
       Enum.reduce(@market_prices, 0.0, fn {resource, price}, total ->
-        total + Map.fetch!(stats, resource).deficit * price
+        total + Map.fetch!(stats, resource).deficit * price * inflation_multiplier
       end)
 
     funded_fraction =
@@ -856,9 +1054,9 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end)
   end
 
-  defp market_spend(stats) do
+  defp market_spend(stats, inflation_multiplier) do
     Enum.reduce(@market_prices, 0.0, fn {resource, price}, total ->
-      total + Map.fetch!(stats, resource).purchased * price
+      total + Map.fetch!(stats, resource).purchased * price * inflation_multiplier
     end)
   end
 
@@ -881,8 +1079,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   # Unlike waste, these stocks are presented as treatment demand rather than as
-  # negative carried supply. That keeps a quiet tick with an existing disease stock
-  # visible as demand in the legend instead of reading 0/0 and 100% supplied.
+  # negative carried supply. That keeps a quiet tick with an existing stock visible
+  # in the resource ledger instead of reading 0/0 and 100% supplied.
   defp add_health_burden_demand(stats, city_map) do
     traffic = Map.fetch!(stats, :traffic)
     traffic_capacity = traffic.supplied + traffic.carried
@@ -896,8 +1094,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     disease_demand = city_map.disease_stock + disease_outbreak(city_map)
 
     stats
-    |> put_health_burden(:injuries, injury_demand)
-    |> put_health_burden(:disease, disease_demand)
+    |> put_stock_demand(:injuries, injury_demand)
+    |> put_stock_demand(:disease, disease_demand)
+  end
+
+  defp add_crime_burden_demand(stats, city_map, purchases) do
+    labour = Map.fetch!(stats, :labour)
+
+    excess_labour =
+      max(
+        0.0,
+        labour.supplied + Map.fetch!(purchases, :labour) - labour.demanded -
+          @crime_free_excess_labour
+      )
+
+    crime_demand = city_map.crime_stock + excess_labour * @crime_per_excess_labour
+    put_stock_demand(stats, :crime, crime_demand)
   end
 
   defp disease_outbreak(city_map) do
@@ -915,7 +1127,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     end
   end
 
-  defp put_health_burden(stats, resource, demanded) do
+  defp put_stock_demand(stats, resource, demanded) do
     Map.update!(stats, resource, fn resource_stats ->
       available = resource_stats.supplied
 
