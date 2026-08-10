@@ -98,14 +98,13 @@ offline interest, and missed payments never extend the fixed maturity.
 
 ### The map grows with the city
 
-You start on a 2×2 grid — four cells. Place your third block and two more rows and
-columns open up, giving you a 4×4; the twelfth opens a 6×6, and so on up to 32×32. The
+You start on a 4×4 grid — sixteen cells. Place your twelfth block and one new row and
+column open on every side, giving you a 6×6; the twenty-sixth opens an 8×8, and so on up to 32×32. The
 grid opens whenever more than 70% of its cells are occupied, so you are never forced to
 fill it completely before it gives you room.
 
-New rows and columns appear at the right and bottom edges. Nothing you have already built
-moves, and no block changes its coordinates — the map grows away from the corner you
-started in, rather than shifting your city around.
+New rows and columns appear around every edge. Nothing you have already built moves, and
+no block changes its coordinates — the map expands around the city without re-keying it.
 
 The cells themselves shrink as the grid grows, so the whole map stays a comfortable size
 on screen rather than running off the edge: it reaches close to its full width at 6×6
@@ -119,6 +118,26 @@ what tell you. Demolishing
 matters more than it looks: it is the only way to reduce demand, so it is how you get out
 of a collapse — but at the fee above, which means the escape has to be bought while there
 is still something to buy it with. See "Running out of money" below.
+
+### Tourism unlocks at four homes
+
+Build the fourth `residential` block and the city permanently unlocks `entertainment` and
+`hotel` construction. The legend shows progress before the milestone and enables both rows
+as soon as it is reached. Demolishing homes later does not take the unlock away; only Reset
+starts progression over.
+
+Tourism needs both halves. A healthy entertainment block can attract 12 visitors per tick,
+while a healthy hotel can lodge 18. The actual visitor count is the smaller city-wide total,
+so an attraction without beds—or beds without an attraction—earns nothing. Both capacities
+scale with block health, which means neglected tourism districts lose business before they
+go offline.
+
+Every matched tourist adds **5 money** and **1 traffic** for that tick. The revenue is much
+larger than commuter spending, but visitor traffic cannot be bought away; reserve transit
+capacity before relying on it. The Metrics panel shows attraction capacity, lodging capacity,
+matched visitors, traffic and revenue together. Entertainment and hotels still draw their
+full utilities, staff and upkeep even when the other half is missing, as the reference tables
+show.
 
 The legend — to the right of the grid on a wide enough window, stacked below it
 otherwise — lists every type with how many you have placed, what it costs to build, and
@@ -150,7 +169,7 @@ while collapsed the metrics carry a *Tightest* line naming the resource in short
 ### Choose an opening approach
 
 **Every block needs staff except the homes the staff live in.** Power plants, water
-plants, transit hubs, hospitals, parks, police stations, schools, industry and commerce all
+plants, transit hubs, hotels, entertainment, hospitals, parks, police stations, schools, industry and commerce all
 draw labour; `residential` is the only thing that produces it locally. Imported labour can
 bridge the gap while the treasury
 lasts, but housing is the cheaper durable source and imported workers add commuter traffic.
@@ -267,7 +286,9 @@ Without imports, every possible fourth block needs some additional local capacit
 | add this to the earner | what overruns |
 |---|---|
 | `commercial` | labour 19/5 |
+| `entertainment` | labour 16/5 |
 | `hospital` | labour 15/5 |
+| `hotel` | labour 18/5 |
 | `industrial` | labour 23/5 |
 | `park` | water 58/30 |
 | `police_station` | labour 14/5 |
@@ -393,7 +414,7 @@ up locked and unplayable; see "When the city stops" below.
 
 The min residential column exists for the same reason the max one does, just at the other
 end: **every block needs staff except the homes the staff live in**. Power plants, water
-plants, transit hubs, hospitals, parks, police stations, schools, industry and commerce all draw labour, and residential is the
+plants, transit hubs, hotels, entertainment, hospitals, parks, police stations, schools, industry and commerce all draw labour, and residential is the
 only local source. A support set with fewer homes must import its missing workers; the
 minimum is where the whole economy, including that market bill, remains sustainable.
 
@@ -599,7 +620,7 @@ rise. Waste, traffic, injuries, disease and crime are bads: you want them to fal
 | `transit_hub` | traffic -60 |
 | `water_plant` | water +100 |
 
-Every type has a health-scaled effect.
+No direct ledger capacity: `entertainment`, `hotel`. Their joint health-scaled tourism effect is described above.
 <!-- /generated:production -->
 
 ### Per-block effect, never scaled by health
@@ -611,7 +632,9 @@ behind every death spiral: a dying block draws its full power and emits its full
 | type | power | water | waste | traffic | injuries | disease | crime | labour | money |
 |---|---|---|---|---|---|---|---|---|---|
 | `commercial` | -22 | -8 | +14 | +9 | — | — | — | -8 | — |
+| `entertainment` | -18 | -8 | +12 | +4 | — | — | — | -5 | -8 |
 | `hospital` | -20 | -15 | +10 | +4 | — | — | — | -4 | -6 |
+| `hotel` | -28 | -22 | +18 | +5 | — | — | — | -7 | -12 |
 | `industrial` | -40 | -25 | — | +8 | — | — | — | -12 | — |
 | `park` | — | -18 | — | +2 | — | — | — | -1 | -3 |
 | `police_station` | -12 | -6 | +4 | +3 | — | — | — | -3 | -5 |
@@ -679,7 +702,9 @@ The 1-money entries are base prices; accepted wage inflation multiplies them.
 | type | cost to build |
 |---|---|
 | `commercial` | 40 |
+| `entertainment` | 110 |
 | `hospital` | 100 |
+| `hotel` | 90 |
 | `industrial` | 60 |
 | `park` | 20 |
 | `police_station` | 70 |
@@ -706,6 +731,10 @@ These are base construction prices. Once a running city's treasury exceeds 1000,
 | excess labour before crime begins | **10** |
 | crime created beyond that allowance | **+0.2 per worker per tick** |
 | untreated crime that suppresses one commercial block's income | **20** |
+| residential blocks required to unlock tourism | **4** |
+| visitors attracted per healthy entertainment block | **12** |
+| visitors housed per healthy hotel | **18** |
+| money and traffic per matched tourist | **+5 money, +1 traffic** |
 | first union wage demand begins above a treasury of | **1000** |
 | each accepted demand adds to variable costs | **+10%** |
 | each refused demand removes from local labour | **−10%** |

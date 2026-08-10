@@ -264,6 +264,64 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.resource_stats(dead).labour.demanded == 2.0
     end
 
+    test "tourism requires both entertainment and lodging" do
+      homes = for x <- 0..3, do: Node.new(x, 0, :residential)
+      entertainment_only = map_with([Node.new(4, 0, :entertainment) | homes])
+
+      metrics = Calc.metrics(CityMap.unlock_tourism_if_ready(entertainment_only))
+      stats = metrics.resources
+
+      assert metrics.attraction_capacity == 12.0
+      assert metrics.lodging_capacity == 0.0
+      assert metrics.tourists == 0.0
+      assert metrics.tourist_revenue == 0.0
+      assert metrics.tourist_traffic == 0.0
+      assert stats.money.supplied == 4.0
+      assert stats.traffic.demanded == 28.0
+    end
+
+    test "matched tourists add high-margin income and one traffic each" do
+      homes = for x <- 0..3, do: Node.new(x, 0, :residential)
+
+      city =
+        map_with([Node.new(4, 0, :entertainment), Node.new(5, 0, :hotel) | homes])
+        |> CityMap.unlock_tourism_if_ready()
+
+      metrics = Calc.metrics(city)
+      stats = metrics.resources
+
+      assert metrics.tourism_unlocked
+      assert metrics.attraction_capacity == 12.0
+      assert metrics.lodging_capacity == 18.0
+      assert metrics.tourists == 12.0
+      assert metrics.tourist_revenue == 60.0
+      assert metrics.tourist_traffic == 12.0
+
+      # Four homes produce 4 money, while the matched visitors add 60. The pair's
+      # recurring upkeep is 20, leaving 40 before other city costs and purchases.
+      assert stats.money.supplied == 64.0
+      assert stats.money.demanded == 20.0
+      assert stats.traffic.demanded == 45.0
+    end
+
+    test "tourist capacity falls with the health of either side" do
+      homes = for x <- 0..3, do: Node.new(x, 0, :residential)
+
+      venue = %Node{
+        Node.new(4, 0, :entertainment)
+        | health: 50.0,
+          status: :degraded
+      }
+
+      metrics = Calc.metrics(map_with([venue, Node.new(5, 0, :hotel) | homes]))
+
+      assert metrics.attraction_capacity == 6.0
+      assert metrics.lodging_capacity == 18.0
+      assert metrics.tourists == 6.0
+      assert metrics.tourist_revenue == 30.0
+      assert metrics.tourist_traffic == 6.0
+    end
+
     test "a construction charge does not enter money demand" do
       alias ArmchairMetropolist.UseCases.ManageInfrastructure
 

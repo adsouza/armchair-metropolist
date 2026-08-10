@@ -200,6 +200,77 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     assert rendered_node(html, "1:1") =~ ~r/title="[^"]*park[^"]*online/
   end
 
+  @tag :roomy_city
+  test "four homes unlock tourism and a matched pair reports visitors, traffic, and revenue",
+       %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(
+             view,
+             ~s{#legend-row-entertainment[data-unlocked="false"] button[disabled]}
+           )
+
+    assert has_element?(view, ~s{#legend-row-hotel[data-unlocked="false"] button[disabled]})
+
+    assert has_element?(
+             view,
+             "#city-column > #city-grid + #city-advisories > #tourism-unlock-banner"
+           )
+
+    refute has_element?(view, "#metrics-tourism")
+
+    view
+    |> element(~s{[phx-click="select_type"][phx-value-type="residential"]})
+    |> render_click()
+
+    for x <- 0..3 do
+      view
+      |> element(~s{[phx-click="place"][phx-value-x="#{x}"][phx-value-y="0"]})
+      |> render_click()
+    end
+
+    assert has_element?(
+             view,
+             ~s{#legend-row-entertainment[data-unlocked="true"] button:not([disabled])}
+           )
+
+    assert has_element?(view, ~s{#legend-row-hotel[data-unlocked="true"] button:not([disabled])})
+    refute has_element?(view, "#tourism-unlock-banner")
+    assert has_element?(view, ~s{#metrics-tourism[data-unlocked="true"]})
+
+    view
+    |> element(~s{[phx-click="select_type"][phx-value-type="entertainment"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="4"][phx-value-y="0"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="select_type"][phx-value-type="hotel"]})
+    |> render_click()
+
+    view
+    |> element(~s{[phx-click="place"][phx-value-x="5"][phx-value-y="0"]})
+    |> render_click()
+
+    assert view |> element("#metrics-tourists") |> render() =~ "12.0/tick"
+    assert view |> element("#metrics-tourist-traffic") |> render() =~ "+12.0"
+    assert view |> element("#metrics-tourist-revenue") |> render() =~ "+60.0"
+
+    view |> element("#reset-city") |> render_click()
+    view |> element("#confirm-reset") |> render_click()
+
+    assert has_element?(view, "#bond-issuance")
+    view |> element("#issue-bond-400") |> render_click()
+
+    assert has_element?(view, "#opening-goal-banner")
+    refute has_element?(view, "#tourism-unlock-banner")
+    refute has_element?(view, "#metrics-tourism")
+    assert has_element?(view, ~s{#legend-row-entertainment button[disabled]})
+    assert has_element?(view, ~s{#legend-row-power_plant button[aria-pressed="true"]})
+  end
+
   test "a removal broadcast deletes the node from the stream", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

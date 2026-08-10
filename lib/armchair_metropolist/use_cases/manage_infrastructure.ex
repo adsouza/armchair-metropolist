@@ -7,8 +7,9 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
   @doc """
   Place a new node of `type` at `(x, y)` on `city_map`.
 
-  Validates, in order: the coordinates are in bounds, the type is a known node type, the
-  cell is not already occupied, and the treasury covers the type's construction cost.
+  Validates, in order: the coordinates are in bounds, the type is known, the cell is empty,
+  financing is active and current, the type is unlocked, and the treasury covers its
+  construction cost.
 
   **Two of those orderings are load-bearing.** `unknown_type` must stay above the cost
   check because `Node.construction_cost/1` is a `Map.fetch!` — an unknown type reaching it
@@ -25,6 +26,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
              :out_of_bounds
              | :occupied
              | :unknown_type
+             | :locked
              | :financing_required
              | :bond_default
              | :insufficient_funds}
@@ -51,6 +53,9 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
           MunicipalBond.defaulted?(city_map.commercial_bond) ->
         {:error, :bond_default}
 
+      not CityMap.type_unlocked?(city_map, type) ->
+        {:error, :locked}
+
       city_map.money < cost ->
         {:error, :insufficient_funds}
 
@@ -60,6 +65,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructure do
         city_map =
           city_map
           |> CityMap.put_node(node)
+          |> CityMap.unlock_tourism_if_ready()
           |> CityMap.debit(cost)
           # After the put, so the occupancy test counts the node just placed. Growth lives
           # here rather than in `CityMap.put_node/2` because `put_node/2` is a primitive

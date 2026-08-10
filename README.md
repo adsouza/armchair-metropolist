@@ -3,7 +3,8 @@
 An urban infrastructure simulation game.
 
 A city of power plants, water plants, industrial and commercial blocks, transit hubs,
-parks, hospitals, schools, police stations and residential blocks ticks forward in real time.
+entertainment, hotels, parks, hospitals, schools, police stations and residential blocks ticks
+forward in real time.
 Each tick recomputes nine resources — power, water, waste, traffic, injuries, disease,
 crime, labour and money — as demand against
 capacity; starved nodes lose health and eventually go offline, which removes their
@@ -201,6 +202,10 @@ crime, which suppresses commercial income until schools or police stations reduc
 cost more than police stations but also multiply housing labour, much like parks. Above 1,000 in
 the treasury, labour unions pause the clock to demand higher wages. Accepting permanently raises
 variable costs; refusing starts a strike that reduces local labour until the city settles.
+
+Four residential blocks permanently unlock entertainment and hotels. Healthy attractions and
+lodging combine to bring tourists: each matched visitor adds one traffic demand and five money
+per tick, making tourism lucrative only when the city has enough transit and utilities to carry it.
 
 [`docs/PLAYING.md`](docs/PLAYING.md) explains why, what a working support set looks
 like, and how to rescue a city that is already dying — plus the production and

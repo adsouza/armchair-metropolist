@@ -39,6 +39,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         transit_hub: "🚉",
         residential: "🏘️",
         commercial: "🛍️",
+        entertainment: "🎭",
+        hotel: "🏨",
         park: "🌳",
         hospital: "🏥",
         police_station: "🚓",
@@ -122,13 +124,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
       defp initial_snapshot(%{stalled_solvent_city: true}),
         do: {:ok, {0, stalled_city(105.0, 7)}}
 
-      # `@tag :stalled_tiny_city` seeds the stalled city on the starting 2x2 grid, so the
-      # banner's width can be pinned at the smallest grid the game ever renders. Three dead
+      # `@tag :stalled_tiny_city` seeds the stalled city on the starting 4x4 grid, so the
+      # banner's width can be pinned to a new city's grid. Three dead
       # residential blocks have no free power or import budget, so they stay at zero health.
       #
-      # Seeded through `put_node/2` rather than placed, deliberately: three nodes on a 2x2 is
-      # over the growth threshold, so a city built by placing them would arrive as a 4x4 and
-      # render at 512px, and this test would pin the wrong number while still passing.
+      # Seeded through `put_node/2` rather than placed so the fixture describes the terminal
+      # state directly without involving construction rules.
       defp initial_snapshot(%{stalled_tiny_city: true}) do
         city =
           Enum.reduce([{0, 0}, {1, 0}, {0, 1}], legacy_city(), fn {x, y}, map ->
@@ -208,7 +209,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
 
       defp initial_snapshot(_context), do: {:ok, {{0, 0}, legacy_city()}}
 
-      defp legacy_city(width \\ 2, height \\ 2) do
+      defp legacy_city(width \\ 4, height \\ 4) do
         %{CityMap.new(width, height) | municipal_bond: MunicipalBond.legacy(), money: 500.0}
       end
 

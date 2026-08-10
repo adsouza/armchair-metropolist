@@ -689,10 +689,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
     # `min_by` breaks it arbitrarily — it read "Tightest: traffic 100%", which is true
     # and says nothing about traffic. The positive assertion above proves the line can
     # name a resource, so this refutation has a state in which it fails.
-    # The outer flex row already makes the content-driven placement decision. Changing the
-    # sidebar's inner layout after that decision feeds a new intrinsic width back into the
-    # outer flex row, so the stable form is one fixed column with no placement observer.
-    test "metrics layout has a stable footprint", %{conn: conn} do
+    # The inner row thresholds are derived from its fixed reservations plus page padding and
+    # scrollbar allowance: expanded legend + gap + Metrics switches at 1,180px, while the
+    # collapsed version switches at 800px. The outer flex remains content-driven and no
+    # client-side placement observer is needed.
+    test "metrics moves beside the legend only at a safe responsive threshold", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#legend-and-metrics.flex.flex-col")
@@ -702,7 +703,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       layout = view |> element("#legend-and-metrics") |> render()
       refute layout =~ "data-position"
-      refute layout =~ "flex-row"
+      assert layout =~ "min-[1180px]:flex-row"
+      refute layout =~ "min-[800px]:flex-row"
+
+      view |> element("#toggle-legend-detail") |> render_click()
+
+      collapsed_layout = view |> element("#legend-and-metrics") |> render()
+      assert collapsed_layout =~ "min-[800px]:flex-row"
+      refute collapsed_layout =~ "min-[1180px]:flex-row"
     end
 
     # `grow` on the aside let the sidebar stretch across the whole page whenever it was
@@ -751,7 +759,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       assert view |> element("#toggle-legend-detail") |> render() =~ "Hide detail"
     end
 
-    # A 2x2 holds two nodes; this places three, so a fresh city would grow underneath it.
+    # Use a roomy fixture so the seeded nodes do not trigger map growth underneath it.
     @tag :roomy_city
     test "park's labour cell shows the amenity net of the park's own staffing", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")

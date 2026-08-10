@@ -109,6 +109,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # the unit legible and roughly matches housing's 6 traffic for 5 local workers.
   @imported_labour_traffic_per_unit 1.0
 
+  # Tourism is a matched market: entertainment creates reasons to visit and hotels
+  # create beds, so the smaller effective capacity sets the visitor count. Both sides
+  # are health-scaled. A matched visitor is deliberately much more lucrative than a
+  # commuter, but makes the same one trip of traffic for the tick.
+  @tourists_per_entertainment 12.0
+  @tourists_per_hotel 18.0
+  @money_per_tourist 5.0
+  @traffic_per_tourist 1.0
+
   # Congestion becomes progressively less safe as the network fills. The healthy share
   # of available capacity slides linearly from 100% at zero utilization to 80% at full
   # utilization, then stays at 80% beyond capacity. Every ten trips above that moving
@@ -313,6 +322,22 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   @spec imported_labour_traffic_per_unit() :: float()
   def imported_labour_traffic_per_unit, do: @imported_labour_traffic_per_unit
 
+  @doc "Visitors attracted by one fully healthy entertainment block."
+  @spec tourists_per_entertainment() :: float()
+  def tourists_per_entertainment, do: @tourists_per_entertainment
+
+  @doc "Visitors housed by one fully healthy hotel block."
+  @spec tourists_per_hotel() :: float()
+  def tourists_per_hotel, do: @tourists_per_hotel
+
+  @doc "Money supplied per matched tourist each tick."
+  @spec money_per_tourist() :: float()
+  def money_per_tourist, do: @money_per_tourist
+
+  @doc "Traffic demanded per matched tourist each tick."
+  @spec traffic_per_tourist() :: float()
+  def traffic_per_tourist, do: @traffic_per_tourist
+
   @doc "Healthy share of capacity at zero traffic utilization."
   @spec initial_healthy_traffic_ratio() :: float()
   def initial_healthy_traffic_ratio, do: @initial_healthy_traffic_ratio
@@ -370,6 +395,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   defp tick_plan(city_map, inflation_multiplier) do
     nodes = CityMap.nodes(city_map)
+    tourism = tourism(nodes, :effective)
     health_labour_multiplier = health_labour_multiplier(city_map, nodes)
     union_labour_multiplier = union_labour_multiplier(city_map)
     labour_availability_multiplier = health_labour_multiplier * union_labour_multiplier
@@ -381,10 +407,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         nodes,
         labour_availability_multiplier,
         education_multiplier,
-        crime_money_multiplier
+        crime_money_multiplier,
+        tourism.revenue
       )
 
-    demand = total_demand(nodes, inflation_multiplier)
+    demand = total_demand(nodes, inflation_multiplier, tourism.traffic)
 
     raw_stats =
       Map.new(@resources, fn resource ->
@@ -451,7 +478,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
       commercial_bond_quote: MunicipalBond.quote(city_map.commercial_bond, city_map.tick),
       bond_payment: opening_service.payment + commercial_service.payment,
       cash_after_upkeep_and_bond: cash_after_upkeep_and_bond,
-      market_spend: market_spend(resources, inflation_multiplier)
+      market_spend: market_spend(resources, inflation_multiplier),
+      tourism: tourism
     }
   end
 
@@ -576,6 +604,14 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         treasury_delta: treasury_delta,
         imported_labour_traffic:
           Map.fetch!(stats, :labour).purchased * @imported_labour_traffic_per_unit,
+        tourism_unlocked: CityMap.tourism_unlocked?(city_map),
+        tourism_unlock_residential_count: CityMap.tourism_unlock_residential_count(),
+        tourism_residential_count: CityMap.residential_count(city_map),
+        tourists: plan.tourism.visitors,
+        tourist_traffic: plan.tourism.traffic,
+        tourist_revenue: plan.tourism.revenue,
+        attraction_capacity: plan.tourism.attraction_capacity,
+        lodging_capacity: plan.tourism.lodging_capacity,
         stalled: stalled,
         bond: bond,
         commercial_bond: commercial_bond,
@@ -895,17 +931,20 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   # Rated rather than effective: `Node.capacity/1`, not `Node.effective_capacity/1`.
   defp rated_money_capacity(nodes) do
-    Enum.reduce(nodes, 0.0, fn node, acc ->
-      acc + Map.get(Node.capacity(node.type), :money, 0.0)
-    end)
+    block_income =
+      Enum.reduce(nodes, 0.0, fn node, acc ->
+        acc + Map.get(Node.capacity(node.type), :money, 0.0)
+      end)
+
+    block_income + tourism(nodes, :rated).revenue
   end
 
   # The cheapest single action that would close `gap`, so the banner can name one thing to
   # do rather than describing the problem.
   #
-  # Placing one node of type `t` moves the gap by `-net(t)`; demolishing one moves it by
-  # `+net(t)`, where `net(t)` is that type's money capacity minus its money load. One
-  # formula covers both directions because demolishing removes the load *and* the capacity.
+  # Candidates are evaluated against the whole resulting city rather than a static per-type
+  # net. That distinction matters for tourism: an entertainment block earns nothing without
+  # lodging, while the same block can unlock the full capacity of hotels already standing.
   #
   # Demolition is strictly cheaper than the cheapest construction — 10 against 15, a
   # property `node_test.exs` pins rather than assumes — so a placement can never outbid a
@@ -932,10 +971,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   # follow — the real route is a demolition and *then* a construction, which is two actions
   # and a different price. Without this the banner would name the shop on a grid with nowhere
   # to put it.
-  defp placements(city_map, nodes, gap, multiplier) do
+  defp placements(city_map, nodes, _gap, multiplier) do
     if length(nodes) < city_map.width * city_map.height do
       for type <- Node.types(),
-          money_net(type, multiplier) >= gap,
+          CityMap.type_unlocked?(city_map, type),
+          money_gap([Node.new(0, 0, type) | nodes], multiplier) <= 0.0,
           do: {:place, type, construction_cost(city_map, type)}
     else
       []
@@ -944,12 +984,28 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   # Only types actually standing in the city — `escape/3` must not offer to demolish
   # something that is not there.
-  defp demolitions(city_map, nodes, gap, multiplier) do
+  defp demolitions(city_map, nodes, _gap, multiplier) do
     nodes
     |> Enum.map(& &1.type)
     |> Enum.uniq()
-    |> Enum.filter(&(-money_net(&1, multiplier) >= gap))
+    |> Enum.filter(fn type ->
+      nodes
+      |> remove_one_type(type)
+      |> money_gap(multiplier)
+      |> Kernel.<=(0.0)
+    end)
     |> Enum.map(&{:demolish, &1, demolition_cost(city_map)})
+  end
+
+  defp remove_one_type(nodes, type) do
+    case Enum.split_while(nodes, &(&1.type != type)) do
+      {before, [_removed | remaining]} -> before ++ remaining
+      {_before, []} -> nodes
+    end
+  end
+
+  defp money_gap(nodes, multiplier) do
+    base_money_demand(nodes) * multiplier - rated_money_capacity(nodes)
   end
 
   # Positive for a type that earns more than it costs to run, negative for one that is a net
@@ -982,7 +1038,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
          nodes,
          labour_availability_multiplier,
          education_multiplier,
-         crime_money_multiplier
+         crime_money_multiplier,
+         tourism_revenue \\ 0.0
        ) do
     supply =
       Enum.reduce(nodes, @baseline_capacity, fn node, acc ->
@@ -991,9 +1048,11 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         |> Enum.reduce(acc, &add_resource/2)
       end)
 
-    Map.update!(supply, :labour, fn labour ->
+    supply
+    |> Map.update!(:labour, fn labour ->
       labour * labour_multiplier(nodes) * education_multiplier * labour_availability_multiplier
     end)
+    |> Map.update!(:money, &(&1 + tourism_revenue))
   end
 
   # Effective parks per effective housing block, capped, scaled by
@@ -1113,6 +1172,25 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
 
   defp effective_capacity(node, _crime_money_multiplier), do: Node.effective_capacity(node)
 
+  defp tourism(nodes, weighting) do
+    attraction_capacity =
+      tourism_count(nodes, :entertainment, weighting) * @tourists_per_entertainment
+
+    lodging_capacity = tourism_count(nodes, :hotel, weighting) * @tourists_per_hotel
+    visitors = min(attraction_capacity, lodging_capacity)
+
+    %{
+      attraction_capacity: attraction_capacity,
+      lodging_capacity: lodging_capacity,
+      visitors: visitors,
+      traffic: visitors * @traffic_per_tourist,
+      revenue: visitors * @money_per_tourist
+    }
+  end
+
+  defp tourism_count(nodes, type, :effective), do: effective_count(nodes, type)
+  defp tourism_count(nodes, type, :rated), do: Enum.count(nodes, &(&1.type == type)) / 1.0
+
   # Counted by health rather than by node: a park at 40% health is 0.4 of a park.
   defp effective_count(nodes, type) do
     Enum.reduce(nodes, 0.0, fn
@@ -1122,13 +1200,15 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
   end
 
   # Full load from every node, regardless of that node's health.
-  defp total_demand(nodes, inflation_multiplier) do
-    Enum.reduce(nodes, @no_resources, fn node, acc ->
+  defp total_demand(nodes, inflation_multiplier, tourist_traffic) do
+    nodes
+    |> Enum.reduce(@no_resources, fn node, acc ->
       node.type
       |> Node.load()
       |> inflate_money_load(inflation_multiplier)
       |> Enum.reduce(acc, &add_resource/2)
     end)
+    |> Map.update!(:traffic, &(&1 + tourist_traffic))
   end
 
   defp inflate_money_load(load, multiplier) do

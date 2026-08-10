@@ -126,6 +126,18 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
     assert SnapshotVocabulary.modernize(decoded).crime_stock == 0.0
   end
 
+  test "modernize/1 restores tourism progression for an older qualifying city" do
+    old_city =
+      Enum.reduce(0..3, CityMap.new(40, 30), fn x, city ->
+        CityMap.put_node(city, Node.new(x, 0, :residential))
+      end)
+      |> Map.delete(:tourism_unlocked)
+
+    modernized = SnapshotVocabulary.modernize(old_city)
+
+    assert modernized.tourism_unlocked
+  end
+
   test "modernize/1 supplies no commercial bridge for an older payload" do
     SnapshotVocabulary.ensure_loaded!()
 
@@ -185,6 +197,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabularyTest 
              :injury_stock,
              :disease_stock,
              :crime_stock,
+             :tourism_unlocked,
              :union_wage_level,
              :union_strike_level,
              :revision,

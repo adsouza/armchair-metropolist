@@ -77,7 +77,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
 
       refute render(view) =~ ~s{id="0:0"}
       refute has_element?(view, "#reset-confirmation")
-      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
     end
 
     @tag :stalled_city
@@ -132,7 +132,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
 
       assert has_element?(
                view,
-               "#city-column > #city-grid + #city-advisories > #collapse-banner"
+               "#city-column > #collapse-banner + #city-grid"
              )
 
       assert render(view) =~ "Game over — this city is dead."
@@ -184,6 +184,48 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#collapse-banner", "Reset")
+    end
+
+    @tag :stalled_city
+    test "terminal status hides bridge and tourism panels", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#collapse-banner")
+      refute has_element?(view, "#tourism-unlock-banner")
+
+      assert {:ok, %{metrics: metrics}} = CityEngine.snapshot(CityEngine.default_city_id())
+
+      send(view.pid, {
+        :city_metrics,
+        %{
+          metrics
+          | tourism_unlocked: true,
+            commercial_bond_offer: %{
+              principal: 94.0,
+              construction_cost: 40.0,
+              construction_budget: 40.0,
+              commercial_blocks: 1,
+              runway_ticks: 6
+            }
+        }
+      })
+
+      render(view)
+
+      assert has_element?(view, ~s{#collapse-banner[data-variant="stalled"]})
+      refute has_element?(view, "#commercial-bond-offer")
+      refute has_element?(view, "#tourism-unlock-banner")
+      refute has_element?(view, "#metrics-tourism")
+    end
+
+    @tag :warned_city
+    test "a recoverable warning remains below the grid", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #collapse-banner"
+             )
     end
   end
 

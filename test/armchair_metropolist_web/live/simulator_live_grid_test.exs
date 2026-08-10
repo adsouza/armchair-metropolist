@@ -28,6 +28,27 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       assert SimulatorLive.cell_size(20, 40) == 24
     end
 
+    test "both themes give the grid and occupied cells stronger borders", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(
+               view,
+               ~s{#city-grid[class~="[[data-theme=light]_&]:border-base-content/30"][class~="dark:border-base-content/30"]}
+             )
+
+      assert has_element?(
+               view,
+               ~s{#city-grid > [phx-click="place"][class~="[[data-theme=light]_&]:border-base-content/20"][class~="dark:border-base-content/20"]}
+             )
+
+      place(view, :park, 0, 0)
+
+      assert has_element?(
+               view,
+               ~s{#nodes > [phx-click="demolish"][class~="[[data-theme=light]_&]:border-base-content/20"][class~="dark:border-base-content/20"]}
+             )
+    end
+
     # Tagged, deliberately. `@tag treasury:` seeds an explicit `legacy_city(40, 30)`, which
     # is what this test's name claims it is testing. Untagged it would ride the fresh-city
     # path, and Task 6 makes that a 2x2 and adds a test asserting 256px on the same path —
@@ -108,15 +129,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
 
     @tag :stalled_tiny_city
     test "the collapse banner is as wide as the starting grid", %{conn: conn} do
-      # Pins spec section 3's measured relationship at the smallest grid the game renders:
-      # 2 * 128 = 256px, which is what the `:locked` headline's 245px two-line threshold
-      # bought. If this reads 192px, someone set @max_cell back to 96.
+      # A new city starts at 4 * 128 = 512px. Explicit legacy 2x2 fixtures above still pin
+      # the ceiling clamp itself; this assertion pins the player-facing starting footprint.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, ~s{#collapse-banner[style*="width: 256px"]})
+      assert has_element?(view, ~s{#collapse-banner[style*="width: 512px"]})
     end
 
-    test "a reset takes the grid back to 2x2", %{conn: conn} do
+    test "a reset takes the grid back to 4x4", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       broadcast({:city_grew, legacy_city(12, 12)})
@@ -124,32 +144,32 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
 
       broadcast({:city_reset, legacy_city()})
 
-      # 2 * 128. Before this change the reset handler cleared the stream and left the grid
+      # 4 * 128. Before this change the reset handler cleared the stream and left the grid
       # assigns alone, which was correct only while a reset preserved its grid.
-      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
-      assert cell_count(render(view)) == 4
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+      assert cell_count(render(view)) == 16
     end
 
-    test "a brand new city starts on the 2x2 grid", %{conn: conn} do
+    test "a brand new city starts on the 4x4 grid", %{conn: conn} do
       # The fresh-mount counterpart to "the background grid and the banner follow too"
       # above: that test's 16-cell assertion guards the broadcast path (:grid_cells
       # recomputed from a {:city_grew, ...} message), but nothing guarded hydration
       # itself — a mount that sizes the container from the hydrated width while
-      # computing :grid_cells from something else would still render 256x256 with the
+      # computing :grid_cells from something else would still render 512x512 with the
       # wrong cell count, and nothing here would have gone red.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
-      assert cell_count(render(view)) == 4
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+      assert cell_count(render(view)) == 16
     end
 
-    test "placing the third block grows the grid the player is looking at", %{conn: conn} do
+    test "placing the twelfth block grows the grid the player is looking at", %{conn: conn} do
       # Crosses the whole seam: real clicks -> ManageInfrastructure -> CityEngine's growth
       # detection -> the broadcast -> the view's handler. Every other growth test above
       # drives one side with a synthetic message, so the two sides could agree with each
       # other and both be wrong about the message they exchange.
       #
-      # This crosses 2x2 -> 4x4, where cell_size is 128 on both sides of the growth, so it
+      # This crosses 4x4 -> 6x6, where cell_size is 128 on both sides of the growth, so it
       # proves the message name, the payload shape, :width, :height and :grid_cells cross
       # the seam correctly -- but not :cell_size, since correct and broken code emit
       # byte-identical geometry at this particular boundary. The test below drives the
@@ -157,22 +177,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       # path.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
-
-      place(view, :residential, 0, 0)
-      place(view, :residential, 1, 0)
-      assert has_element?(view, ~s{[style*="width: 256px; height: 256px;"]})
-
-      place(view, :residential, 0, 1)
-
-      # 4 * 128: the third block crosses 70% of a 2x2, so the grid opens to 4x4 and the
-      # cell size has not changed yet (128 up to 6x6).
       assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
-      assert render(view) =~ ~s{id="0:1"}
+
+      for index <- 0..10 do
+        place(view, :residential, rem(index, 4), div(index, 4))
+      end
+
+      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
+
+      place(view, :residential, 3, 2)
+
+      # 6 * 128: the twelfth block crosses 70% of a 4x4, so the grid opens to 6x6 and
+      # the cell size remains at the 128px ceiling.
+      assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
+      assert render(view) =~ ~s{id="3:2"}
 
       # A handler that resizes the container without recomputing :grid_cells would pass
-      # everything above while still painting a 2x2's worth of background cells behind it.
-      assert cell_count(render(view)) == 16
+      # everything above while still painting a 4x4's worth of background cells behind it.
+      assert cell_count(render(view)) == 36
     end
 
     test "the grid grows on every side, not just the right and bottom edges",
@@ -184,13 +206,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveGridTest do
       # `CityMap.grow_if_crowded/1` — while no node's coordinates or dom id change.
       {:ok, view, _html} = live(conn, ~p"/")
 
-      place(view, :residential, 0, 0)
-      place(view, :residential, 1, 0)
-      place(view, :residential, 0, 1)
+      for index <- 0..11 do
+        place(view, :residential, rem(index, 4), div(index, 4))
+      end
 
-      # Third block crosses 70% of the 2x2 starting grid, growing it to 4x4.
-      assert has_element?(view, ~s{[style*="width: 512px; height: 512px;"]})
-      assert cell_count(render(view)) == 16
+      # The twelfth block crosses 70% of the 4x4 starting grid, growing it to 6x6.
+      assert has_element?(view, ~s{[style*="width: 768px; height: 768px;"]})
+      assert cell_count(render(view)) == 36
 
       # New space opened to the *left*: a background cell now exists at x = -1, which
       # no cell on an anchored (right/bottom-only) growth could ever be.

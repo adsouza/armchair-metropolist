@@ -41,6 +41,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     transit_hub: "🚉",
     residential: "🏘️",
     commercial: "🛍️",
+    entertainment: "🎭",
+    hotel: "🏨",
     park: "🌳",
     hospital: "🏥",
     police_station: "🚓",
@@ -66,8 +68,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   @collapsed_legend_width 384
 
   # Cell size is derived from the grid, not fixed, because the grid grows. The rendered
-  # footprint runs 256px (2x2) -> 512px (4x4) -> 768px (6x6) and then holds between 748px
-  # and 768px while cells shrink to @min_cell at the 32x32 cap.
+  # footprint for new cities runs 512px (4x4) -> 768px (6x6) and then holds between 748px
+  # and 768px while cells shrink to @min_cell at the 32x32 cap. Stored 2x2 cities still
+  # render at 256px for backward compatibility.
   #
   # @max_cell 128 is *measured*, not chosen for looks. The collapse banner is styled to the
   # grid's own width, and its widest headline (":locked") needs a 245px banner to wrap to
@@ -184,7 +187,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   @impl true
   def handle_event("select_type", %{"type" => type}, socket) do
-    {:noreply, assign(socket, :selected_type, String.to_existing_atom(type))}
+    type = String.to_existing_atom(type)
+
+    if type_unlocked?(socket.assigns.metrics, type) do
+      {:noreply, assign(socket, :selected_type, type)}
+    else
+      {:noreply, put_flash(socket, :error, tourism_locked_message(socket.assigns.metrics))}
+    end
   end
 
   def handle_event("issue_bond", %{"principal" => principal}, socket) do
@@ -266,6 +275,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
            :error,
            "Bond payment missed — clear the past-due balance before building."
          )}
+
+      {:error, :locked} ->
+        {:noreply, put_flash(socket, :error, tourism_locked_message(socket.assigns.metrics))}
 
       {:error, _reason} ->
         {:noreply, socket}
@@ -375,13 +387,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   def handle_info({:city_reset, city_map}, socket) do
-    # The grid resizes too: a reset returns the city to a 2x2 whatever it had grown to.
+    # The grid resizes too: a reset returns the city to a 4x4 whatever it had grown to.
     # Streamed from `city_map.nodes` rather than the literal `[]`, matching the growth
     # clause above: both clauses are handed a whole map and trust it, rather than this one
     # relying on `ResetCity`/`CityMap.reset/1` happening to return an empty node set.
     {:noreply,
      socket
      |> assign_grid(city_map)
+     |> assign(:selected_type, List.first(Node.types()))
      |> assign(:confirming_reset?, false)
      |> assign(:health_tutorial, nil)
      |> assign(:health_tutorial_seen, MapSet.new())
@@ -568,7 +581,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         <%!-- No breakpoint here on purpose. `flex-wrap` plus `min-w-fit` on the aside
             lets the *content* decide: the sidebar sits beside the grid exactly while
             it fits and drops below when it does not. That matters now that the grid grows:
-            its rendered width ranges from 256px to 768px, with wider legacy snapshots,
+            its rendered width ranges from 512px to 768px for new cities, with smaller or
+            wider legacy snapshots,
             so a viewport breakpoint cannot reliably describe whether the sidebar wrapped.
 
             The old `min-[1450px]` committed to a side-by-side layout 181px before the
@@ -577,9 +591,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             resources or type names changed; content-driven wrapping cannot. --%>
         <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
           <div id="city-column" class="shrink-0">
+            <.collapse_banner
+              :if={terminal_ui?(@metrics)}
+              metrics={@metrics}
+              width={@width}
+              cell_size={@cell_size}
+              above_grid?={true}
+            />
+
             <div
               id="city-grid"
-              class="relative shrink-0 border border-base-300"
+              class={[
+                "relative shrink-0 border border-base-300",
+                "[[data-theme=light]_&]:border-base-content/30",
+                "dark:border-base-content/30"
+              ]}
               style={"width: #{@width * @cell_size}px; height: #{@height * @cell_size}px;"}
             >
               <%!-- `phx-value-x`/`phx-value-y` carry `x`/`y` themselves — the true, world
@@ -591,7 +617,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 number. --%>
               <div
                 :for={{x, y} <- @grid_cells}
-                class="absolute border border-base-200 cursor-pointer"
+                class={[
+                  "absolute cursor-pointer border border-base-200",
+                  "[[data-theme=light]_&]:border-base-content/20",
+                  "dark:border-base-content/20"
+                ]}
                 style={cell_style(x - @min_x, y - @min_y, @cell_size)}
                 phx-click="place"
                 phx-value-x={x}
@@ -613,7 +643,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   :for={{dom_id, node} <- @streams.nodes}
                   id={dom_id}
                   class={[
-                    "absolute flex cursor-pointer items-center justify-center",
+                    "absolute flex cursor-pointer items-center justify-center border border-transparent",
+                    "[[data-theme=light]_&]:border-base-content/20",
+                    "dark:border-base-content/20",
                     status_class(node.status)
                   ]}
                   style={node_style(node.x - @min_x, node.y - @min_y, @cell_size)}
@@ -646,10 +678,15 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                 commands_enabled?={@commands_enabled?}
               />
 
-              <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+              <.collapse_banner
+                :if={not terminal_ui?(@metrics)}
+                metrics={@metrics}
+                width={@width}
+                cell_size={@cell_size}
+              />
 
               <.commercial_bond_offer
-                :if={@metrics.commercial_bond_offer}
+                :if={@metrics.commercial_bond_offer && not terminal_ui?(@metrics)}
                 offer={@metrics.commercial_bond_offer}
                 commands_enabled?={@commands_enabled?}
               />
@@ -689,11 +726,20 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               {if @legend_detail, do: "Hide detail", else: "Show detail"}
             </button>
 
-            <%!-- Keep this column in both outer flex positions. Changing it to a row after the
-                sidebar wraps changes the sidebar's own intrinsic width, feeding the result of
-                the wrap decision back into its input. A fixed column makes the outer boundary
-                depend only on the stable legend/metrics reservations and grid growth. --%>
-            <div id="legend-and-metrics" class="flex flex-col gap-4">
+            <%!-- The outer city/sidebar wrap remains content-driven. Inside the sidebar, the
+                fixed reservations make exact safe viewport thresholds possible: expanded
+                legend + gap + Metrics needs 1,096px and switches at 1,180px after allowing for
+                page padding and a scrollbar; collapsed needs 720px and switches at 800px. --%>
+            <div
+              id="legend-and-metrics"
+              class={[
+                "flex flex-col items-start gap-4",
+                if(@legend_detail,
+                  do: "min-[1180px]:flex-row",
+                  else: "min-[800px]:flex-row"
+                )
+              ]}
+            >
               <%!-- Rendered unconditionally. Collapsing hides the resource *detail*, never
                   the legend: the type rows are the only way to choose what to place. --%>
               <.legend
@@ -746,7 +792,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             per additional 1,000: accepting permanently raises variable costs, while refusing reduces local labour.
             Shortfalls in power, water, waste disposal and labour are bought automatically for 1 money per unit
             while the treasury can pay; purchased units count toward supplied totals. Each imported
-            labour unit adds one traffic demand, and traffic itself cannot be bought.
+            labour unit adds one traffic demand, and traffic itself cannot be bought. Tourism unlocks
+            permanently at four residential blocks. Healthy entertainment attracts visitors and healthy
+            hotels lodge them; matched visitors add one traffic and five money apiece per tick.
           </p>
         </section>
       </div>
@@ -1027,6 +1075,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   attr :metrics, :map, required: true
   attr :width, :integer, required: true
   attr :cell_size, :integer, required: true
+  attr :above_grid?, :boolean, default: false
 
   defp collapse_banner(assigns) do
     assigns = assign(assigns, :variant, banner_variant(assigns.metrics))
@@ -1042,6 +1091,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       data-variant={@variant}
       class={[
         "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
+        @above_grid? && "mb-3",
         if(@variant in [:dead, :locked, :financing_locked, :bond_default],
           do: "border-error bg-error/10",
           else: "border-warning bg-warning/10"
@@ -1156,26 +1206,62 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     end
   end
 
+  defp terminal_ui?(metrics),
+    do: banner_variant(metrics) in [:dead, :locked, :financing_locked, :stalled]
+
   attr :metrics, :map, required: true
   attr :tutorial, :map, default: nil
   attr :width, :integer, required: true
   attr :cell_size, :integer, required: true
 
   defp opening_goal_banner(assigns) do
+    goal = assigns.tutorial || opening_goal(assigns.metrics)
+
     assigns =
       assigns
-      |> assign(:goal, assigns.tutorial || opening_goal(assigns.metrics))
+      |> assign(:goal, goal)
+      |> assign(
+        :tourism_locked?,
+        is_nil(goal) and not assigns.metrics.tourism_unlocked and
+          not terminal_ui?(assigns.metrics)
+      )
       |> assign(:variant, if(assigns.tutorial, do: "health_tutorial", else: "opening_goal"))
 
     ~H"""
     <div
-      :if={@goal}
-      id="opening-goal-banner"
-      data-variant={@variant}
-      class="box-border max-w-full rounded-lg border border-l-4 border-primary bg-primary/5 px-4 py-3"
+      :if={@goal || @tourism_locked?}
+      id={if(@tourism_locked?, do: "tourism-unlock-banner", else: "opening-goal-banner")}
+      data-variant={if(@tourism_locked?, do: "tourism_unlock", else: @variant)}
+      class={[
+        "box-border max-w-full rounded-lg border border-l-4 px-4 py-3",
+        if(@tourism_locked?,
+          do: "border-fuchsia-300 bg-fuchsia-50/60 dark:border-fuchsia-700 dark:bg-fuchsia-950/20",
+          else: "border-primary bg-primary/5"
+        )
+      ]}
       style={"width: #{@width * @cell_size}px"}
     >
-      <div id="opening-goal">
+      <div :if={@tourism_locked?} id="tourism-unlock-prompt" class="space-y-2">
+        <div class="flex items-center gap-2 font-semibold text-fuchsia-900 dark:text-fuchsia-100">
+          <.icon name="hero-lock-closed" class="size-4" />
+          <span>Tourism locked</span>
+        </div>
+        <p id="tourism-unlock-progress" class="text-xs leading-relaxed opacity-80">
+          Build {@metrics.tourism_unlock_residential_count} residential blocks to open entertainment and hotels.
+        </p>
+        <div class="h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+          <div
+            class="h-full rounded-full bg-fuchsia-600 transition-[width] duration-500"
+            style={"width: #{tourism_unlock_percent(@metrics)}%"}
+          >
+          </div>
+        </div>
+        <p class="text-xs tabular-nums opacity-60">
+          {@metrics.tourism_residential_count}/{@metrics.tourism_unlock_residential_count} homes
+        </p>
+      </div>
+
+      <div :if={@goal} id="opening-goal">
         <div class="flex items-start justify-between gap-3">
           <p class="text-xs font-bold uppercase tracking-[0.18em] text-primary">
             <%= if @tutorial do %>
@@ -1673,9 +1759,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
               id={"legend-row-#{type}"}
               data-count={@metrics.by_type[type].count}
               data-affordable={to_string(construction_available?(@metrics, type))}
+              data-unlocked={to_string(type_unlocked?(@metrics, type))}
               class={[
                 type == @selected_type && "bg-primary/20",
-                not construction_available?(@metrics, type) && "opacity-40"
+                not type_unlocked?(@metrics, type) && "opacity-65",
+                type_unlocked?(@metrics, type) &&
+                  not construction_available?(@metrics, type) && "opacity-40"
               ]}
             >
               <td class="text-left">
@@ -1687,10 +1776,38 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   phx-click="select_type"
                   phx-value-type={type}
                   aria-pressed={to_string(type == @selected_type)}
+                  disabled={not type_unlocked?(@metrics, type)}
                 >
+                  <.icon
+                    :if={not type_unlocked?(@metrics, type)}
+                    name="hero-lock-closed"
+                    class="size-3.5"
+                  />
                   <span aria-hidden="true">{block_emoji(type)}</span>
                   <span>{type}</span>
                 </button>
+                <div
+                  :if={type in [:entertainment, :hotel]}
+                  id={"#{type}-tourism-summary"}
+                  class={[
+                    "ml-2 mt-0.5 flex items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium",
+                    type_unlocked?(@metrics, type) &&
+                      "text-fuchsia-700 dark:text-fuchsia-300"
+                  ]}
+                >
+                  <.icon
+                    name={
+                      if(type_unlocked?(@metrics, type),
+                        do: "hero-sparkles",
+                        else: "hero-lock-closed"
+                      )
+                    }
+                    class="size-3"
+                  />
+                  <span>
+                    {tourism_type_summary(type, @metrics)}
+                  </span>
+                </div>
                 <div
                   :if={@detail and type == :hospital}
                   id="hospital-treatment-summary"
@@ -1797,17 +1914,26 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp affordable?(metrics, type), do: metrics.money >= metrics.construction_costs[type]
 
   defp construction_available?(metrics, type) do
-    not bond_defaulted?(metrics) and affordable?(metrics, type)
+    type_unlocked?(metrics, type) and not bond_defaulted?(metrics) and
+      affordable?(metrics, type)
   end
 
+  defp type_unlocked?(metrics, type) when type in [:entertainment, :hotel],
+    do: metrics.tourism_unlocked
+
+  defp type_unlocked?(_metrics, _type), do: true
+
   # The row is dimmed, which is a visual-only signal; the title carries the same fact for
-  # anyone who cannot see it. The select button stays enabled deliberately — choosing an
-  # unaffordable type is harmless and is often what a player wants while waiting for
-  # income.
+  # anyone who cannot see it. The select button stays enabled for an unaffordable type —
+  # choosing it is harmless and is often what a player wants while waiting for income —
+  # but a progression-locked type is disabled because the server will refuse it outright.
   defp cost_title(metrics, type) do
     cost = trunc(metrics.construction_costs[type])
 
     cond do
+      not type_unlocked?(metrics, type) ->
+        tourism_locked_message(metrics)
+
       bond_defaulted?(metrics) ->
         "bond payment missed — clear the past-due balance through debt service before building"
 
@@ -1818,6 +1944,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         "costs #{cost} — more than the treasury holds"
     end
   end
+
+  defp tourism_locked_message(metrics) do
+    remaining =
+      max(0, metrics.tourism_unlock_residential_count - metrics.tourism_residential_count)
+
+    "Tourism unlocks at #{metrics.tourism_unlock_residential_count} residential blocks — " <>
+      "build #{remaining} more."
+  end
+
+  defp tourism_type_summary(_type, %{tourism_unlocked: false} = metrics) do
+    "Locked · #{metrics.tourism_residential_count}/#{metrics.tourism_unlock_residential_count} homes"
+  end
+
+  defp tourism_type_summary(:entertainment, _metrics), do: "Attracts tourists"
+  defp tourism_type_summary(:hotel, _metrics), do: "Hosts tourists"
 
   # Always on screen, in both legend states. Tick, nodes, average health and offline
   # count, plus the tightest resource — which otherwise appears only in the totals row,
@@ -1845,6 +1986,41 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       <p :if={@metrics.imported_labour_traffic > 0.0} id="metrics-imported-labour-traffic">
         Imported-labour traffic: +{Float.round(@metrics.imported_labour_traffic, 1)}/tick
       </p>
+      <div
+        :if={@metrics.tourism_unlocked and not terminal_ui?(@metrics)}
+        id="metrics-tourism"
+        data-unlocked={to_string(@metrics.tourism_unlocked)}
+        class="my-3 overflow-hidden rounded-xl border border-fuchsia-300/60 bg-fuchsia-50/60 text-sm dark:border-fuchsia-700/60 dark:bg-fuchsia-950/20"
+      >
+        <div class="flex items-center gap-2 border-b border-fuchsia-200/70 px-3 py-2 font-semibold text-fuchsia-900 dark:border-fuchsia-800/60 dark:text-fuchsia-100">
+          <.icon name="hero-sparkles" class="size-4" />
+          <span>Tourism</span>
+        </div>
+        <dl class="grid grid-cols-2 gap-x-3 gap-y-1 px-3 py-2.5">
+          <dt class="opacity-65">Visitors</dt>
+          <dd id="metrics-tourists" class="text-right font-semibold tabular-nums">
+            {Float.round(@metrics.tourists, 1)}/tick
+          </dd>
+          <dt class="opacity-65">Attractions / beds</dt>
+          <dd class="text-right tabular-nums">
+            {Float.round(@metrics.attraction_capacity, 1)} / {Float.round(
+              @metrics.lodging_capacity,
+              1
+            )}
+          </dd>
+          <dt class="opacity-65">Visitor traffic</dt>
+          <dd id="metrics-tourist-traffic" class="text-right tabular-nums">
+            +{Float.round(@metrics.tourist_traffic, 1)}
+          </dd>
+          <dt class="opacity-65">Visitor revenue</dt>
+          <dd
+            id="metrics-tourist-revenue"
+            class="text-right font-semibold tabular-nums text-emerald-700 dark:text-emerald-300"
+          >
+            +{Float.round(@metrics.tourist_revenue, 1)}
+          </dd>
+        </dl>
+      </div>
       <%!-- Only while the drain is permanent, which is what `insolvent` means, and only while
             the projection actually found a deadline inside its horizon. A city merely spending
             faster than it earns today recovers as its earners heal, so a countdown there would
@@ -1962,6 +2138,13 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       </div>
     </div>
     """
+  end
+
+  defp tourism_unlock_percent(metrics) do
+    min(
+      100,
+      div(metrics.tourism_residential_count * 100, metrics.tourism_unlock_residential_count)
+    )
   end
 
   attr :bond, :map, required: true

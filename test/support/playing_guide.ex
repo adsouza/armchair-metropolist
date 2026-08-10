@@ -774,9 +774,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
     # type level too, which is what made that comparison a compiler warning).
     footer =
       if non_producers == "" do
-        "Every type has a health-scaled effect."
+        "Every type has a health-scaled ledger effect."
       else
-        "No health-scaled effect: #{non_producers}."
+        "No direct ledger capacity: #{non_producers}. Their joint health-scaled tourism " <>
+          "effect is described above."
       end
 
     Enum.join(
@@ -823,6 +824,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
         "| excess labour before crime begins | **#{num(Calc.crime_free_excess_labour())}** |",
         "| crime created beyond that allowance | **+#{num(Calc.crime_per_excess_labour())} per worker per tick** |",
         "| untreated crime that suppresses one commercial block's income | **#{num(Calc.crime_burden_tolerance_per_commercial())}** |",
+        "| residential blocks required to unlock tourism | **#{CityMap.tourism_unlock_residential_count()}** |",
+        "| visitors attracted per healthy entertainment block | **#{num(Calc.tourists_per_entertainment())}** |",
+        "| visitors housed per healthy hotel | **#{num(Calc.tourists_per_hotel())}** |",
+        "| money and traffic per matched tourist | **+#{num(Calc.money_per_tourist())} money, +#{num(Calc.traffic_per_tourist())} traffic** |",
         "| first union wage demand begins above a treasury of | **#{num(Calc.union_demand_threshold())}** |",
         "| each accepted demand adds to variable costs | **+#{num(union_step_percent())}%** |",
         "| each refused demand removes from local labour | **−#{num(union_strike_step_percent())}%** |",

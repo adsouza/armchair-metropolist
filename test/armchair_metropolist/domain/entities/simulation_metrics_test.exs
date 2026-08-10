@@ -76,6 +76,11 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.union_demand == nil
     assert metrics.crime_money_multiplier == 1.0
     assert metrics.inflation_multiplier == 1.0
+    refute metrics.tourism_unlocked
+    assert metrics.tourism_residential_count == 0
+    assert metrics.tourists == 0.0
+    assert metrics.tourist_traffic == 0.0
+    assert metrics.tourist_revenue == 0.0
   end
 
   test "carries the derived figures it is given" do
@@ -104,6 +109,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         market_spend: 12.0,
         treasury_delta: -7.5,
         imported_labour_traffic: 7.0,
+        tourism_unlocked: true,
+        tourism_unlock_residential_count: 4,
+        tourism_residential_count: 6,
+        tourists: 12.0,
+        tourist_traffic: 12.0,
+        tourist_revenue: 60.0,
+        attraction_capacity: 12.0,
+        lodging_capacity: 18.0,
         stalled: true,
         money_ceiling: 31.0,
         insolvent: true,
@@ -139,6 +152,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.market_spend == 12.0
     assert metrics.treasury_delta == -7.5
     assert metrics.imported_labour_traffic == 7.0
+    assert metrics.tourism_unlocked
+    assert metrics.tourism_unlock_residential_count == 4
+    assert metrics.tourism_residential_count == 6
+    assert metrics.tourists == 12.0
+    assert metrics.tourist_traffic == 12.0
+    assert metrics.tourist_revenue == 60.0
+    assert metrics.attraction_capacity == 12.0
+    assert metrics.lodging_capacity == 18.0
 
     # Every value here is deliberately *not* the struct default — `true` rather than
     # `false`, a non-zero ceiling, a non-`nil` escape and window — because a build that
@@ -201,6 +222,14 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
           market_spend: 0.0,
           treasury_delta: 0.0,
           imported_labour_traffic: 0.0,
+          tourism_unlocked: false,
+          tourism_unlock_residential_count: 4,
+          tourism_residential_count: 0,
+          tourists: 0.0,
+          tourist_traffic: 0.0,
+          tourist_revenue: 0.0,
+          attraction_capacity: 0.0,
+          lodging_capacity: 0.0,
           stalled: false
         )
       )

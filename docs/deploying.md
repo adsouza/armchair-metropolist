@@ -153,18 +153,19 @@ older binary. What it changes is *semantic*, and semantic drift needs the same
 warning as a decode failure, because an older binary reads the row happily and gets
 the wrong answer.
 
-A city created — or reset — under this release starts on a 2x2 grid and stores
-those dimensions. `CityMap`'s normalization (`CityEngine.normalize_city_map/1`)
+A city created — or reset — under this release starts on a 4x4 grid and stores
+those dimensions. Existing cities retain whichever dimensions they already stored,
+including 2x2 cities created by earlier growth-enabled releases. `CityMap`'s normalization (`CityEngine.normalize_city_map/1`)
 merges a decoded snapshot onto a fresh `%CityMap{}`, preserving whatever width and
 height were stored; it does not know about growth, so an older binary loads such a
-city exactly as a 2x2. That older binary also has no growth path — `grow_if_crowded/1`
+city at that exact size. A binary predating grid growth also has no growth path — `grow_if_crowded/1`
 does not exist in it — and no notion of `@min_cell`/`@max_cell` clamping, so it
-renders the city at its own fixed cell size, 24px: a 48x48 four-cell grid that fills
-after two blocks and then cannot expand, ever, until the newer release is restored.
+renders a new 4x4 city at its own fixed cell size, 24px: a 96x96 sixteen-cell grid that
+eventually fills and then cannot expand, ever, until the newer release is restored.
 Nothing crashes and nothing 500s — the city is just quietly capped.
 
 `d2725f7` is the minimum rollback target. It is the first commit whose binary can
-serve a 2x2 city correctly — the point at which all four pieces are present together:
+serve a small dynamically growing city correctly — the point at which all four pieces are present together:
 the 2x2 struct default and `grow_if_crowded/1` (`5c2992d`), the derived cell size
 (`1fd07a8`), growth wired into `ManageInfrastructure.place/4` (`f32de9a`), and
 `CityEngine` broadcasting `{:city_grew, …}` with `SimulatorLive` resizing on it
@@ -180,7 +181,8 @@ different questions, and only the second one is a rollback target.
 The hazard *window* opens later than the floor, which is worth keeping straight: no
 2x2 city can exist until `8d63470`, the commit where `new_city_map/0` becomes
 `CityMap.new/0`. Before that the engine still built 40x30 cities from config, so the
-only route to a small grid was `reset/1`, which has returned a 2x2 since `5c2992d`.
+only route to a small grid was `reset/1`, which returned a 2x2 from `5c2992d` until
+the starting size increased to 4x4.
 
 ### A second dimension: negative origins, from `89e4a7a`
 

@@ -16,6 +16,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert map.injury_stock == 0.0
       assert map.disease_stock == 0.0
       assert map.crime_stock == 0.0
+      refute map.tourism_unlocked
       assert map.union_wage_level == 0
       assert map.union_strike_level == 0
       assert map.municipal_bond == nil
@@ -23,12 +24,42 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
     end
   end
 
+  describe "tourism progression" do
+    test "unlocks permanently when the fourth residential block is present" do
+      below =
+        Enum.reduce(0..2, CityMap.new(40, 30), fn x, map ->
+          CityMap.put_node(map, Node.new(x, 0, :residential))
+        end)
+
+      refute CityMap.unlock_tourism_if_ready(below).tourism_unlocked
+      refute CityMap.type_unlocked?(below, :entertainment)
+      assert CityMap.type_unlocked?(below, :commercial)
+
+      unlocked =
+        below
+        |> CityMap.put_node(Node.new(3, 0, :residential))
+        |> CityMap.unlock_tourism_if_ready()
+
+      assert unlocked.tourism_unlocked
+      assert CityMap.type_unlocked?(unlocked, :entertainment)
+      assert CityMap.type_unlocked?(unlocked, :hotel)
+
+      reduced =
+        unlocked
+        |> CityMap.delete_node(0, 0)
+        |> CityMap.unlock_tourism_if_ready()
+
+      assert reduced.tourism_unlocked
+      assert CityMap.residential_count(reduced) == 3
+    end
+  end
+
   describe "new/0" do
-    test "starts an unissued city on the initial 2x2 grid" do
+    test "starts an unissued city on the initial 4x4 grid" do
       map = CityMap.new()
 
-      assert map.width == 2
-      assert map.height == 2
+      assert map.width == 4
+      assert map.height == 4
       assert map.tick == 0
       assert map.revision == 0
       assert map.nodes == %{}
@@ -173,7 +204,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
   end
 
   describe "reset/1" do
-    test "starts a new city on a fresh 2x2 grid, discarding everything else" do
+    test "starts a new city on a fresh 4x4 grid, discarding everything else" do
       city =
         CityMap.new(12, 7)
         |> CityMap.put_node(Node.new(1, 1, :power_plant))
@@ -185,15 +216,16 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
           waste_stock: 5.0,
           injury_stock: 6.0,
           disease_stock: 7.0,
-          crime_stock: 8.0
+          crime_stock: 8.0,
+          tourism_unlocked: true
       }
 
       reset = CityMap.reset(city)
 
       # Each property named separately: a reset that forgets one of these is a real bug
       # and a single `==` against a literal struct would not say which.
-      assert reset.width == 2
-      assert reset.height == 2
+      assert reset.width == 4
+      assert reset.height == 4
       assert reset.tick == 0
       assert reset.revision == 0
       assert reset.nodes == %{}
@@ -202,6 +234,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMapTest do
       assert reset.injury_stock == 0.0
       assert reset.disease_stock == 0.0
       assert reset.crime_stock == 0.0
+      refute reset.tourism_unlocked
       assert reset.municipal_bond == nil
       assert reset.commercial_bond == nil
     end

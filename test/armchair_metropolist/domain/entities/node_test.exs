@@ -15,7 +15,7 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "types/0" do
-    test "lists all ten node types in canonical display order" do
+    test "lists all twelve node types in canonical display order" do
       assert Node.types() == [
                :power_plant,
                :water_plant,
@@ -23,6 +23,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                :transit_hub,
                :residential,
                :commercial,
+               :entertainment,
+               :hotel,
                :park,
                :hospital,
                :police_station,
@@ -146,6 +148,28 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
                labour: 8.0
              }
 
+      assert Node.capacity(:entertainment) == %{}
+
+      assert Node.load(:entertainment) == %{
+               power: 18.0,
+               water: 8.0,
+               waste: 12.0,
+               traffic: 4.0,
+               labour: 5.0,
+               money: 8.0
+             }
+
+      assert Node.capacity(:hotel) == %{}
+
+      assert Node.load(:hotel) == %{
+               power: 28.0,
+               water: 22.0,
+               waste: 18.0,
+               traffic: 5.0,
+               labour: 7.0,
+               money: 12.0
+             }
+
       assert Node.capacity(:park) == %{waste: 8.0}
       assert Node.load(:park) == %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0}
 
@@ -198,6 +222,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       # load table that mentions labour nowhere at all.
       assert Node.load(:industrial)[:labour] == 12.0
       assert Node.load(:commercial)[:labour] == 8.0
+      assert Node.load(:entertainment)[:labour] == 5.0
+      assert Node.load(:hotel)[:labour] == 7.0
       assert Node.load(:transit_hub)[:labour] == 2.0
       assert Node.load(:power_plant)[:labour] == 1.0
       assert Node.load(:water_plant)[:labour] == 1.0
@@ -240,6 +266,8 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
       assert Node.construction_cost(:industrial) == 60.0
       assert Node.construction_cost(:transit_hub) == 40.0
       assert Node.construction_cost(:commercial) == 40.0
+      assert Node.construction_cost(:entertainment) == 110.0
+      assert Node.construction_cost(:hotel) == 90.0
       assert Node.construction_cost(:park) == 20.0
       assert Node.construction_cost(:hospital) == 100.0
       assert Node.construction_cost(:police_station) == 70.0

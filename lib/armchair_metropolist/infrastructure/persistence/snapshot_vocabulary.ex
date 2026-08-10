@@ -79,6 +79,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     :injury_stock,
     :disease_stock,
     :crime_stock,
+    :tourism_unlocked,
     :union_wage_level,
     :union_strike_level,
     :revision,
@@ -132,6 +133,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     |> Map.put_new(:injury_stock, 0.0)
     |> Map.put_new(:disease_stock, 0.0)
     |> Map.put_new(:crime_stock, 0.0)
+    |> Map.put_new(:tourism_unlocked, false)
     |> Map.put_new(:union_wage_level, 0)
     |> Map.put_new(:union_strike_level, 0)
     |> Map.put_new(:revision, 0)
@@ -141,6 +143,7 @@ defmodule ArmchairMetropolist.Infrastructure.Persistence.SnapshotVocabulary do
     )
     |> Map.put_new(:commercial_bond, nil)
     |> Map.put(:nodes, Map.new(nodes, fn {id, node} -> {id, rename_type(node)} end))
+    |> ArmchairMetropolist.Domain.Entities.CityMap.unlock_tourism_if_ready()
   end
 
   defp rename_type(%{type: type} = node) do

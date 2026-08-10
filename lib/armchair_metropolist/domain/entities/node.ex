@@ -18,6 +18,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
           | :transit_hub
           | :residential
           | :commercial
+          | :entertainment
+          | :hotel
           | :park
           | :hospital
           | :police_station
@@ -47,7 +49,7 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   @resources [:power, :water, :waste, :traffic, :injuries, :disease, :crime, :labour, :money]
 
   # The node-type vocabulary, in the order every player should see it. Utilities and
-  # infrastructure come first, followed by homes and commerce, then civic services.
+  # infrastructure come first, followed by homes, commerce and tourism, then civic services.
   # This must not be derived with `Map.keys/1`: map iteration order is an implementation
   # detail, while the legend's row order is part of the interface.
   @node_types [
@@ -57,6 +59,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     :transit_hub,
     :residential,
     :commercial,
+    :entertainment,
+    :hotel,
     :park,
     :hospital,
     :police_station,
@@ -93,6 +97,10 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     transit_hub: %{traffic: 60.0},
     residential: %{labour: 5.0, money: 1.0},
     commercial: %{money: 30.0},
+    # Tourism income is produced by matched attraction and lodging capacity in
+    # SimulationCalculator rather than belonging to either half of the pair.
+    entertainment: %{},
+    hotel: %{},
     park: %{waste: 8.0},
     hospital: %{injuries: 10.0, disease: 10.0},
     police_station: %{crime: 12.0},
@@ -107,6 +115,22 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     transit_hub: %{power: 8.0, waste: 2.0, money: 4.0, labour: 2.0},
     residential: %{power: 15.0, water: 12.0, waste: 10.0, traffic: 6.0},
     commercial: %{power: 22.0, water: 8.0, waste: 14.0, traffic: 9.0, labour: 8.0},
+    entertainment: %{
+      power: 18.0,
+      water: 8.0,
+      waste: 12.0,
+      traffic: 4.0,
+      labour: 5.0,
+      money: 8.0
+    },
+    hotel: %{
+      power: 28.0,
+      water: 22.0,
+      waste: 18.0,
+      traffic: 5.0,
+      labour: 7.0,
+      money: 12.0
+    },
     park: %{water: 18.0, traffic: 2.0, money: 3.0, labour: 1.0},
     hospital: %{power: 20.0, water: 15.0, waste: 10.0, traffic: 4.0, labour: 4.0, money: 6.0},
     police_station: %{
@@ -140,6 +164,8 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
     industrial: 60.0,
     transit_hub: 40.0,
     commercial: 40.0,
+    entertainment: 110.0,
+    hotel: 90.0,
     park: 20.0,
     hospital: 100.0,
     police_station: 70.0,

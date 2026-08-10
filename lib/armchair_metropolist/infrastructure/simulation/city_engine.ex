@@ -47,7 +47,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   subscriber that patches incrementally instead of resetting — geometry correctness
   there would depend on seeing the resize first.
   `{:city_reset, city_map}` on a successful `reset/1`, followed by `{:city_metrics,
-  metrics}`; it carries the map because a reset returns the city to a 2x2 grid.
+  metrics}`; it carries the map because a reset returns the city to a 4x4 grid.
   Rejected commands broadcast nothing. Each city's events land on their own topic —
   a shared one would deliver every visitor's deltas to every other visitor.
 
@@ -161,6 +161,7 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
              :out_of_bounds
              | :occupied
              | :unknown_type
+             | :locked
              | :financing_required
              | :bond_default
              | :insufficient_funds}
@@ -634,7 +635,11 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngine do
   # Merging onto a fresh struct fills new fields and leaves stored ones alone.
   def normalize_city_map(stored) when is_map(stored) do
     had_bond_key? = Map.has_key?(stored, :municipal_bond)
-    normalized = Map.merge(%CityMap{}, Map.delete(stored, :__struct__))
+
+    normalized =
+      %CityMap{}
+      |> Map.merge(Map.delete(stored, :__struct__))
+      |> CityMap.unlock_tourism_if_ready()
 
     if had_bond_key? do
       normalized

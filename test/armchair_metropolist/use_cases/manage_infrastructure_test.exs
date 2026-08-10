@@ -37,6 +37,22 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
       assert {:error, :unknown_type} = ManageInfrastructure.place(map, 3, 4, :space_elevator)
     end
 
+    test "locks tourism construction until the fourth home is built", %{map: map} do
+      assert {:error, :locked} = ManageInfrastructure.place(map, 10, 10, :entertainment)
+      assert {:error, :locked} = ManageInfrastructure.place(map, 10, 10, :hotel)
+
+      unlocked =
+        Enum.reduce(0..3, map, fn x, city ->
+          assert {:ok, {city, _home}} = ManageInfrastructure.place(city, x, 0, :residential)
+          city
+        end)
+
+      assert unlocked.tourism_unlocked
+
+      assert {:ok, {_city, %Node{type: :entertainment}}} =
+               ManageInfrastructure.place(unlocked, 10, 10, :entertainment)
+    end
+
     test "checks bounds before type: out-of-bounds and unknown-type together is :out_of_bounds",
          %{map: map} do
       # Pins the guard order in place/4. Both the bounds check and the type
@@ -131,7 +147,7 @@ defmodule ArmchairMetropolist.UseCases.ManageInfrastructureTest do
               type <- StreamData.member_of(Node.types()),
               money <- StreamData.float(min: 0.0, max: 200.0)
             ) do
-        map = %{legacy_city(40, 30) | money: money}
+        map = %{legacy_city(40, 30) | money: money, tourism_unlocked: true}
         cost = Node.construction_cost(type)
 
         case ManageInfrastructure.place(map, 1, 1, type) do

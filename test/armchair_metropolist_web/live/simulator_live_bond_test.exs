@@ -38,6 +38,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#bond-panel + #metrics-market-slot")
       assert has_element?(view, "#bond-redemption-actions.grid.w-fit")
       assert has_element?(view, "#opening-goal-banner[data-variant=opening_goal] #opening-goal")
+      refute has_element?(view, "#tourism-unlock-banner")
+      refute has_element?(view, "#metrics-tourism")
 
       assert has_element?(
                view,
@@ -76,11 +78,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#opening-goal", "Suggested goal 4 of 4")
       assert has_element?(view, "#opening-goal", "Review the plan, then begin")
 
-      place(view, :residential, -1, 0)
+      place(view, :residential, 1, 1)
       assert has_element?(view, "#opening-goal", "Suggested goal 3 of 4")
       assert has_element?(view, "#opening-goal", "Make the plan self-funding")
 
-      place(view, :water_plant, -1, 1)
+      place(view, :water_plant, 2, 1)
       assert has_element?(view, "#opening-goal", "Suggested goal 4 of 4")
       assert has_element?(view, "#opening-goal", "Review the plan, then begin")
 
@@ -129,8 +131,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
             {:commercial, 1, 1},
             {:water_plant, 2, 0},
             {:residential, 2, 1},
-            {:park, -1, 0},
-            {:park, -1, 1}
+            {:park, 3, 0},
+            {:park, 3, 1}
           ] do
         place(view, type, x, y)
       end
@@ -151,8 +153,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
             {:power_plant, 0, 0},
             {:commercial, 1, 0},
             {:residential, 0, 1},
-            {:park, -1, 0},
-            {:water_plant, -1, 1}
+            {:park, 1, 1},
+            {:water_plant, 2, 1}
           ] do
         place(view, type, x, y)
       end

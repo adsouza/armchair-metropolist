@@ -16,6 +16,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
           injury_stock: float(),
           disease_stock: float(),
           crime_stock: float(),
+          tourism_unlocked: boolean(),
           union_wage_level: non_neg_integer(),
           union_strike_level: non_neg_integer(),
           municipal_bond: MunicipalBond.t() | nil,
@@ -46,7 +47,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # struct defaults are what a stored city inherits for any field it lacks — exactly the
   # split the persisted-field comment above describes. A literal in `defstruct` beside a
   # different value in `new/2` would desync them on a path only cold loads exercise.
-  @initial_size 2
+  @initial_size 4
 
   # Growth stops here. This bounds the data structure, not the game: reaching a 32x32
   # takes 631 blocks, some 9,465 in construction costs, far past anything a player reaches.
@@ -56,13 +57,18 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   # The occupancy that opens a new pair of rows, as a ratio rather than a float, so the
   # trigger is integer arithmetic and never a float comparison.
   #
-  # 70% and not 80%: at 80% the boundary on a 2x2 is 3.2, so the starter grid alone had to
-  # be completely full before it would open. At 70% no size on the ladder does.
+  # 70% and not 80%: at 80% the boundary on a 4x4 is 12.8, leaving too little space for
+  # the opening plan before growth. At 70% no size on the ladder must be completely full.
   @fill_numerator 7
   @fill_denominator 10
 
+  # A four-home city has moved beyond the opening plan on the initial 4x4 grid. Reaching
+  # that milestone permanently opens the tourism economy, even if homes
+  # are later demolished; reset is the only operation that clears progression.
+  @tourism_unlock_residential_count 4
+
   # `min_x`/`min_y` default to 0, not `-@initial_size` or anything else — 0 is what a
-  # fresh 2x2 city has always meant (its window already ran 0..1 on both axes), and
+  # fresh city means its window begins at the origin (0..3 on both axes), and
   # `CityEngine.normalize_city_map/1` merges every decoded snapshot onto a fresh
   # `%CityMap{}`, so a city stored before this field existed inherits exactly that
   # meaning: an origin that has never moved. No new atom is introduced — both values
@@ -81,6 +87,7 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
             injury_stock: 0.0,
             disease_stock: 0.0,
             crime_stock: 0.0,
+            tourism_unlocked: false,
             union_wage_level: 0,
             union_strike_level: 0,
             municipal_bond: nil,
@@ -189,6 +196,37 @@ defmodule ArmchairMetropolist.Domain.Entities.CityMap do
   @doc "Increment the persistence ordering revision for one completed command or tick."
   @spec increment_revision(t()) :: t()
   def increment_revision(map), do: %{map | revision: map.revision + 1}
+
+  @doc "Number of residential blocks required to unlock tourism construction."
+  @spec tourism_unlock_residential_count() :: pos_integer()
+  def tourism_unlock_residential_count, do: @tourism_unlock_residential_count
+
+  @doc "How many residential blocks currently stand in the city."
+  @spec residential_count(t()) :: non_neg_integer()
+  def residential_count(map) do
+    Enum.count(map.nodes, fn {_id, node} -> node.type == :residential end)
+  end
+
+  @doc "Whether entertainment and hotel construction has been permanently unlocked."
+  @spec tourism_unlocked?(t()) :: boolean()
+  def tourism_unlocked?(map), do: map.tourism_unlocked
+
+  @doc "Whether `type` may be placed at the city's current progression level."
+  @spec type_unlocked?(t(), Node.node_type()) :: boolean()
+  def type_unlocked?(map, type) when type in [:entertainment, :hotel],
+    do: tourism_unlocked?(map)
+
+  def type_unlocked?(_map, _type), do: true
+
+  @doc "Permanently open tourism once the residential milestone has been reached."
+  @spec unlock_tourism_if_ready(t()) :: t()
+  def unlock_tourism_if_ready(%__MODULE__{tourism_unlocked: true} = map), do: map
+
+  def unlock_tourism_if_ready(map) do
+    if residential_count(map) >= @tourism_unlock_residential_count,
+      do: %{map | tourism_unlocked: true},
+      else: map
+  end
 
   @doc "The lexicographic persistence order for this exact city state."
   @spec snapshot_order(t()) :: snapshot_order()

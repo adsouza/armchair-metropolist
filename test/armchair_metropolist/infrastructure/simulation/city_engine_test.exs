@@ -145,8 +145,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       start_supervised!({CityEngine, city_id: city_id})
 
       assert {:ok, %{city_map: city_map, metrics: metrics}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 2
-      assert city_map.height == 2
+      assert city_map.width == 4
+      assert city_map.height == 4
       assert city_map.tick == 0
       assert CityMap.nodes(city_map) == []
       assert metrics.node_count == 0
@@ -181,9 +181,31 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert loaded.money == 0.0
       assert loaded.union_wage_level == 0
       assert loaded.union_strike_level == 0
+      refute loaded.tourism_unlocked
       assert loaded.municipal_bond == MunicipalBond.legacy()
       assert loaded.tick == 7
       assert map_size(loaded.nodes) == 1
+    end
+
+    test "a qualifying snapshot stored before tourism progression loads unlocked" do
+      nodes =
+        Map.new(0..3, fn x ->
+          node = Node.new(x, 0, :residential)
+          {node.id, node}
+        end)
+
+      legacy = %{
+        __struct__: ArmchairMetropolist.Domain.Entities.CityMap,
+        width: 40,
+        height: 30,
+        tick: 7,
+        nodes: nodes
+      }
+
+      loaded = CityEngine.normalize_city_map(legacy)
+
+      assert loaded.tourism_unlocked
+      assert CityMap.residential_count(loaded) == 4
     end
 
     test "start_link/1 returns before a slow repository has answered", %{city_id: city_id} do
@@ -204,8 +226,8 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
 
       # ...and the hydration it deferred still completes.
       assert {:ok, %{city_map: city_map}} = CityEngine.snapshot(city_id)
-      assert city_map.width == 2
-      assert city_map.height == 2
+      assert city_map.width == 4
+      assert city_map.height == 4
     end
   end
 
@@ -1493,9 +1515,9 @@ defmodule ArmchairMetropolist.Infrastructure.Simulation.CityEngineTest do
       assert :ok = CityEngine.reset(city_id)
 
       # The map travels with the message because the view has to resize: a reset returns a
-      # 2x2 whatever grid the city had grown to. Seeded at 12x12 so that is visible — from a
-      # 2x2 the assertion would hold without `reset/1` changing the grid at all.
-      assert_receive {:city_reset, %CityMap{width: 2, height: 2, nodes: nodes}}
+      # 4x4 whatever grid the city had grown to. Seeded at 12x12 so that is visible — from a
+      # 4x4 the assertion would hold without `reset/1` changing the grid at all.
+      assert_receive {:city_reset, %CityMap{width: 4, height: 4, nodes: nodes}}
       assert nodes == %{}
     end
 
