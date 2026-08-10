@@ -1,6 +1,6 @@
 [package]
 name = "armchair_metropolist"
-version = "0.5.1"
+version = "0.5.2"
 default-run = "armchair_metropolist"
 edition = "2021"
 description = ""
