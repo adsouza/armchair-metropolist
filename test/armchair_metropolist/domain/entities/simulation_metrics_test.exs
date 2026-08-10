@@ -101,7 +101,13 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
         rescue_window: 8,
         bond: %{outstanding_principal: 200.0},
         commercial_bond: %{outstanding_principal: 75.0},
-        commercial_bond_offer: %{principal: 94.0, construction_cost: 40.0, runway_ticks: 6},
+        commercial_bond_offer: %{
+          principal: 94.0,
+          construction_cost: 40.0,
+          construction_budget: 40.0,
+          commercial_blocks: 1,
+          runway_ticks: 6
+        },
         financing_locked: true,
         financing_escape: {:redeem, 25.0},
         financing_rescue_window: 3
@@ -137,6 +143,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
     assert metrics.commercial_bond_offer == %{
              principal: 94.0,
              construction_cost: 40.0,
+             construction_budget: 40.0,
+             commercial_blocks: 1,
              runway_ticks: 6
            }
 
@@ -356,6 +364,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetricsTest do
                commercial_bond_offer: %{
                  principal: 94.0,
                  construction_cost: 40.0,
+                 construction_budget: 40.0,
+                 commercial_blocks: 1,
                  runway_ticks: 6
                }
              })

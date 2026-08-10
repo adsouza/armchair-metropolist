@@ -61,23 +61,26 @@ the original principal matures each tick. Payments decline as principal falls, a
 
 ### The one-time commercial bridge
 
-If a city remains at full health with every non-money resource supplied, but its treasury is
-permanently shrinking and can no longer cover the commercial block that would restore
-solvency, the simulator offers one commercial bridge bond. This is an escape hatch for that
-specific healthy economic lock, not a general second bond market.
+When a city's maximum operating income is lower than its base upkeep, the simulator calculates
+how many commercial blocks are needed to close that structural cash-flow gap. As soon as the
+treasury falls below those blocks' combined current construction cost, it offers one commercial
+bridge bond. Damage and non-money shortages do not disqualify the city: those pressures are
+often exactly why emergency financing is useful. This remains a one-time rescue, not a general
+second bond market.
 
 The quote is calculated from the live city rather than fixed. It raises the treasury to the
-commercial block's 40 construction cost **plus six projected ticks of the city's actual cash
-outflow**, rounded up to a whole unit. The projection uses the real tick calculation, so
+full construction budget for every required commercial block **plus six projected ticks of the
+city's actual cash outflow**, rounded up to a whole unit. The projection uses the real tick calculation, so
 operating costs, market purchases, changing income and scheduled opening-bond service are all
 included. Issuing the bridge starts its own 20-tick payment holiday immediately; it then
 amortizes over 100 servicing ticks at the same 0.5% interest rate. Opening-bond service is paid
 first when both series owe money.
 
-The bridge can be issued only once. Its card disappears as soon as the city stops qualifying
-or the issue is accepted, and the server recomputes the quote on the click so a stale browser
-cannot borrow against conditions that no longer exist. A missed payment on either series
-pauses new construction until the past-due balance clears.
+The bridge can be issued only once. Its card disappears once the treasury can again cover the
+required commercial construction, the operating gap closes, or the issue is accepted. The
+server recomputes the quote on the click so a stale browser cannot borrow against conditions
+that no longer exist. A missed payment on either series pauses new construction until the
+past-due balance clears.
 
 If cash is short, interest and serial principal remain past due. **Default pauses new
 construction**, but it does not remove blocks or stop demolition; later cash is applied to
@@ -380,8 +383,8 @@ optional add-on: a residential block's own income (money 1) can't cover what it 
 the water plants and transit hubs it needs, so a support set without a commercial block is
 insolvent — the treasury drains over the game's lifetime even while every other resource
 reads 100% satisfied. That word has a precise meaning the game acts on. Build commerce while
-it is affordable; if an otherwise fully healthy city loses that chance, the one-time bridge
-above may reopen it. A city that cannot qualify, or has already used the bridge, can still end
+it is affordable; if the treasury falls below the full cost of the commerce needed to close
+the gap, the one-time bridge above may reopen it. A city that cannot qualify, or has already used the bridge, can still end
 up locked and unplayable; see "When the city stops" below.
 
 The min residential column exists for the same reason the max one does, just at the other
@@ -532,9 +535,8 @@ and income is. One house, one power plant and one water plant demonstrate the un
 condition: local infrastructure covers every physical resource, but the two plants cost 10 a
 tick against a maximum income of 1. At an empty treasury all three remain healthy forever.
 That exact city now receives the bridge offer because one commercial block fixes it. If the
-bridge has already been used, or the city is no longer otherwise healthy, the banner calls the
-terminal state **City locked** rather than dead: the house really is alive; what has died is
-your ability to act.
+bridge has already been used, the banner calls the terminal state **City locked** rather than
+dead: the house really is alive; what has died is your ability to act.
 
 The word for the underlying condition is **insolvent**, and it is the same one used above for a
 support set with no commercial block. Insolvency on its own is not a crisis — the documented
@@ -680,7 +682,7 @@ The 1-money entries are base prices; active inflation multiplies them.
 | `transit_hub` | 40 |
 | `water_plant` | 70 |
 
-These are base construction prices. Once a running city's treasury exceeds 1000, inflation raises construction, demolition, upkeep and market prices by 10% per additional 1,000, up to ×1.7. Demolishing anything has a base cost of 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A qualifying healthy city may later receive one dynamically quoted commercial bridge covering the gap to 40 plus six projected ticks of expenses.
+These are base construction prices. Once a running city's treasury exceeds 1000, inflation raises construction, demolition, upkeep and market prices by 10% per additional 1,000, up to ×1.7. Demolishing anything has a base cost of 10, whatever it was. A new city starts with no cash; authorize a 250, 400 or 550 opening municipal bond issue before construction. Those proceeds are debt, not a grant. A structurally draining city may later receive one dynamically quoted commercial bridge when its treasury falls below the combined current cost of the commercial blocks needed to close its operating gap. The quote also covers six projected ticks of expenses.
 <!-- /generated:costs -->
 
 ### Health and timing

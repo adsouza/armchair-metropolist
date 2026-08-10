@@ -636,8 +636,10 @@ defmodule ArmchairMetropolist.PlayingGuide do
             "cost of #{num(Node.demolition_cost())}, whatever it was. " <>
             "A new city starts with no cash; authorize a 250, 400 or 550 opening municipal " <>
             "bond issue before construction. Those proceeds are debt, not a grant. " <>
-            "A qualifying healthy city may later receive one dynamically quoted commercial " <>
-            "bridge covering the gap to 40 plus six projected ticks of expenses."
+            "A structurally draining city may later receive one dynamically quoted commercial " <>
+            "bridge when its treasury falls below the combined current cost of the commercial " <>
+            "blocks needed to close its operating gap. The quote also covers six projected " <>
+            "ticks of expenses."
         ],
       "\n"
     )

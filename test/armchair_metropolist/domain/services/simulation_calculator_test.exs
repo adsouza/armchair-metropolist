@@ -1092,7 +1092,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       refute Calc.metrics(CityMap.new(40, 30)).insolvent
     end
 
-    test "quotes the commercial shortfall plus six projected ticks for a healthy city" do
+    test "quotes the commercial shortfall plus six projected ticks" do
       city =
         map_with([
           Node.new(0, 0, :residential),
@@ -1104,6 +1104,8 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.metrics(city).commercial_bond_offer == %{
                principal: 94.0,
                construction_cost: 40.0,
+               construction_budget: 40.0,
+               commercial_blocks: 1,
                runway_ticks: 6
              }
     end
@@ -1124,11 +1126,13 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
       assert Calc.metrics(city).commercial_bond_offer == %{
                principal: 130.0,
                construction_cost: 40.0,
+               construction_budget: 40.0,
+               commercial_blocks: 1,
                runway_ticks: 6
              }
     end
 
-    test "does not offer the bridge when the city is damaged or can still afford commerce" do
+    test "waits until the treasury falls below the full commercial construction budget" do
       city =
         map_with([
           Node.new(0, 0, :residential),
@@ -1138,13 +1142,39 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculatorTest do
 
       refute Calc.metrics(%{city | money: 40.0}).commercial_bond_offer
 
-      damaged =
-        CityMap.put_node(
-          %{city | money: 0.0},
-          %Node{Node.new(0, 0, :residential) | health: 99.0, status: :online}
-        )
+      assert Calc.metrics(%{city | money: 39.0}).commercial_bond_offer.commercial_blocks == 1
+    end
 
-      refute Calc.metrics(damaged).commercial_bond_offer
+    test "offers the bridge despite damage and non-money shortages" do
+      city =
+        map_with([
+          Node.new(0, 0, :residential),
+          %Node{Node.new(1, 0, :power_plant) | health: 0.0, status: :offline},
+          Node.new(2, 0, :water_plant)
+        ])
+        |> Map.put(:money, 0.0)
+
+      metrics = Calc.metrics(city)
+
+      assert metrics.resources.power.satisfaction < 1.0
+      assert metrics.commercial_bond_offer.commercial_blocks == 1
+    end
+
+    test "funds every commercial block needed to close a larger operating gap" do
+      city =
+        map_with([
+          Node.new(0, 0, :residential)
+          | for(x <- 1..7, do: Node.new(x, 0, :school))
+        ])
+
+      offer = Calc.metrics(%{city | money: 79.0}).commercial_bond_offer
+
+      assert offer.commercial_blocks == 2
+      assert offer.construction_cost == 40.0
+      assert offer.construction_budget == 80.0
+      assert offer.principal > 1.0
+
+      refute Calc.metrics(%{city | money: 80.0}).commercial_bond_offer
     end
 
     test "does not offer the bridge or lock the city during opening planning" do

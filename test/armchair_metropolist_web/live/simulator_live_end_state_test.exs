@@ -196,7 +196,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :bridge_eligible_city
-    test "a healthy operating lock offers a commercial bridge instead of declaring game over",
+    test "an operating lock offers a commercial bridge instead of declaring game over",
          %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -255,10 +255,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     end
 
     @tag :warned_city
-    test "the rescue window appears in the metrics panel", %{conn: conn} do
+    test "the bridge replaces the rescue window once commercial construction is unaffordable",
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#metrics-rescue", "Rescue window: 2 ticks")
+      assert has_element?(view, "#commercial-bond-offer", "40 needed for 1 commercial block")
+      refute has_element?(view, "#metrics-rescue")
     end
 
     @tag :early_insolvent_city

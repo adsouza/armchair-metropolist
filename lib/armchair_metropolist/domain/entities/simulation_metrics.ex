@@ -26,6 +26,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   @type commercial_bond_offer :: %{
           principal: float(),
           construction_cost: float(),
+          construction_budget: float(),
+          commercial_blocks: pos_integer(),
           runway_ticks: pos_integer()
         }
 
@@ -144,7 +146,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   # The solvency four default to a city that is in no trouble: nothing earned, nothing owed,
   # nothing to escape from. `insolvent: false` is the safe direction — the failure it causes
   # if it ever reached a player is a missing banner, whereas `true` would put "City locked"
-  # on a healthy city.
+  # on a structurally solvent city.
   @default_derived %{
     amenity: 1.0,
     amenity_marginal_labour: 0.0,
@@ -236,7 +238,8 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
   `:treasury_delta` is the exact balance movement the next live tick will apply, and
   `:imported_labour_traffic` is the commuter demand created by the labour portion.
   `:commercial_bond` is the live bridge-series quote, while
-  `:commercial_bond_offer` is the one-time rescue quote when the city qualifies.
+  `:commercial_bond_offer` is the one-time rescue quote when the treasury can no longer
+  fund enough commercial construction to close the structural operating gap.
 
   These figures are computed by `Domain.Services.SimulationCalculator`, which this module
   cannot call — `Domain` has `deps: []` — so they arrive as an argument rather than being
@@ -307,7 +310,7 @@ defmodule ArmchairMetropolist.Domain.Entities.SimulationMetrics do
 
   `bankrupt` is necessary: while any command is affordable the player still has a move, and
   neither `stalled` nor `insolvent` is beyond help on its own. The commercial-bridge offer
-  is also an action, so a qualifying healthy city is not game over even below the ordinary
+  is also an action, so a qualifying draining city is not game over even below the ordinary
   command floor. A stalled city holding money can be rescued by one demolition, which takes
   three dead houses back under the free baseline; an insolvent city holding money can buy
   the shop that ends the insolvency.

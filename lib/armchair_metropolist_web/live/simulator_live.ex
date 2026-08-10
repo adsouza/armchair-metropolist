@@ -824,13 +824,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             Commercial bridge available
           </p>
           <h2 class="mt-1 text-xl font-semibold tracking-tight">
-            Keep a healthy city from running out of options
+            Fund the commercial blocks that stop the cash drain
           </h2>
           <p class="mt-2 max-w-2xl text-sm leading-relaxed opacity-75">
-            Your treasury is shrinking and no longer covers a {trunc(@offer.construction_cost)} commercial block. Issue {trunc(
-              @offer.principal
-            )} to restore that construction
-            budget plus {pluralize_ticks(@offer.runway_ticks)} of projected expenses. This is
+            Your treasury no longer covers the {trunc(@offer.construction_budget)} needed for {commercial_block_count(
+              @offer.commercial_blocks
+            )}. Issue {trunc(@offer.principal)} to restore that construction budget plus {pluralize_ticks(
+              @offer.runway_ticks
+            )} of projected expenses. This is
             serviced debt with the same 20-tick holiday and 100-tick term as the opening bond.
           </p>
         </div>
@@ -850,6 +851,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp pluralize_ticks(1), do: "1 tick"
   defp pluralize_ticks(ticks), do: "#{ticks} ticks"
+
+  defp commercial_block_count(1), do: "1 commercial block"
+  defp commercial_block_count(count), do: "#{count} commercial blocks"
 
   # Rendered above the grid, deliberately outside the `<aside>`: the sidebar's width sets
   # the wrap thresholds documented in `render/1`, and this block's prose is far wider than

@@ -519,7 +519,7 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         stalled: stalled,
         bond: bond,
         commercial_bond: commercial_bond,
-        commercial_bond_offer: commercial_bond_offer(city_map, nodes, stats, operating, stalled)
+        commercial_bond_offer: commercial_bond_offer(city_map, nodes)
       }
       |> Map.merge(operating)
       |> Map.merge(financing)
@@ -527,25 +527,23 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
     SimulationMetrics.build(city_map, stats, derived)
   end
 
-  # The bridge is a deliberately narrow escape hatch, not a general second bond market.
-  # It appears only when a full-health, fully supplied city has a permanently shrinking
-  # operating treasury, one commercial block is the exact single-action cure, and that
-  # block's construction cost has already slipped out of reach. The server-side use case
-  # reads this same value, so a forged click cannot borrow in any other state.
-  defp commercial_bond_offer(city_map, nodes, stats, operating, stalled) do
+  # The bridge is a one-time escape hatch, not a general second bond market. A structurally
+  # shrinking city needs enough commercial income to close the gap between rated income and
+  # base upkeep. Once its treasury falls below the combined current cost of those blocks, the
+  # bridge restores that construction budget plus a short operating runway. Health and
+  # non-money supply do not gate the offer: those are exactly the pressures likely to be
+  # present when emergency financing becomes useful. The server-side use case reads this
+  # same value, so a forged click cannot borrow in any other state.
+  defp commercial_bond_offer(city_map, nodes) do
     commercial_cost = construction_cost(city_map, :commercial)
+    commercial_blocks = commercial_blocks_needed(nodes)
+    construction_budget = commercial_blocks * commercial_cost
 
     eligible? =
       is_nil(city_map.commercial_bond) and not is_nil(city_map.municipal_bond) and
         not MunicipalBond.planning?(city_map.municipal_bond) and
-        not MunicipalBond.defaulted?(city_map.municipal_bond) and not stalled and nodes != [] and
-        city_map.money < commercial_cost and operating.insolvent and
-        operating.escape == {:place, :commercial, commercial_cost} and
-        Enum.all?(nodes, &(&1.health == @max_health and &1.status == :online)) and
-        Enum.all?(stats, fn
-          {:money, _resource_stats} -> true
-          {_resource, resource_stats} -> resource_stats.satisfaction >= 1.0
-        end)
+        not MunicipalBond.defaulted?(city_map.municipal_bond) and nodes != [] and
+        commercial_blocks > 0 and city_map.money < construction_budget
 
     if eligible? do
       projection_inflation = inflation_multiplier(city_map)
@@ -563,14 +561,29 @@ defmodule ArmchairMetropolist.Domain.Services.SimulationCalculator do
         max(0.0, @commercial_bridge_projection_balance - projected.money)
 
       principal =
-        max(0.0, commercial_cost + projected_expenses - city_map.money)
+        max(0.0, construction_budget + projected_expenses - city_map.money)
         |> Float.ceil()
 
       %{
         principal: principal,
         construction_cost: commercial_cost,
+        construction_budget: construction_budget,
+        commercial_blocks: commercial_blocks,
         runway_ticks: @commercial_bridge_runway_ticks
       }
+    end
+  end
+
+  defp commercial_blocks_needed(nodes) do
+    gap = base_money_demand(nodes) - rated_money_capacity(nodes)
+
+    if gap > 0.0 do
+      gap
+      |> Kernel./(money_net(:commercial))
+      |> Float.ceil()
+      |> trunc()
+    else
+      0
     end
   end
 
