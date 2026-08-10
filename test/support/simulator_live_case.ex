@@ -43,7 +43,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveCase do
         hotel: "🏨",
         park: "🌳",
         hospital: "🏥",
-        police_station: "🚓",
+        police_station: "🚔",
         school: "🏫"
       ]
 
