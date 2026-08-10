@@ -46,6 +46,23 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   # decision the legend depends on.
   @resources [:power, :water, :waste, :traffic, :injuries, :disease, :crime, :labour, :money]
 
+  # The node-type vocabulary, in the order every player should see it. Utilities and
+  # infrastructure come first, followed by homes and commerce, then civic services.
+  # This must not be derived with `Map.keys/1`: map iteration order is an implementation
+  # detail, while the legend's row order is part of the interface.
+  @node_types [
+    :power_plant,
+    :water_plant,
+    :industrial,
+    :transit_hub,
+    :residential,
+    :commercial,
+    :park,
+    :hospital,
+    :police_station,
+    :school
+  ]
+
   # The status vocabulary. Must stay in step with `status_for/1`'s clauses;
   # the `statuses/0` test derives its expectation from that function so the
   # two cannot drift apart silently.
@@ -241,12 +258,10 @@ defmodule ArmchairMetropolist.Domain.Entities.Node do
   def display_signature(node), do: {round(node.health), node.status}
 
   @doc """
-  List all node types.
-  Derived from the capacity table keys to avoid duplication.
+  List all node types in their canonical display order.
   """
-  def types do
-    Map.keys(@capacity_table)
-  end
+  @spec types() :: [node_type()]
+  def types, do: @node_types
 
   @doc """
   List every resource the simulation tracks, in display order.

@@ -5,11 +5,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     test "appears once a living city has been changed", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # `select_type` first, and it is not optional. `@selected_type` defaults to
-      # `List.first(Node.types())`, and `Node.types/0` is `Map.keys/1` over the capacity
-      # table — arbitrary order, so the default is not reliably `residential`. Placing
-      # whatever happens to be first would leave `housing_alive` false and this test would
-      # assert the opposite of what it claims.
+      # `select_type` first, and it is not optional. `@selected_type` deliberately defaults
+      # to the first canonical type, `power_plant`; placing that would leave `housing_alive`
+      # false and this test would assert the opposite of what it claims.
       render_click(view, "select_type", %{"type" => "residential"})
       render_click(view, "place", %{"x" => "1", "y" => "1"})
 

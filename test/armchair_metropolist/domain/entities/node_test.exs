@@ -15,20 +15,19 @@ defmodule ArmchairMetropolist.Domain.Entities.NodeTest do
   end
 
   describe "types/0" do
-    test "lists all ten node types" do
-      assert Enum.sort(Node.types()) ==
-               Enum.sort([
-                 :power_plant,
-                 :water_plant,
-                 :industrial,
-                 :transit_hub,
-                 :residential,
-                 :commercial,
-                 :park,
-                 :hospital,
-                 :police_station,
-                 :school
-               ])
+    test "lists all ten node types in canonical display order" do
+      assert Node.types() == [
+               :power_plant,
+               :water_plant,
+               :industrial,
+               :transit_hub,
+               :residential,
+               :commercial,
+               :park,
+               :hospital,
+               :police_station,
+               :school
+             ]
     end
   end
 

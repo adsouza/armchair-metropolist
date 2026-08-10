@@ -31,6 +31,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       end
     end
 
+    test "renders block rows in the canonical node-type order", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      for {type, position} <- Enum.with_index(Node.types(), 1) do
+        assert has_element?(
+                 view,
+                 "#block-legend tbody > tr#legend-row-#{type}:nth-child(#{position})"
+               )
+      end
+    end
+
     test "keeps the matrix columns at their compact intrinsic width", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
