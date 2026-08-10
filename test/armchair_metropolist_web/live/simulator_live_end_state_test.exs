@@ -130,7 +130,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveEndStateTest do
     test "says the city is dead when nothing can restart it", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      assert has_element?(view, "#collapse-banner")
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #collapse-banner"
+             )
+
       assert render(view) =~ "Game over — this city is dead."
     end
 

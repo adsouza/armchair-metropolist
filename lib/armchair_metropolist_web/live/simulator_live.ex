@@ -559,26 +559,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       />
 
       <div :if={not is_nil(@metrics.bond)} id="financed-simulator">
-        <.union_strike_panel
-          :if={
-            @metrics.union_demand && not @metrics.union_demand.pending &&
-              @metrics.union_labour_multiplier < 1.0
-          }
-          demand={@metrics.union_demand}
-          commands_enabled?={@commands_enabled?}
-        />
-
-        <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
-
         <.planning_panel
           :if={planning?(@metrics)}
           metrics={@metrics}
-          commands_enabled?={@commands_enabled?}
-        />
-
-        <.commercial_bond_offer
-          :if={@metrics.commercial_bond_offer}
-          offer={@metrics.commercial_bond_offer}
           commands_enabled?={@commands_enabled?}
         />
 
@@ -594,13 +577,6 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             resources or type names changed; content-driven wrapping cannot. --%>
         <div id="simulator-layout" class="flex flex-wrap items-start gap-4">
           <div id="city-column" class="shrink-0">
-            <.opening_goal_banner
-              metrics={@metrics}
-              tutorial={@health_tutorial}
-              width={@width}
-              cell_size={@cell_size}
-            />
-
             <div
               id="city-grid"
               class="relative shrink-0 border border-base-300"
@@ -649,6 +625,41 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
                   {block_emoji(node.type)}
                 </div>
               </div>
+            </div>
+
+            <%!-- This container is always immediately after the grid. Every panel inside it
+              may appear or disappear as the simulation changes, but because none precedes
+              the clickable cells, those transitions cannot move the grid under a pointer
+              that is already in flight. Its explicit grid width also keeps prose and controls
+              from changing the city column's responsive wrapping boundary. --%>
+            <div
+              id="city-advisories"
+              class="mt-3 box-border max-w-full space-y-3"
+              style={"width: #{@width * @cell_size}px"}
+            >
+              <.union_strike_panel
+                :if={
+                  @metrics.union_demand && not @metrics.union_demand.pending &&
+                    @metrics.union_labour_multiplier < 1.0
+                }
+                demand={@metrics.union_demand}
+                commands_enabled?={@commands_enabled?}
+              />
+
+              <.collapse_banner metrics={@metrics} width={@width} cell_size={@cell_size} />
+
+              <.commercial_bond_offer
+                :if={@metrics.commercial_bond_offer}
+                offer={@metrics.commercial_bond_offer}
+                commands_enabled?={@commands_enabled?}
+              />
+
+              <.opening_goal_banner
+                metrics={@metrics}
+                tutorial={@health_tutorial}
+                width={@width}
+                cell_size={@cell_size}
+              />
             </div>
           </div>
 
@@ -750,9 +761,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     ~H"""
     <section
       id="union-strike-panel"
-      class="mb-4 overflow-hidden rounded-2xl border border-error/40 bg-error/5 shadow-sm"
+      class="box-border w-full max-w-full overflow-hidden rounded-2xl border border-error/40 bg-error/5 shadow-sm"
     >
-      <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+      <div class="flex flex-col gap-4 p-5">
         <div class="flex max-w-3xl items-start gap-4">
           <div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-error/10 text-error">
             <.icon name="hero-no-symbol" class="size-6" />
@@ -776,7 +787,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         <button
           id="settle-union-strike"
           type="button"
-          class="btn btn-error min-h-11 shrink-0 text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+          class="btn btn-error min-h-11 w-full text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
           phx-click="accept_union_demand"
           disabled={not @commands_enabled?}
         >
@@ -845,7 +856,16 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           >
             <.icon name="hero-play" class="size-4" /> Begin sim
           </button>
-          <p :if={@metrics.node_count == 0} class="mt-2 text-xs opacity-60">
+          <%!-- Keep this line in the layout after the first placement. Removing it moved the
+            grid upward while the player was still clicking cells during planning. --%>
+          <p
+            id="begin-sim-hint"
+            aria-hidden={to_string(@metrics.node_count > 0)}
+            class={[
+              "mt-2 text-xs opacity-60",
+              @metrics.node_count > 0 && "invisible"
+            ]}
+          >
             Place at least one block first.
           </p>
         </div>
@@ -953,9 +973,9 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     ~H"""
     <section
       id="commercial-bond-offer"
-      class="mb-4 max-w-3xl rounded-2xl border border-primary/40 bg-primary/5 p-5 shadow-sm"
+      class="box-border w-full max-w-full rounded-2xl border border-primary/40 bg-primary/5 p-5 shadow-sm"
     >
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex flex-col gap-4">
         <div>
           <p class="text-xs font-bold uppercase tracking-[0.2em] text-primary">
             Commercial bridge available
@@ -975,7 +995,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
         <button
           id="issue-commercial-bond"
           type="button"
-          class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl bg-primary px-5 py-2.5 font-semibold text-primary-content shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-primary px-5 py-2.5 font-semibold text-primary-content shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
           phx-click="issue_commercial_bond"
           disabled={not @commands_enabled?}
         >
@@ -992,13 +1012,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   defp commercial_block_count(1), do: "1 commercial block"
   defp commercial_block_count(count), do: "#{count} commercial blocks"
 
-  # Rendered above the grid, deliberately outside the `<aside>`: the sidebar's width sets
-  # the wrap thresholds documented in `render/1`, and this block's prose is far wider than
-  # anything already in there.
+  # Rendered below the grid, inside the city column, so appearing status cannot displace the
+  # clickable cells. The city advisories wrapper owns the grid-width constraint; this component
+  # repeats the exact width to keep its warning copy aligned with the cells it describes.
   #
   # Status only. Terminal variants name the header's Reset button rather than rendering a
-  # second copy of it. Opening goals use the separate component below so they can sit inside
-  # the grid column without moving urgent status above or below the planning controls.
+  # second copy of it. Opening goals use the separate component below.
   #
   # **One variant at a time, chosen by an ordered list rather than by independent `:if`s.**
   # The status states are not disjoint: a stalled city is also insolvent whenever its upkeep
@@ -1153,7 +1172,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       :if={@goal}
       id="opening-goal-banner"
       data-variant={@variant}
-      class="mb-3 box-border max-w-full rounded-lg border border-l-4 border-primary bg-primary/5 px-4 py-3"
+      class="box-border max-w-full rounded-lg border border-l-4 border-primary bg-primary/5 px-4 py-3"
       style={"width: #{@width * @cell_size}px"}
     >
       <div id="opening-goal">

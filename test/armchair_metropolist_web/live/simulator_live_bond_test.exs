@@ -31,6 +31,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       assert has_element?(view, "#metrics-treasury", "Treasury: 400")
       assert has_element?(view, "#opening-planning", "Design before the clock starts")
       assert has_element?(view, "#begin-sim[disabled]")
+      assert has_element?(view, ~s{#begin-sim-hint[aria-hidden="false"]:not(.invisible)})
       assert has_element?(view, "#bond-service-status", "Debt service begins after Begin sim")
       assert has_element?(view, "#bond-panel.w-fit")
       assert has_element?(view, "#metrics-treasury + #bond-panel")
@@ -40,7 +41,12 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
 
       assert has_element?(
                view,
-               "#opening-planning ~ #simulator-layout #city-column > #opening-goal-banner + #city-grid"
+               "#financed-simulator > #opening-planning + #simulator-layout"
+             )
+
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #opening-goal-banner"
              )
 
       assert has_element?(view, "#opening-goal", "Suggested goal 1 of 4")
@@ -57,6 +63,7 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       view |> element("#issue-bond-400") |> render_click()
 
       place(view, :power_plant, 0, 0)
+      assert has_element?(view, ~s{#begin-sim-hint[aria-hidden="true"].invisible})
       assert has_element?(view, "#opening-goal", "Suggested goal 2 of 4")
       assert has_element?(view, "#opening-goal", "Establish positive operating income")
 
@@ -284,6 +291,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveBondTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(view, "#commercial-bond-offer", "6 ticks of projected expenses")
+
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #commercial-bond-offer"
+             )
 
       view |> element("#issue-commercial-bond") |> render_click()
 

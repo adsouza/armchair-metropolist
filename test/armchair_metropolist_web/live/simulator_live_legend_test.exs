@@ -100,7 +100,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
       view |> element("#reject-union-demand") |> render_click()
 
       refute has_element?(view, "#union-demand-dialog")
-      assert has_element?(view, "#union-strike-panel")
+
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #union-strike-panel"
+             )
 
       assert view |> element("#union-strike-panel") |> render() =~
                "10% of local labour is unavailable"
@@ -594,7 +598,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveLegendTest do
 
       send(view.pid, {:city_metrics, injured})
 
-      assert has_element?(view, "#opening-goal-banner[data-variant=health_tutorial]")
+      assert has_element?(
+               view,
+               "#city-column > #city-grid + #city-advisories > #opening-goal-banner[data-variant=health_tutorial]"
+             )
+
       assert has_element?(view, "#opening-goal", "Why injuries appeared")
       assert has_element?(view, "#opening-goal", "Traffic crossed its healthy threshold")
       assert has_element?(view, "#opening-goal", "Add transit capacity or reduce traffic")
