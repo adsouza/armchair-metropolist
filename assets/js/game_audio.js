@@ -1,9 +1,12 @@
-const STORAGE_KEY = "armchair-metropolist:audio-enabled"
+const ENABLED_STORAGE_KEY = "armchair-metropolist:audio-enabled"
+const VOLUME_STORAGE_KEY = "armchair-metropolist:audio-volume"
 const DEFAULT_ENABLED = true
+const DEFAULT_VOLUME = 0.65
+const MIN_VOLUME = 0.1
 
 const readPreference = () => {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY)
+    const stored = window.localStorage.getItem(ENABLED_STORAGE_KEY)
     return stored === null ? DEFAULT_ENABLED : stored === "true"
   } catch (_error) {
     return DEFAULT_ENABLED
@@ -12,15 +15,35 @@ const readPreference = () => {
 
 const savePreference = enabled => {
   try {
-    window.localStorage.setItem(STORAGE_KEY, String(enabled))
+    window.localStorage.setItem(ENABLED_STORAGE_KEY, String(enabled))
   } catch (_error) {
     // Audio still works for this session when storage is unavailable.
+  }
+}
+
+const readVolume = () => {
+  try {
+    const stored = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY))
+    return Number.isFinite(stored) && stored >= MIN_VOLUME && stored <= 1
+      ? stored
+      : DEFAULT_VOLUME
+  } catch (_error) {
+    return DEFAULT_VOLUME
+  }
+}
+
+const saveVolume = volume => {
+  try {
+    window.localStorage.setItem(VOLUME_STORAGE_KEY, String(volume))
+  } catch (_error) {
+    // Volume still works for this session when storage is unavailable.
   }
 }
 
 class CityAudio {
   constructor() {
     this.enabled = readPreference()
+    this.volume = readVolume()
     this.context = null
     this.masterGain = null
     this.musicGain = null
@@ -53,7 +76,7 @@ class CityAudio {
     const now = this.context.currentTime
     this.masterGain.gain.cancelScheduledValues(now)
     this.masterGain.gain.setValueAtTime(Math.max(this.masterGain.gain.value, 0.0001), now)
-    this.masterGain.gain.linearRampToValueAtTime(0.35, now + 0.18)
+    this.masterGain.gain.linearRampToValueAtTime(this.volume, now + 0.18)
     this.startMusic()
   }
 
@@ -67,6 +90,18 @@ class CityAudio {
       this.stopMusic()
       this.fadeMasterOut()
     }
+  }
+
+  setVolume(volume) {
+    this.volume = Math.min(1, Math.max(MIN_VOLUME, volume))
+    saveVolume(this.volume)
+
+    if (!this.enabled) {
+      this.enabled = true
+      savePreference(true)
+    }
+
+    this.activate()
   }
 
   ensureGraph() {
@@ -268,6 +303,12 @@ class CityAudio {
 export const GameAudio = {
   mounted() {
     this.audio = new CityAudio()
+    this.audioToggle = this.el.querySelector("#game-audio-toggle")
+    this.menuToggle = this.el.querySelector("#game-volume-menu-toggle")
+    this.panel = this.el.querySelector("#game-volume-panel")
+    this.menuIcon = this.el.querySelector("[data-volume-menu-icon]")
+    this.volumeSlider = this.el.querySelector("#game-volume-slider")
+    this.volumeValue = this.el.querySelector("[data-volume-value]")
     this.audioOn = this.el.querySelector("[data-audio-on]")
     this.audioOff = this.el.querySelector("[data-audio-off]")
 
@@ -276,9 +317,28 @@ export const GameAudio = {
       this.updateControl()
     }
 
+    this.handleMenuToggle = () => this.setPanelOpen(this.panel.classList.contains("hidden"))
+
+    this.handleVolume = event => {
+      this.audio.setVolume(Number(event.target.value) / 100)
+      this.updateControl()
+    }
+
     this.unlockFromInteraction = event => {
-      if (event.target instanceof Element && event.target.closest("#game-audio-toggle")) return
+      if (event.target instanceof Element && event.target.closest("#game-audio-controls")) return
       this.audio.activate()
+    }
+
+    this.handleOutsidePointer = event => {
+      if (event.target instanceof Node && !this.el.contains(event.target)) this.setPanelOpen(false)
+    }
+
+    this.handleKeydown = event => {
+      if (event.key === "Escape" && !this.panel.classList.contains("hidden")) {
+        this.setPanelOpen(false)
+        this.menuToggle.focus()
+      }
+      this.unlockFromInteraction(event)
     }
 
     this.handleVisibility = () => {
@@ -290,32 +350,53 @@ export const GameAudio = {
       }
     }
 
-    this.el.addEventListener("click", this.handleToggle)
+    this.audioToggle.addEventListener("click", this.handleToggle)
+    this.menuToggle.addEventListener("click", this.handleMenuToggle)
+    this.volumeSlider.addEventListener("input", this.handleVolume)
     document.addEventListener("pointerdown", this.unlockFromInteraction, true)
-    document.addEventListener("keydown", this.unlockFromInteraction, true)
+    document.addEventListener("pointerdown", this.handleOutsidePointer)
+    document.addEventListener("keydown", this.handleKeydown, true)
     document.addEventListener("visibilitychange", this.handleVisibility)
     this.handleEvent("game-sound", ({cue}) => this.audio.playCue(cue))
     this.updateControl()
   },
 
   destroyed() {
-    this.el.removeEventListener("click", this.handleToggle)
+    this.audioToggle.removeEventListener("click", this.handleToggle)
+    this.menuToggle.removeEventListener("click", this.handleMenuToggle)
+    this.volumeSlider.removeEventListener("input", this.handleVolume)
     document.removeEventListener("pointerdown", this.unlockFromInteraction, true)
-    document.removeEventListener("keydown", this.unlockFromInteraction, true)
+    document.removeEventListener("pointerdown", this.handleOutsidePointer)
+    document.removeEventListener("keydown", this.handleKeydown, true)
     document.removeEventListener("visibilitychange", this.handleVisibility)
     this.audio.destroy()
   },
 
   updateControl() {
     const enabled = this.audio.enabled
+    const volume = Math.round(this.audio.volume * 100)
     const action = enabled ? "Mute music and sound effects" : "Turn on music and sound effects"
+    const supported = this.audio.supported()
 
-    this.el.disabled = !this.audio.supported()
     this.el.dataset.audioState = enabled ? "on" : "off"
-    this.el.setAttribute("aria-pressed", String(enabled))
-    this.el.setAttribute("aria-label", this.audio.supported() ? action : "Audio is unavailable")
-    this.el.title = this.audio.supported() ? action : "Audio is unavailable in this browser"
+    this.audioToggle.disabled = !supported
+    this.audioToggle.setAttribute("aria-pressed", String(enabled))
+    this.audioToggle.setAttribute("aria-label", supported ? action : "Audio is unavailable")
+    this.audioToggle.title = supported ? action : "Audio is unavailable in this browser"
+    this.menuToggle.disabled = !supported
+    this.volumeSlider.disabled = !supported
+    this.volumeSlider.value = String(volume)
+    this.volumeSlider.setAttribute("aria-valuetext", `${volume}% volume`)
+    this.volumeValue.textContent = `${volume}%`
     this.audioOn.classList.toggle("hidden", !enabled)
     this.audioOff.classList.toggle("hidden", enabled)
+  },
+
+  setPanelOpen(open) {
+    this.panel.classList.toggle("hidden", !open)
+    this.menuIcon.classList.toggle("rotate-180", open)
+    this.menuToggle.setAttribute("aria-expanded", String(open))
+
+    if (open) this.volumeSlider.focus()
   },
 }

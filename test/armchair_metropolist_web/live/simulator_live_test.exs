@@ -387,16 +387,28 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "the page header" do
-    test "includes a persistent music and sound-effects toggle", %{conn: conn} do
+    test "includes persistent music, sound-effects, and volume controls", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert has_element?(
                view,
-               "#game-audio-toggle[phx-hook=GameAudio][phx-update=ignore][aria-pressed=true]"
+               "#game-audio-controls[phx-hook=GameAudio][phx-update=ignore][data-audio-state=on]"
              )
 
       assert has_element?(view, "#game-audio-toggle [data-audio-on]")
       assert has_element?(view, "#game-audio-toggle [data-audio-off].hidden")
+
+      assert has_element?(
+               view,
+               "#game-volume-menu-toggle[aria-controls=game-volume-panel][aria-expanded=false]"
+             )
+
+      assert has_element?(view, "#game-volume-panel.hidden")
+
+      assert has_element?(
+               view,
+               ~s{#game-volume-slider[type=range][min="10"][max="100"][step="1"][value="65"]}
+             )
     end
 
     test "includes desktop-only explicit zoom controls", %{conn: conn} do

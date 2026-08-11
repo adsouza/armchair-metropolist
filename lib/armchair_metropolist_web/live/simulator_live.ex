@@ -434,24 +434,77 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `--color-error-content` on `--color-error` is 4.08:1 in both themes, under
             the 4.5 floor for small text. White is 4.60:1 and passes in both. --%>
       <:actions>
-        <button
-          id="game-audio-toggle"
-          type="button"
+        <div
+          id="game-audio-controls"
           phx-hook="GameAudio"
           phx-update="ignore"
-          class="grid min-h-6 min-w-6 cursor-pointer place-items-center rounded-full border border-base-300 bg-base-100 p-1 text-base-content transition hover:-translate-y-0.5 hover:bg-base-200 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+          class="relative flex min-h-6 rounded-full border border-base-300 bg-base-100 text-base-content shadow-sm"
           data-audio-state="on"
-          aria-label="Mute music and sound effects"
-          aria-pressed="true"
-          title="Mute music and sound effects"
         >
-          <span data-audio-on>
-            <.icon name="hero-speaker-wave" class="size-4" />
-          </span>
-          <span data-audio-off class="hidden">
-            <.icon name="hero-speaker-x-mark" class="size-4" />
-          </span>
-        </button>
+          <button
+            id="game-audio-toggle"
+            type="button"
+            class="grid min-h-6 min-w-7 cursor-pointer place-items-center rounded-l-full p-1 transition hover:bg-base-200 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Mute music and sound effects"
+            aria-pressed="true"
+            title="Mute music and sound effects"
+          >
+            <span data-audio-on>
+              <.icon name="hero-speaker-wave" class="size-4" />
+            </span>
+            <span data-audio-off class="hidden">
+              <.icon name="hero-speaker-x-mark" class="size-4" />
+            </span>
+          </button>
+          <button
+            id="game-volume-menu-toggle"
+            type="button"
+            class="grid min-h-6 min-w-6 cursor-pointer place-items-center rounded-r-full border-l border-base-300 p-1 transition hover:bg-base-200 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Adjust audio volume"
+            aria-haspopup="dialog"
+            aria-controls="game-volume-panel"
+            aria-expanded="false"
+            title="Adjust audio volume"
+          >
+            <span data-volume-menu-icon class="transition-transform">
+              <.icon name="hero-chevron-down-micro" class="size-3" />
+            </span>
+          </button>
+
+          <div
+            id="game-volume-panel"
+            class="absolute right-0 top-full z-50 mt-2 hidden w-56 rounded-2xl border border-base-300 bg-base-100 p-4 shadow-xl"
+            role="dialog"
+            aria-labelledby="game-volume-label"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <label id="game-volume-label" for="game-volume-slider" class="text-sm font-semibold">
+                Volume
+              </label>
+              <output
+                for="game-volume-slider"
+                data-volume-value
+                class="text-xs font-semibold tabular-nums opacity-65"
+              >
+                65%
+              </output>
+            </div>
+            <input
+              id="game-volume-slider"
+              type="range"
+              min="10"
+              max="100"
+              step="1"
+              value="65"
+              class="mt-3 h-5 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Music and sound-effects volume"
+              aria-valuetext="65% volume"
+            />
+            <p class="mt-1 text-[11px] leading-relaxed opacity-55">
+              Controls music and sound effects
+            </p>
+          </div>
+        </div>
         <button
           :if={show_reset?(@metrics)}
           id="reset-city"

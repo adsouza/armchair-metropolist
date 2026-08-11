@@ -17,9 +17,10 @@ square — worth knowing, because nothing on screen separates them:
 * **click Begin sim** — ends opening planning and starts the city and bond clocks.
 
 The speaker button in the page header toggles both the ambient soundtrack and game
-sound effects, and remembers the choice in this browser. Sound is on by default but begins
-only after the first click or keypress, as required by browser autoplay rules. The music and
-cues are generated locally in the app, so they do not download or stream audio.
+sound effects; the arrow beside it opens their volume slider. Both choices are remembered in
+this browser. Sound is on by default at 65% but begins only after the first click or keypress,
+as required by browser autoplay rules. The music and cues are generated locally in the app,
+so they do not download or stream audio.
 
 Later, a prosperous city's labour unions can pause the clock with a contract ultimatum.
 That prompt is a real choice: accept permanently higher variable costs, or refuse and lose
