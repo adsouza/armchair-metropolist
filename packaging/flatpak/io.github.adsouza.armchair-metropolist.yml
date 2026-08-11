@@ -105,11 +105,12 @@ modules:
       # the .deb and the Flatpak cannot disagree about them.
       - sed -i 's/^Icon=.*/Icon=io.github.adsouza.armchair-metropolist/' /app/share/applications/io.github.adsouza.armchair-metropolist.desktop
 
-      # 32x32 and 128x128 only. The .deb also ships `256x256@2`, a scale-suffixed
-      # hicolor directory that AppStream and Flatpak tooling handle inconsistently,
-      # and these two sizes satisfy both.
+      # Keep the raster sizes for small-icon rendering and install the same scalable
+      # source that the .deb carries. The .deb path is configured explicitly in
+      # tauri.conf.json, so both packages use one authoritative SVG.
       - install -Dm644 usr/share/icons/hicolor/32x32/apps/armchair_metropolist.png /app/share/icons/hicolor/32x32/apps/io.github.adsouza.armchair-metropolist.png
       - install -Dm644 usr/share/icons/hicolor/128x128/apps/armchair_metropolist.png /app/share/icons/hicolor/128x128/apps/io.github.adsouza.armchair-metropolist.png
+      - install -Dm644 usr/share/icons/hicolor/scalable/apps/armchair_metropolist.svg /app/share/icons/hicolor/scalable/apps/io.github.adsouza.armchair-metropolist.svg
 
       - install -Dm644 io.github.adsouza.armchair-metropolist.metainfo.xml /app/share/metainfo/io.github.adsouza.armchair-metropolist.metainfo.xml
     sources:

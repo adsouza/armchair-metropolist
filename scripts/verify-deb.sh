@@ -102,6 +102,14 @@ COMMENT=$(sed -n 's/^Comment=//p' "$DESKTOP")
 printf 'Desktop: %s\n' "$(basename "$DESKTOP")"
 printf '  Categories=%s\n  Comment=%s\n' "$CATEGORIES" "$COMMENT"
 
+# 5a. The canonical scalable icon is installed at the freedesktop hicolor path. The
+#    PNGs remain for small sizes, but this is the shared source that the Flatpak also
+#    consumes after unpacking the .deb.
+SVG_ICON="$WORK/usr/share/icons/hicolor/scalable/apps/armchair_metropolist.svg"
+[ -s "$SVG_ICON" ] || fail "the scalable application icon is missing from the .deb"
+grep -q '<svg' "$SVG_ICON" || fail "the scalable application icon is not an SVG"
+printf 'Icon:    %s\n' "${SVG_ICON#"$WORK"}"
+
 # 6. Observed rather than asserted: proves at runtime that tauri.conf.json is the version
 #    authority and src-tauri/Cargo.toml is the fallback Tauri never takes.
 printf 'Version: %s\n' "$(dpkg-deb --field "$DEB" Version)"

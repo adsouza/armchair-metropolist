@@ -84,6 +84,15 @@ CATEGORIES=$(sed -n 's/^Categories=//p' "$DESKTOP")
 case "$CATEGORIES" in *Game*) ;; *) fail "Categories=$CATEGORIES does not place this in Game" ;; esac
 printf 'desktop: Icon=%s Categories=%s\n' "$ICON" "$CATEGORIES"
 
+# 6a. The same scalable source installed in the .deb is exported under the Flatpak app
+#    ID. Checking the installed app catches either side of that handoff going missing.
+APP_LOCATION=$(flatpak info --user --show-location "$APP_ID" 2>/dev/null) \
+  || fail "could not locate the installed files for $APP_ID"
+SVG_ICON="$APP_LOCATION/files/share/icons/hicolor/scalable/apps/$APP_ID.svg"
+[ -s "$SVG_ICON" ] || fail "no scalable application icon at $SVG_ICON"
+grep -q '<svg' "$SVG_ICON" || fail "the scalable application icon is not an SVG"
+printf 'icon:    %s\n' "$SVG_ICON"
+
 # 7. The Tauri host's dynamic dependencies resolve against this runtime.
 #
 # This assertion exists because assertion 8 below cannot do its job, and finding that

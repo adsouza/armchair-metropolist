@@ -38,6 +38,9 @@
     "linux": {
       "deb": {
         "depends": ["libwebkit2gtk-4.1-0", "libc6 (>= 2.39)"],
+        "files": {
+          "/usr/share/icons/hicolor/scalable/apps/armchair_metropolist.svg": "icons/icon.svg"
+        },
         "recommends": ["libayatana-appindicator3-1"]
       }
     },
