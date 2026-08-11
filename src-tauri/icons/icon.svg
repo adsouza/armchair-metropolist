@@ -9,17 +9,17 @@
   <desc id="description">A city skyline rising from a turquoise armchair</desc>
 
   <defs>
-    <linearGradient id="background" x1="92" y1="72" x2="420" y2="448" gradientUnits="userSpaceOnUse">
+    <linearGradient id="background" x1="256" y1="40" x2="256" y2="472" gradientUnits="userSpaceOnUse">
       <stop stop-color="#253653" />
-      <stop offset="1" stop-color="#101827" />
+      <stop offset="1" stop-color="#1d4632" />
     </linearGradient>
     <linearGradient id="city" x1="168" y1="116" x2="340" y2="306" gradientUnits="userSpaceOnUse">
       <stop stop-color="#ffb44a" />
       <stop offset="1" stop-color="#f47a32" />
     </linearGradient>
-    <linearGradient id="seat" x1="170" y1="298" x2="342" y2="406" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#ffc45f" />
-      <stop offset="1" stop-color="#f2953f" />
+    <linearGradient id="seat" x1="256" y1="288" x2="256" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8fd3e8" />
+      <stop offset="1" stop-color="#6ab8d1" />
     </linearGradient>
     <linearGradient id="armrest" x1="0" y1="0" x2="0" y2="1">
       <stop stop-color="#ff9238" />
@@ -50,7 +50,7 @@
   <!-- The chair back is a skyline: the city literally sits in the armchair. -->
   <path
     fill="url(#city)"
-    d="M132 308V194h50v-55h58v82h42V108h66v58h40v142Z"
+    d="M132 320V194h50v-55h58v82h42V108h66v58h40v154Z"
   />
   <path fill="#ffd887" d="M151 216h13v17h-13zm0 35h13v17h-13zm52-88h14v18h-14zm0 38h14v18h-14zm99-65h15v19h-15zm0 40h15v19h-15zm0 40h15v19h-15zm48-26h14v18h-14zm0 38h14v18h-14z" />
 
@@ -63,6 +63,6 @@
   <rect x="128" y="364" width="256" height="46" rx="18" fill="#d85f2c" />
   <path
     fill="url(#seat)"
-    d="M152 296h208v58c0 18-14 32-32 32H184c-18 0-32-14-32-32Z"
+    d="M152 300c26-12 52-12 78 0s52 12 78 0c20-9 36-9 52-2v56c0 18-14 32-32 32H184c-18 0-32-14-32-32Z"
   />
 </svg>
