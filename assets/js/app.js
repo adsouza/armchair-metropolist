@@ -26,13 +26,14 @@ import {hooks as colocatedHooks} from "phoenix-colocated/armchair_metropolist"
 import topbar from "../vendor/topbar"
 import { TauriHook } from "../vendor/ex_tauri"
 import { DesktopZoom } from "./desktop_zoom"
+import { GameAudio } from "./game_audio"
 
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {DesktopZoom, TauriHook, ...colocatedHooks},
+  hooks: {DesktopZoom, GameAudio, TauriHook, ...colocatedHooks},
 })
 
 // Show progress bar on live navigation and form submits

@@ -296,6 +296,17 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
     refute render(view) =~ ~s{id="6:6"}
   end
 
+  test "successful city changes push matching sound cues", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    node = Node.new(6, 6, :park)
+
+    send(view.pid, {:city_node_placed, node})
+    assert_push_event view, "game-sound", %{cue: "build"}
+
+    send(view.pid, {:city_node_removed, node.id})
+    assert_push_event view, "game-sound", %{cue: "demolish"}
+  end
+
   test "clicking demolish on a placed node removes it from the stream", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
@@ -376,6 +387,18 @@ defmodule ArmchairMetropolistWeb.SimulatorLiveTest do
   end
 
   describe "the page header" do
+    test "includes a persistent music and sound-effects toggle", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(
+               view,
+               "#game-audio-toggle[phx-hook=GameAudio][phx-update=ignore][aria-pressed=true]"
+             )
+
+      assert has_element?(view, "#game-audio-toggle [data-audio-on]")
+      assert has_element?(view, "#game-audio-toggle [data-audio-off].hidden")
+    end
+
     test "includes desktop-only explicit zoom controls", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

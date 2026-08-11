@@ -205,21 +205,21 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
       end
 
     case result do
-      :ok -> {:noreply, socket}
+      :ok -> {:noreply, push_sound(socket, "fund")}
       {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
     end
   end
 
   def handle_event("issue_commercial_bond", _params, socket) do
     case CityEngine.issue_commercial_bond(socket.assigns.city_id) do
-      :ok -> {:noreply, socket}
+      :ok -> {:noreply, push_sound(socket, "fund")}
       {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
     end
   end
 
   def handle_event("begin_sim", _params, socket) do
     case CityEngine.begin_simulation(socket.assigns.city_id) do
-      :ok -> {:noreply, socket}
+      :ok -> {:noreply, push_sound(socket, "start")}
       {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
     end
   end
@@ -337,14 +337,14 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
 
   defp resolve_union_demand(socket, response) do
     case CityEngine.resolve_union_demand(socket.assigns.city_id, response) do
-      :ok -> {:noreply, socket}
+      :ok -> {:noreply, push_sound(socket, "decision")}
       {:error, reason} -> {:noreply, put_flash(socket, :error, union_error(reason))}
     end
   end
 
   defp redeem_bond(socket, action) do
     case CityEngine.redeem_municipal_bond(socket.assigns.city_id, action) do
-      :ok -> {:noreply, socket}
+      :ok -> {:noreply, push_sound(socket, "fund")}
       {:error, reason} -> {:noreply, put_flash(socket, :error, financing_error(reason))}
     end
   end
@@ -362,11 +362,11 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
   end
 
   def handle_info({:city_node_placed, node}, socket) do
-    {:noreply, stream_insert(socket, :nodes, node)}
+    {:noreply, socket |> stream_insert(:nodes, node) |> push_sound("build")}
   end
 
   def handle_info({:city_node_removed, id}, socket) do
-    {:noreply, stream_delete_by_dom_id(socket, :nodes, id)}
+    {:noreply, socket |> stream_delete_by_dom_id(:nodes, id) |> push_sound("demolish")}
   end
 
   # Carries the whole map, and re-streams every node rather than patching. Nothing is
@@ -383,7 +383,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
     {:noreply,
      socket
      |> assign_grid(city_map)
-     |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
+     |> stream(:nodes, CityMap.nodes(city_map), reset: true)
+     |> push_sound("expand")}
   end
 
   def handle_info({:city_reset, city_map}, socket) do
@@ -398,7 +399,8 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
      |> assign(:confirming_reset?, false)
      |> assign(:health_tutorial, nil)
      |> assign(:health_tutorial_seen, MapSet.new())
-     |> stream(:nodes, CityMap.nodes(city_map), reset: true)}
+     |> stream(:nodes, CityMap.nodes(city_map), reset: true)
+     |> push_sound("reset")}
   end
 
   # Anyone may broadcast on the subscribed topic, so unrecognised messages are dropped
@@ -432,6 +434,24 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
             `--color-error-content` on `--color-error` is 4.08:1 in both themes, under
             the 4.5 floor for small text. White is 4.60:1 and passes in both. --%>
       <:actions>
+        <button
+          id="game-audio-toggle"
+          type="button"
+          phx-hook="GameAudio"
+          phx-update="ignore"
+          class="grid min-h-6 min-w-6 cursor-pointer place-items-center rounded-full border border-base-300 bg-base-100 p-1 text-base-content transition hover:-translate-y-0.5 hover:bg-base-200 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+          data-audio-state="on"
+          aria-label="Mute music and sound effects"
+          aria-pressed="true"
+          title="Mute music and sound effects"
+        >
+          <span data-audio-on>
+            <.icon name="hero-speaker-wave" class="size-4" />
+          </span>
+          <span data-audio-off class="hidden">
+            <.icon name="hero-speaker-x-mark" class="size-4" />
+          </span>
+        </button>
         <button
           :if={show_reset?(@metrics)}
           id="reset-city"
@@ -1398,11 +1418,46 @@ defmodule ArmchairMetropolistWeb.SimulatorLive do
           merge_health_tutorial(socket.assigns.health_tutorial, newly_positive)
       end
 
+    cue = metrics_cue(previous, metrics, newly_positive)
+
     socket
     |> assign(:metrics, metrics)
     |> assign(:health_tutorial, tutorial)
     |> assign(:health_tutorial_seen, seen)
+    |> push_sound(cue)
   end
+
+  defp metrics_cue(previous, metrics, newly_positive) do
+    previous_variant = banner_variant(previous)
+    current_variant = banner_variant(metrics)
+
+    cond do
+      pending_union_demand?(metrics) and not pending_union_demand?(previous) ->
+        "warning"
+
+      terminal_ui?(metrics) and not terminal_ui?(previous) ->
+        "collapse"
+
+      metrics.tourism_unlocked and not previous.tourism_unlocked ->
+        "unlock"
+
+      newly_positive != [] ->
+        "warning"
+
+      current_variant in [:bond_default, :financing_warning, :warning] and
+          current_variant != previous_variant ->
+        "warning"
+
+      true ->
+        nil
+    end
+  end
+
+  defp pending_union_demand?(%{union_demand: %{pending: true}}), do: true
+  defp pending_union_demand?(_metrics), do: false
+
+  defp push_sound(socket, nil), do: socket
+  defp push_sound(socket, cue), do: push_event(socket, "game-sound", %{cue: cue})
 
   defp health_stock(metrics, :injuries), do: metrics.injury_stock
   defp health_stock(metrics, :disease), do: metrics.disease_stock
