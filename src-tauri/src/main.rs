@@ -1,10 +1,11 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::webview::{Color, PageLoadEvent};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-use tauri::Manager;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +18,9 @@ use std::time::Duration;
 // and shut itself down gracefully — the only graceful path on Windows, where
 // there is no SIGTERM to deliver.
 static HEARTBEAT_ACTIVE: AtomicBool = AtomicBool::new(true);
+
+// Ensures a reload of the main page cannot repeat the startup transition.
+static MAIN_REVEALED: AtomicBool = AtomicBool::new(false);
 
 // Outbound side of the sidecar channel: heartbeats, replies, and native
 // events (menu/tray clicks) are queued here and written by the writer thread.
@@ -51,6 +55,12 @@ fn send_channel_message(message: String) {
     }
 }
 
+fn persistent_window_state_flags() -> StateFlags {
+    // Visibility belongs to the startup lifecycle: the main window must always
+    // begin hidden behind the splash, regardless of how it exited last time.
+    StateFlags::all() & !StateFlags::VISIBLE
+}
+
 // Forwards a native event (menu click, tray click, errors) to the Elixir
 // sidecar, where ExTauri.Desktop delivers it to subscribed processes.
 fn send_channel_event(name: &str, payload: serde_json::Value) {
@@ -72,9 +82,9 @@ fn kill_sidecar(app: &tauri::AppHandle) {
     // working until you relaunch and the window is the wrong size.
     //
     // `kill_sidecar` is the one choke point all three exit paths share.
-    // `StateFlags::all()` matches `Builder::default()`, whose flags are
-    // `StateFlags::default()` == `all()`, so saved and restored fields agree.
-    if let Err(error) = app.save_window_state(StateFlags::all()) {
+    // Keep this aligned with the plugin builder in main(): visibility is excluded
+    // deliberately, while size, position, maximised and fullscreen state persist.
+    if let Err(error) = app.save_window_state(persistent_window_state_flags()) {
         eprintln!("[window-state] failed to save: {}", error);
     }
 
@@ -142,6 +152,19 @@ fn kill_sidecar(app: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("armchair-splash", |_context, _request| {
+            tauri::http::Response::builder()
+                .header(
+                    tauri::http::header::CONTENT_TYPE,
+                    "text/html; charset=utf-8",
+                )
+                .header(
+                    tauri::http::header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; style-src 'unsafe-inline'",
+                )
+                .body(splashscreen_html().into_bytes())
+                .expect("the splashscreen response must be valid")
+        })
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
             // Focus the main window when a second instance is launched
         }))
@@ -152,12 +175,22 @@ fn main() {
         // Registering it is necessary but NOT sufficient here — see the explicit
         // save in `kill_sidecar`, without which this plugin silently persists
         // nothing in this app.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(persistent_window_state_flags())
+                .with_denylist(&["splashscreen"])
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             sidecar_child: Mutex::new(None),
+        })
+        .on_page_load(|webview, payload| {
+            if main_page_ready(webview.label(), payload.event(), payload.url()) {
+                reveal_main_window(webview.window().app_handle());
+            }
         })
         // Tauri v2 installs no default macOS menu, so Cmd+Q is unbound. A *custom*
         // Quit item (not the predefined one, which terminates natively and bypasses
@@ -183,6 +216,10 @@ fn main() {
             Menu::with_items(handle, &[&app_menu, &edit_menu])
         })
         .setup(|app| {
+            if let Err(error) = create_splashscreen(app) {
+                eprintln!("[splashscreen] failed to create: {}", error);
+            }
+
             let port = resolve_port();
             start_server(app.handle(), port);
 
@@ -258,6 +295,75 @@ fn main() {
                 });
             }
         });
+}
+
+fn splashscreen_html() -> String {
+    include_str!("../splashscreen.html").replace("__ICON_SVG__", include_str!("../icons/icon.svg"))
+}
+
+fn splashscreen_url() -> tauri::Url {
+    "armchair-splash://localhost/index.html"
+        .parse()
+        .expect("the embedded splashscreen must form a valid custom-protocol URL")
+}
+
+fn create_splashscreen(app: &tauri::App) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(
+        app,
+        "splashscreen",
+        WebviewUrl::CustomProtocol(splashscreen_url()),
+    )
+        .title("Armchair Metropolist")
+        .inner_size(920.0, 720.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .decorations(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .shadow(true)
+        .transparent(true)
+        .background_color(Color(0, 0, 0, 0))
+        .center()
+        .build()?;
+
+    Ok(())
+}
+
+fn main_page_ready(label: &str, event: PageLoadEvent, url: &tauri::Url) -> bool {
+    label == "main"
+        && event == PageLoadEvent::Finished
+        && url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+}
+
+fn reveal_main_window(app: &tauri::AppHandle) {
+    if MAIN_REVEALED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let Some(main) = app.get_webview_window("main") else {
+        eprintln!("[splashscreen] cannot reveal missing main window");
+        MAIN_REVEALED.store(false, Ordering::SeqCst);
+        return;
+    };
+
+    if let Err(error) = main.show() {
+        eprintln!("[splashscreen] failed to show main window: {}", error);
+        MAIN_REVEALED.store(false, Ordering::SeqCst);
+        return;
+    }
+
+    if let Some(splashscreen) = app.get_webview_window("splashscreen") {
+        if let Err(error) = splashscreen.destroy() {
+            eprintln!("[splashscreen] failed to close: {}", error);
+        }
+    }
+
+    if let Err(error) = main.set_focus() {
+        eprintln!("[splashscreen] failed to focus main window: {}", error);
+    }
 }
 
 // Uses EX_TAURI_PORT when set (mix ex_tauri.dev pins it to the configured dev
@@ -681,5 +787,47 @@ fn set_tray(app: &tauri::AppHandle, payload: serde_json::Value) {
                 serde_json::json!({"message": format!("Failed to build tray: {}", error)}),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_finished_loopback_main_page_is_ready() {
+        let ready: tauri::Url = "http://127.0.0.1:41234/".parse().unwrap();
+        let compile_time_url: tauri::Url = "http://localhost:4000/".parse().unwrap();
+
+        assert!(main_page_ready("main", PageLoadEvent::Finished, &ready));
+        assert!(!main_page_ready("main", PageLoadEvent::Started, &ready));
+        assert!(!main_page_ready(
+            "secondary",
+            PageLoadEvent::Finished,
+            &ready
+        ));
+        assert!(!main_page_ready(
+            "main",
+            PageLoadEvent::Finished,
+            &compile_time_url
+        ));
+    }
+
+    #[test]
+    fn splashscreen_is_a_self_contained_document() {
+        let url = splashscreen_url();
+
+        assert_eq!(url.scheme(), "armchair-splash");
+        assert_eq!(url.host_str(), Some("localhost"));
+    }
+
+    #[test]
+    fn splashscreen_document_embeds_the_project_icon() {
+        let html = splashscreen_html();
+
+        assert!(!html.contains("__ICON_SVG__"));
+        assert!(html.contains("<svg"));
+        assert!(html.contains("Acquiring construction permits..."));
+        assert!(html.contains("background: transparent"));
     }
 }

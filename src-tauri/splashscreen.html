@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Armchair Metropolist</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: transparent;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        color: #fff7e7;
+        user-select: none;
+      }
+
+      main {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 84px 56px;
+        text-align: center;
+      }
+
+      #splash-icon {
+        width: 292px;
+        height: 292px;
+        margin-bottom: 32px;
+        filter: drop-shadow(0 36px 48px rgb(5 14 20 / 30%));
+      }
+
+      #splash-icon svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 50px;
+        font-weight: 750;
+        letter-spacing: -0.025em;
+        text-shadow: 0 4px 16px rgb(5 14 20 / 80%);
+      }
+
+      p {
+        margin: 14px 0 0;
+        color: #e3eee8;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-shadow: 0 4px 14px rgb(5 14 20 / 90%);
+      }
+
+      .loader {
+        display: flex;
+        gap: 14px;
+        margin-top: 40px;
+        filter: drop-shadow(0 4px 10px rgb(5 14 20 / 85%));
+      }
+
+      .loader span {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: #ffd887;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+
+      .loader span:nth-child(2) {
+        animation-delay: 140ms;
+      }
+
+      .loader span:nth-child(3) {
+        animation-delay: 280ms;
+      }
+
+      @keyframes pulse {
+        0%,
+        70%,
+        100% {
+          opacity: 0.28;
+          transform: translateY(0);
+        }
+
+        35% {
+          opacity: 1;
+          transform: translateY(-6px);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .loader span {
+          animation: none;
+          opacity: 0.72;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="splash-icon" aria-hidden="true">__ICON_SVG__</div>
+      <h1>Armchair Metropolist</h1>
+      <p>Acquiring construction permits...</p>
+      <div class="loader" role="status" aria-label="Loading">
+        <span></span><span></span><span></span>
+      </div>
+    </main>
+  </body>
+</html>
