@@ -49,6 +49,7 @@
       comment in lib/mix/tasks/version.set.ex, which explains why an earlier
       version would have inserted the next release *underneath* this one.
     -->
+    <release version="0.7.0" date="2026-08-11" />
     <release version="0.6.0" date="2026-08-10" />
     <release version="0.5.2" date="2026-08-10" />
     <release version="0.5.1" date="2026-08-09" />
