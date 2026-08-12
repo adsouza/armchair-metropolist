@@ -235,10 +235,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/apt-archives-flatpak
-          # v2: elfutils joined the package list. The key must move with the list,
-          # because actions/cache only *saves* on a miss — a v1 hit would restore the
-          # old set and quietly re-download elfutils on every run forever.
-          key: apt-flatpak-${{ matrix.runner }}-v2
+          # v3: librsvg2-common joined the package list. The key must move with the
+          # list, because actions/cache only *saves* on a miss — a v2 hit would
+          # restore the old set and quietly re-download it on every run forever.
+          key: apt-flatpak-${{ matrix.runner }}-v3
 
       # `elfutils` is listed explicitly, and that is not optional.
       #
@@ -249,10 +249,15 @@ jobs:
       # after the module had already been assembled. (`eu-elfcompress`, warned about a
       # line earlier in that log, is the same package.)
       #
-      # Naming it beats dropping the flag: the install stays minimal, and the thing the
-      # build actually needs is written down instead of arriving as a side effect of
-      # someone else's recommends list. That is the same lesson §7 of the bundle design
-      # records — enumerate build inputs by process, not by dependency graph.
+      # `librsvg2-common` is explicit for the same reason. Ubuntu puts the GDK-Pixbuf
+      # SVG loader there, but `librsvg2-2` only recommends it. AppStream Compose loads
+      # scalable application icons through GDK-Pixbuf, so without the loader our valid
+      # SVG is rejected as `file-read-error` and Flatpak emits no component metadata.
+      #
+      # Naming both beats dropping the flag: the install stays minimal, and the things
+      # the build actually needs are written down instead of arriving as side effects
+      # of someone else's recommends list. That is the same lesson §7 of the bundle
+      # design records — enumerate build inputs by process, not by dependency graph.
       - name: Install the Flatpak toolchain
         if: env.BUNDLE == 'true'
         timeout-minutes: 12
@@ -265,9 +270,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             -o Dir::Cache::archives="$HOME/apt-archives-flatpak" \
-            flatpak flatpak-builder elfutils
+            flatpak flatpak-builder elfutils librsvg2-common
           command -v eu-strip >/dev/null \
             || { echo "::error::eu-strip missing; flatpak-builder will fail after assembling the module"; exit 1; }
+          find /usr/lib -name libpixbufloader-svg.so -print -quit | grep -q . \
+            || { echo "::error::GDK-Pixbuf SVG loader missing; AppStream cannot compose scalable icons"; exit 1; }
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives-flatpak
           du -sh ~/apt-archives-flatpak
 
